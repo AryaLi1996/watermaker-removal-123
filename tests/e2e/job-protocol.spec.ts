@@ -1,0 +1,153 @@
+/**
+ * E2E: job stdout protocol
+ *
+ * Launches Electron against a stand-in Python backend (fixtures/fake_backend.py)
+ * so the main-process parser — progress, state, meta, preview, done and cancel —
+ * can be verified without ffmpeg or the real pipeline.
+ */
+import { test as base, expect, _electron as electron } from '@playwright/test';
+import type { ElectronApplication, Page } from '@playwright/test';
+import path from 'path';
+
+const repoRoot = path.join(__dirname, '..', '..');
+
+type Fixtures = { electronApp: ElectronApplication; page: Page };
+
+const test = base.extend<Fixtures>({
+  electronApp: [
+    async ({}, use) => {
+      const app = await electron.launch({
+        args: [path.join(repoRoot, 'electron', 'main.js')],
+        env: {
+          ...process.env,
+          NODE_ENV: 'test',
+          WATERMARK_PYTHON: process.env.PYTHON_BIN || 'python3',
+          WATERMARK_BACKEND: path.join(__dirname, 'fixtures', 'fake_backend.py'),
+        },
+      });
+      await use(app);
+      await app.close();
+    },
+    { scope: 'worker' },
+  ],
+  page: async ({ electronApp }, use) => {
+    const window = await electronApp.firstWindow();
+    await window.waitForLoadState('domcontentloaded');
+    await use(window);
+  },
+});
+
+/** Collect every job event the renderer receives into window.__events. */
+async function startCollecting(page: Page) {
+  await page.evaluate(() => {
+    const api = (window as any).electronAPI;
+    api.removeJobListeners();
+    const events: Array<{ type: string; value: unknown }> = [];
+    (window as any).__events = events;
+    api.onJobProgress((v: number) => events.push({ type: 'progress', value: v }));
+    api.onJobState((v: string) => events.push({ type: 'state', value: v }));
+    api.onJobMeta((v: object) => events.push({ type: 'meta', value: v }));
+    api.onPreviewReady((v: string) => events.push({ type: 'preview', value: v }));
+    api.onJobError((v: string) => events.push({ type: 'error', value: v }));
+    api.onJobDone((v: string | null) => events.push({ type: 'done', value: v }));
+  });
+}
+
+function events(page: Page) {
+  return page.evaluate(() => (window as any).__events as Array<{ type: string; value: unknown }>);
+}
+
+function startJob(page: Page, payload: object) {
+  return page.evaluate((p) => (window as any).electronAPI.startJob(p), payload);
+}
+
+test.describe('job stdout protocol', () => {
+  test('forwards meta, progress and state, then done with the backend output path', async ({ page }) => {
+    await startCollecting(page);
+    await startJob(page, { scenario: 'success', outputPath: '/tmp/protocol-out.mp4' });
+
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'done'),
+      { timeout: 10_000 },
+    );
+    const received = await events(page);
+
+    expect(received.find((e) => e.type === 'meta')?.value).toMatchObject({ width: 640, height: 480 });
+    expect(received.find((e) => e.type === 'progress')?.value).toBe(50);
+    expect(received.find((e) => e.type === 'state')?.value).toBe('Reconstructing pixels...');
+    // job:done carries the path the backend reported, not just the requested one
+    expect(received.find((e) => e.type === 'done')?.value).toBe('/tmp/protocol-out.mp4');
+    expect(received.some((e) => e.type === 'error')).toBe(false);
+  });
+
+  test('parses a message split across two stdout chunks', async ({ page }) => {
+    await startCollecting(page);
+    await startJob(page, { scenario: 'split_line', outputPath: '/tmp/split-out.mp4' });
+
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'done'),
+      { timeout: 10_000 },
+    );
+    const received = await events(page);
+    expect(received.find((e) => e.type === 'progress')?.value).toBe(73.5);
+  });
+
+  test('preview_ready is delivered on its own channel', async ({ page }) => {
+    await startCollecting(page);
+    await startJob(page, { scenario: 'preview', outputPath: '/tmp/preview-frame.png' });
+
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'preview'),
+      { timeout: 10_000 },
+    );
+    const received = await events(page);
+    expect(received.find((e) => e.type === 'preview')?.value).toBe('/tmp/preview-frame.png');
+    // A preview line must not also surface as a generic state label
+    expect(received.some((e) => e.type === 'state')).toBe(false);
+  });
+
+  test('an ERROR line is reported once, not doubled by the non-zero exit', async ({ page }) => {
+    await startCollecting(page);
+    await startJob(page, { scenario: 'error', outputPath: '/tmp/err.mp4' });
+
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'error'),
+      { timeout: 10_000 },
+    );
+    await page.waitForTimeout(500); // allow a duplicate to arrive if the guard fails
+    const received = await events(page);
+    const errors = received.filter((e) => e.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].value).toBe('Something went wrong in the backend');
+    expect(received.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  test('cancel stops the job without emitting done or error', async ({ page }) => {
+    await startCollecting(page);
+    await startJob(page, { scenario: 'hang', outputPath: '/tmp/hang.mp4' });
+    await page.waitForTimeout(500);
+
+    const cancelled = await page.evaluate(() => (window as any).electronAPI.cancelJob());
+    expect(cancelled).toBe(true);
+
+    await page.waitForTimeout(1_000);
+    const received = await events(page);
+    expect(received.some((e) => e.type === 'done')).toBe(false);
+    expect(received.some((e) => e.type === 'error')).toBe(false);
+
+    // The cancelled process was reaped, so a new job can start
+    const started = await startJob(page, { scenario: 'success', outputPath: '/tmp/after-cancel.mp4' });
+    expect(started).toBe(true);
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'done'),
+      { timeout: 10_000 },
+    );
+  });
+
+  test('a second job:start is refused while one is running', async ({ page }) => {
+    await startCollecting(page);
+    expect(await startJob(page, { scenario: 'hang', outputPath: '/tmp/hang.mp4' })).toBe(true);
+    expect(await startJob(page, { scenario: 'success', outputPath: '/tmp/second.mp4' })).toBe(false);
+    await page.evaluate(() => (window as any).electronAPI.cancelJob());
+  });
+});

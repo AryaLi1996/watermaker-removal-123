@@ -19,7 +19,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onJobProgress: (cb) => ipcRenderer.on('job:progress', (_e, v) => cb(v)),
   onJobState:    (cb) => ipcRenderer.on('job:state',    (_e, v) => cb(v)),
   onJobError:    (cb) => ipcRenderer.on('job:error',    (_e, v) => cb(v)),
-  onJobDone:     (cb) => ipcRenderer.on('job:done',     (_e) => cb()),
+  // job:done carries the final output path reported by the backend
+  onJobDone:     (cb) => ipcRenderer.on('job:done',     (_e, v) => cb(v)),
   onJobMeta:     (cb) => ipcRenderer.on('job:meta',     (_e, v) => cb(v)),
   onPreviewReady:(cb) => ipcRenderer.on('job:preview-ready', (_e, v) => cb(v)),
 

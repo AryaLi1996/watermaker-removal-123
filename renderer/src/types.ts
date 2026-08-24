@@ -41,12 +41,12 @@ declare global {
       saveFile: (defaultName?: string) => Promise<string | null>;
       openPath: (filePath: string) => Promise<void>;
       runPython: (payload: object) => Promise<string>;
-      startJob: (payload: JobConfig) => Promise<void>;
-      cancelJob: () => Promise<void>;
+      startJob: (payload: JobConfig) => Promise<boolean>;
+      cancelJob: () => Promise<boolean>;
       onJobProgress: (cb: (value: number) => void) => void;
       onJobState: (cb: (label: string) => void) => void;
       onJobError: (cb: (message: string) => void) => void;
-      onJobDone: (cb: () => void) => void;
+      onJobDone: (cb: (outputPath: string | null) => void) => void;
       onJobMeta: (cb: (meta: VideoMeta) => void) => void;
       onPreviewReady: (cb: (path: string) => void) => void;
       removeJobListeners: () => void;
