@@ -5,7 +5,7 @@
  * All coordinates exposed via onROIChange are in canvas pixels.
  * The parent is responsible for normalizing to video pixels.
  */
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Stage, Layer, Image as KonvaImage, Rect, Transformer } from 'react-konva';
 import useImage from 'use-image';
 import type Konva from 'konva';
@@ -20,6 +20,7 @@ interface VideoCanvasProps {
 }
 
 const INITIAL_BOX_RATIO = 0.2; // default box is 20% of canvas width/height
+const MIN_BOX = 20;
 
 export default function VideoCanvas({
   previewSrc,
@@ -30,45 +31,46 @@ export default function VideoCanvas({
 }: VideoCanvasProps) {
   const [image] = useImage(previewSrc);
 
-  // Calculated stage dimensions & scale factor
-  const [stageW, setStageW] = useState(containerWidth);
-  const [stageH, setStageH] = useState(containerHeight);
-  // ROI rect state (canvas pixels)
-  const [rect, setRect] = useState({ x: 0, y: 0, width: 200, height: 100 });
-  const [initialized, setInitialized] = useState(false);
+  // Stage dimensions and scale are derived from the image and the container —
+  // no state, so a resize can never leave them stale.
+  const { stageW, stageH, scale } = useMemo(() => {
+    if (!image) return { stageW: containerWidth, stageH: containerHeight, scale: 1 };
+    const s = Math.min(containerWidth / image.width, containerHeight / image.height);
+    return {
+      stageW: Math.round(image.width * s),
+      stageH: Math.round(image.height * s),
+      scale: s,
+    };
+  }, [image, containerWidth, containerHeight]);
+
+  // The user's box, in canvas pixels. Null until they move or resize it, so the
+  // default box below follows the stage while it is untouched.
+  const [userRect, setUserRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+
+  // Default box: 20% of the frame, tucked into the bottom-right corner where
+  // watermarks usually sit.
+  const rect = useMemo(() => {
+    if (userRect) return userRect;
+    const width = Math.max(MIN_BOX, Math.round(stageW * INITIAL_BOX_RATIO));
+    const height = Math.max(MIN_BOX, Math.round(stageH * INITIAL_BOX_RATIO * 0.6));
+    return { x: Math.max(0, stageW - width - 16), y: Math.max(0, stageH - height - 16), width, height };
+  }, [userRect, stageW, stageH]);
 
   const rectRef = useRef<Konva.Rect>(null);
   const trRef = useRef<Konva.Transformer>(null);
 
-  // Recalculate stage size & scale when image or container changes
+  // Report the current scale and ROI up to the parent whenever they change.
   useEffect(() => {
     if (!image) return;
+    onScaleChange(scale);
+  }, [image, scale, onScaleChange]);
 
-    const scaleX = containerWidth / image.width;
-    const scaleY = containerHeight / image.height;
-    const s = Math.min(scaleX, scaleY);
+  useEffect(() => {
+    if (!image) return;
+    onROIChange({ x: rect.x, y: rect.y, w: rect.width, h: rect.height });
+  }, [image, rect, onROIChange]);
 
-    const sw = Math.round(image.width * s);
-    const sh = Math.round(image.height * s);
-
-    setStageW(sw);
-    setStageH(sh);
-    onScaleChange(s);
-
-    if (!initialized) {
-      // Place default box at bottom-right, sized to 20% of frame
-      const bw = Math.round(sw * INITIAL_BOX_RATIO);
-      const bh = Math.round(sh * INITIAL_BOX_RATIO * 0.6);
-      const bx = sw - bw - 16;
-      const by = sh - bh - 16;
-      const initial = { x: bx, y: by, width: bw, height: bh };
-      setRect(initial);
-      onROIChange({ x: initial.x, y: initial.y, w: initial.width, h: initial.height });
-      setInitialized(true);
-    }
-  }, [image, containerWidth, containerHeight]);
-
-  // Attach transformer to rect on mount
+  // Attach the transformer to the rect once the image (and so the rect) exists
   useEffect(() => {
     if (rectRef.current && trRef.current) {
       trRef.current.nodes([rectRef.current]);
@@ -76,20 +78,18 @@ export default function VideoCanvas({
     }
   }, [image]);
 
-  const emitROI = useCallback((node: Konva.Rect) => {
+  const commitRect = useCallback((node: Konva.Rect) => {
     // Normalize scale back to 1 and store real pixel dimensions on the node.
     // Without this, Konva keeps accumulated scaleX/Y and on the next render
     // it multiplies again, causing the box to auto-resize.
-    const newW = Math.round(node.width() * node.scaleX());
-    const newH = Math.round(node.height() * node.scaleY());
+    const width = Math.round(node.width() * node.scaleX());
+    const height = Math.round(node.height() * node.scaleY());
     node.scaleX(1);
     node.scaleY(1);
-    node.width(newW);
-    node.height(newH);
-    const r = { x: Math.round(node.x()), y: Math.round(node.y()), w: newW, h: newH };
-    setRect({ x: r.x, y: r.y, width: r.w, height: r.h });
-    onROIChange(r);
-  }, [onROIChange]);
+    node.width(width);
+    node.height(height);
+    setUserRect({ x: Math.round(node.x()), y: Math.round(node.y()), width, height });
+  }, []);
 
   return (
     <div style={{ background: '#000', display: 'inline-block' }}>
@@ -126,8 +126,8 @@ export default function VideoCanvas({
               shadowColor="rgba(0,0,0,0.8)"
               shadowBlur={6}
               draggable
-              onDragEnd={(e) => emitROI(e.target as Konva.Rect)}
-              onTransformEnd={(e) => emitROI(e.target as Konva.Rect)}
+              onDragEnd={(e) => commitRect(e.target as Konva.Rect)}
+              onTransformEnd={(e) => commitRect(e.target as Konva.Rect)}
               dragBoundFunc={(pos) => ({
                 x: Math.max(0, Math.min(pos.x, stageW - rect.width)),
                 y: Math.max(0, Math.min(pos.y, stageH - rect.height)),
@@ -154,8 +154,8 @@ export default function VideoCanvas({
               boundBoxFunc={(_, newBox) => {
                 const b = {
                   ...newBox,
-                  width: Math.max(20, newBox.width),
-                  height: Math.max(20, newBox.height),
+                  width: Math.max(MIN_BOX, newBox.width),
+                  height: Math.max(MIN_BOX, newBox.height),
                 };
                 // Clamp to stage boundaries
                 if (b.x < 0) { b.width += b.x; b.x = 0; }

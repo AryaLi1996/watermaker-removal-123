@@ -5,7 +5,7 @@ import VideoCanvas from './components/VideoCanvas';
 import MethodPicker from './components/MethodPicker';
 import ProgressPanel from './components/ProgressPanel';
 import DonePanel from './components/DonePanel';
-import type { AppState, JobConfig, RemovalMethod, ROI } from './types';
+import type { AppState, JobConfig, RemovalMethod, ROI, VideoMeta } from './types';
 import { normalizeCoordinates, defaultOutputName, formatDuration } from './utils';
 
 const SIDEBAR_W = 280;
@@ -16,7 +16,7 @@ function App() {
   const [outputPath, setOutputPath] = useState<string | null>(null);
   const [previewFrameUrl, setPreviewFrameUrl] = useState<string | null>(null);
   const [previewClipUrl, setPreviewClipUrl] = useState<string | null>(null);
-  const [videoMeta, setVideoMeta] = useState<{ width: number; height: number; fps: number; duration: number } | null>(null);
+  const [videoMeta, setVideoMeta] = useState<VideoMeta | null>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
   const [canvasScale, setCanvasScale] = useState(1);
@@ -43,6 +43,9 @@ function App() {
     if (canvasContainerRef.current) ro.observe(canvasContainerRef.current);
     return () => ro.disconnect();
   }, []);
+
+  // Drop any IPC listeners still attached when the app unmounts
+  useEffect(() => () => window.electronAPI.removeJobListeners(), []);
 
   const handleSelectFile = useCallback(async () => {
     const path = await window.electronAPI.openFile();
@@ -82,8 +85,13 @@ function App() {
     window.electronAPI.onJobState(setStateLabel);
     window.electronAPI.onJobDone((finalPath) => {
       // Prefer the path the backend actually wrote; fall back to the requested one.
-      setDoneOutputPath(finalPath ?? outputPath ?? '');
+      const written = finalPath ?? outputPath ?? '';
+      setDoneOutputPath(written);
+      setProgress(100);
       setAppState('done');
+      // Surface the result straight away — the DonePanel's Reveal button is
+      // there for a second look.
+      if (written) window.electronAPI.openPath(written);
       window.electronAPI.removeJobListeners();
     });
     window.electronAPI.onJobError((msg: string) => {
@@ -151,6 +159,16 @@ function App() {
       <div style={{ width: SIDEBAR_W, minWidth: SIDEBAR_W, background: '#27272a', borderRight: '1px solid #3f3f46', display: 'flex', flexDirection: 'column', padding: 24, gap: 20, overflowY: 'auto' }}>
         <p style={{ color: '#f4f4f5', fontSize: 14, fontWeight: 500 }}>Watermark Remover</p>
 
+        {appState === 'empty' && (
+          <button
+            data-testid="btn-load-video"
+            onClick={handleSelectFile}
+            style={{ background: '#6366f1', border: 'none', borderRadius: 6, padding: '8px 0', color: '#fff', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}
+          >
+            Load video
+          </button>
+        )}
+
         {isProcessing && <ProgressPanel progress={progress} stateLabel={stateLabel} onCancel={handleCancel} />}
 
         {appState === 'done' && (
@@ -202,7 +220,6 @@ function App() {
 
         {previewClipUrl && (
           <div style={{ position: 'absolute', inset: 0, background: '#000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
-            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
             <video src={previewClipUrl} autoPlay controls loop style={{ maxWidth: '100%', maxHeight: 'calc(100% - 44px)', outline: 'none' }} />
             <button onClick={() => setPreviewClipUrl(null)} style={{ marginTop: 10, background: 'rgba(39,39,42,0.9)', border: '1px solid #3f3f46', borderRadius: 6, padding: '5px 16px', color: '#d4d4d8', fontSize: 11, cursor: 'pointer' }}>Close preview</button>
           </div>
