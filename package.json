@@ -1,0 +1,53 @@
+{
+  "name": "watermark-remover",
+  "version": "1.0.0",
+  "description": "Desktop video watermark removal tool",
+  "author": "pandac.in",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev:renderer": "npm run dev --prefix renderer",
+    "dev:electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "dev": "concurrently -k \"npm run dev:renderer\" \"npm run dev:electron\"",
+    "build:renderer": "npm run build --prefix renderer",
+    "build": "npm run build:renderer",
+    "dist": "npm run build && electron-builder --publish never",
+    "test:backend": "cd backend && .venv/bin/python -m pytest ../tests/unit/backend -v",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:debug": "playwright test --debug",
+    "screenshots": "playwright test capture-screenshots --reporter=line"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^25.5.0",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^41.0.4",
+    "electron-builder": "^26.8.1",
+    "typescript": "^5.9.3",
+    "wait-on": "^9.0.4"
+  },
+  "build": {
+    "appId": "com.watermark-remover.app",
+    "productName": "Watermark Remover",
+    "directories": {
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**",
+      "renderer/dist/**",
+      "backend/**",
+      "!backend/.venv"
+    ],
+    "mac": {
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
