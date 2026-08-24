@@ -5,10 +5,21 @@
  * transitions and button enable/disable logic without a real video.
  */
 import { test, expect } from './fixtures/electron-fixture';
+import type { ElectronApplication } from '@playwright/test';
 import path from 'path';
+
+test.use({ appTag: 'sidebar' });
 
 // A real MP4 fixture (tiny black video used only for dialog mock responses)
 const FIXTURE_MP4 = path.join(__dirname, '..', '..', 'fixtures', 'sample.mp4');
+
+/** Replace job:start with a no-op so no Python process is spawned. */
+async function stubStartJob(electronApp: ElectronApplication) {
+  await electronApp.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('job:start');
+    ipcMain.handle('job:start', () => true);
+  });
+}
 
 test.describe('Sidebar — output path', () => {
   test('Browse button is not visible in idle state', async ({ page }) => {
@@ -22,12 +33,10 @@ test.describe('Sidebar — output path', () => {
       ipcMain.handle('dialog:openFile', async () => '/fake/video.mp4');
     });
 
-    // Also mock the preview_frame job so the app doesn't crash waiting for Python
-    await page.evaluate(() => {
-      const api = (window as any).electronAPI;
-      // Override startJob to do nothing, then fake a meta + preview_ready event
-      api.startJob = async () => {};
-    });
+    // Stub the job at the IPC layer: contextBridge exposes a frozen object, so
+    // assigning to window.electronAPI.startJob from the page does nothing and
+    // a real Python job would race these assertions.
+    await stubStartJob(electronApp);
 
     await electronApp.evaluate(({ ipcMain }) => {
       ipcMain.removeHandler('dialog:saveFile');
@@ -64,9 +73,7 @@ test.describe('Sidebar — method picker', () => {
         ipcMain.removeHandler('dialog:openFile');
         ipcMain.handle('dialog:openFile', async () => '/fake/video.mp4');
       });
-      await page.evaluate(() => {
-        (window as any).electronAPI.startJob = async () => {};
-      });
+      await stubStartJob(electronApp);
       await page.getByTestId('empty-state').click();
       await expect(page.getByTestId('btn-export')).toBeVisible({ timeout: 5_000 });
     }
@@ -88,7 +95,7 @@ test.describe('Error panel', () => {
       ipcMain.handle('dialog:openFile', async () => '/fake/video.mp4');
       ipcMain.handle('dialog:saveFile', async () => '/fake/error-test-output.mp4');
     });
-    await page.evaluate(() => { (window as any).electronAPI.startJob = async () => {}; });
+    await stubStartJob(electronApp);
 
     // If in idle state, load a video first
     if (await page.locator('[data-testid="empty-state"]').isVisible()) {

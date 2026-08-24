@@ -6,6 +6,8 @@
  */
 import { test, expect } from './fixtures/electron-fixture';
 
+test.use({ appTag: 'app-launch' });
+
 test.describe('App launch', () => {
   test('window opens and reaches idle state', async ({ page }) => {
     // The empty state should be visible immediately on launch

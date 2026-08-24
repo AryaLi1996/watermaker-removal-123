@@ -65,7 +65,13 @@ function App() {
       setPreviewFrameUrl(`file://${previewPath}`);
       window.electronAPI.removeJobListeners();
     });
-    window.electronAPI.onJobError(() => { window.electronAPI.removeJobListeners(); });
+    window.electronAPI.onJobError((msg: string) => {
+      // Without this the canvas sits on "Loading preview…" forever whenever
+      // the backend fails to produce the still.
+      setErrorMsg(msg);
+      setAppState('error');
+      window.electronAPI.removeJobListeners();
+    });
     window.electronAPI.startJob({
       inputPath: path, outputPath: '/dev/null',
       roi: { x: 0, y: 0, w: 1, h: 1 },

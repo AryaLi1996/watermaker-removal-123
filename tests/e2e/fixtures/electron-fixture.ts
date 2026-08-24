@@ -3,10 +3,12 @@
  *
  * Usage:
  *   import { test, expect } from '../fixtures/electron-fixture';
+ *   test.use({ appTag: 'my-spec' });
  *
- * The `electronApp` and `page` fixtures launch a fresh Electron instance
- * for each test file (scope: 'worker') and close it after all tests in
- * that file complete.
+ * Worker-scoped fixtures are reused across spec files in the same worker, so
+ * one file's IPC stubs would leak into the next. Each spec declares its own
+ * `appTag`; Playwright tears the app down and relaunches it when that value
+ * changes, giving every file a genuinely fresh Electron instance.
  */
 import { test as base, expect, _electron as electron } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
@@ -17,10 +19,18 @@ type ElectronFixtures = {
   page: Page;
 };
 
-export const test = base.extend<ElectronFixtures>({
+type ElectronOptions = {
+  /** Identifies the spec file, so each gets its own app instance. */
+  appTag: string;
+};
+
+export const test = base.extend<ElectronFixtures, ElectronOptions>({
+  appTag: ['shared', { option: true, scope: 'worker' }],
+
   // Launch Electron once per test file
   electronApp: [
-    async ({}, use) => {
+    async ({ appTag }, use) => {
+      void appTag; // depended on so a new tag forces a fresh app
       const app = await electron.launch({
         args: [path.join(__dirname, '..', '..', '..', 'electron', 'main.js')],
         env: {

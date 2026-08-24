@@ -17,6 +17,58 @@ def create_mask(width: int, height: int, x: int, y: int, w: int, h: int) -> np.n
     return mask
 
 
+def clamp_roi(
+    frame_width: int,
+    frame_height: int,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+) -> tuple[int, int, int, int]:
+    """
+    Clip an ROI rectangle to the frame. The UI works in scaled canvas pixels,
+    so rounding on the way back to video pixels can push the box a pixel or two
+    past the edge; without clipping that yields an empty numpy slice and an
+    OpenCV error deep in a worker.
+
+    Raises ValueError only when nothing of the ROI overlaps the frame, which
+    means the caller sent a genuinely bad rectangle.
+    """
+    nx = max(0, min(x, frame_width))
+    ny = max(0, min(y, frame_height))
+    nw = min(w + min(0, x), frame_width - nx)
+    nh = min(h + min(0, y), frame_height - ny)
+
+    if nw <= 0 or nh <= 0:
+        raise ValueError(
+            f"Selection ({x},{y},{w}x{h}) lies outside the "
+            f"{frame_width}x{frame_height} frame."
+        )
+    return nx, ny, nw, nh
+
+
+def clamp_clone_offset(
+    frame_width: int,
+    frame_height: int,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    dx: int,
+    dy: int,
+) -> tuple[int, int]:
+    """
+    Shift a clone-stamp offset so the source region stays inside the frame.
+
+    The user asked to copy nearby pixels; nudging the source back in-frame is
+    more useful than failing the whole job because the default offset happens
+    to point off the top edge.
+    """
+    sx = max(0, min(x + dx, frame_width - w))
+    sy = max(0, min(y + dy, frame_height - h))
+    return sx - x, sy - y
+
+
 def process_inpaint(frame: np.ndarray, mask: np.ndarray, radius: int = 3) -> np.ndarray:
     """
     TELEA inpainting: intelligently reconstructs the masked region by
@@ -97,7 +149,8 @@ def apply_removal(
     """
     method = config.get('method', 'inpaint')
     roi = config['roi']
-    x, y, w, h = roi['x'], roi['y'], roi['w'], roi['h']
+    height, width = frame.shape[:2]
+    x, y, w, h = clamp_roi(width, height, roi['x'], roi['y'], roi['w'], roi['h'])
 
     if method == 'inpaint':
         return process_inpaint(frame, mask, radius=config.get('radius', 3))
@@ -107,8 +160,9 @@ def apply_removal(
         color = tuple(config.get('color', [0, 0, 0]))
         return process_solid_fill(frame, x, y, w, h, color=color)
     elif method == 'cloneStamp':
-        return process_clone_stamp(frame, x, y, w, h,
+        dx, dy = clamp_clone_offset(width, height, x, y, w, h,
                                     dx=config.get('dx', 0),
                                     dy=config.get('dy', -50))
+        return process_clone_stamp(frame, x, y, w, h, dx=dx, dy=dy)
     else:
         raise ValueError(f"Unknown removal method: {method!r}")

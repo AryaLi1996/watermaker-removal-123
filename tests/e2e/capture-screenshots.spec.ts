@@ -11,6 +11,8 @@ import { _electron as electron } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 
+test.use({ appTag: 'capture-screenshots' });
+
 const ROOT    = path.join(__dirname, '..', '..');
 const OUT_DIR = path.join(ROOT, 'docs', 'screenshots');
 const SAMPLE  = path.join(ROOT, 'sample', 'samplevideo.mp4');
