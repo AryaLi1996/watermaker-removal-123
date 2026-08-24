@@ -80,8 +80,9 @@ function App() {
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobProgress(setProgress);
     window.electronAPI.onJobState(setStateLabel);
-    window.electronAPI.onJobDone(() => {
-      setDoneOutputPath(outputPath ?? '');
+    window.electronAPI.onJobDone((finalPath) => {
+      // Prefer the path the backend actually wrote; fall back to the requested one.
+      setDoneOutputPath(finalPath ?? outputPath ?? '');
       setAppState('done');
       window.electronAPI.removeJobListeners();
     });
