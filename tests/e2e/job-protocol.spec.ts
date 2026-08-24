@@ -5,37 +5,8 @@
  * so the main-process parser — progress, state, meta, preview, done and cancel —
  * can be verified without ffmpeg or the real pipeline.
  */
-import { test as base, expect, _electron as electron } from '@playwright/test';
-import type { ElectronApplication, Page } from '@playwright/test';
-import path from 'path';
-
-const repoRoot = path.join(__dirname, '..', '..');
-
-type Fixtures = { electronApp: ElectronApplication; page: Page };
-
-const test = base.extend<Fixtures>({
-  electronApp: [
-    async ({}, use) => {
-      const app = await electron.launch({
-        args: [path.join(repoRoot, 'electron', 'main.js')],
-        env: {
-          ...process.env,
-          NODE_ENV: 'test',
-          WATERMARK_PYTHON: process.env.PYTHON_BIN || 'python3',
-          WATERMARK_BACKEND: path.join(__dirname, 'fixtures', 'fake_backend.py'),
-        },
-      });
-      await use(app);
-      await app.close();
-    },
-    { scope: 'worker' },
-  ],
-  page: async ({ electronApp }, use) => {
-    const window = await electronApp.firstWindow();
-    await window.waitForLoadState('domcontentloaded');
-    await use(window);
-  },
-});
+import { test, expect } from './fixtures/stub-backend-fixture';
+import type { Page } from '@playwright/test';
 
 /** Collect every job event the renderer receives into window.__events. */
 async function startCollecting(page: Page) {
