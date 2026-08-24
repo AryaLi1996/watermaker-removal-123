@@ -9,6 +9,8 @@
 import { test, expect } from './fixtures/stub-backend-fixture';
 import type { ElectronApplication, Page } from '@playwright/test';
 
+test.use({ appTag: 'renderer-flow' });
+
 const INPUT = '/fake/clip.mp4';
 const OUTPUT = '/fake/clip_processed.mp4';
 

@@ -8,6 +8,8 @@
 import { test, expect } from './fixtures/stub-backend-fixture';
 import type { Page } from '@playwright/test';
 
+test.use({ appTag: 'job-protocol' });
+
 /** Collect every job event the renderer receives into window.__events. */
 async function startCollecting(page: Page) {
   await page.evaluate(() => {

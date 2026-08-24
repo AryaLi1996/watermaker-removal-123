@@ -17,6 +17,8 @@ import { test, expect } from './fixtures/electron-fixture';
 import path from 'path';
 import fs from 'fs';
 
+test.use({ appTag: 'watermark-removal' });
+
 // ── Paths ────────────────────────────────────────────────────────────────────
 const ROOT = path.join(__dirname, '..', '..');
 const SAMPLE_VIDEO = path.join(ROOT, 'sample', 'samplevideo.mp4');

@@ -1,0 +1,168 @@
+"""
+Unit tests for the backend helpers added around the pipeline: ROI clamping,
+clone-stamp offset clamping, preview window selection and audio mux arguments.
+
+Run with:
+    backend/.venv/bin/python -m pytest tests/unit/backend/ -v
+"""
+import os
+import subprocess
+import sys
+import threading
+import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'backend'))
+
+import numpy as np
+import pytest
+
+import ff_utils
+import main as backend_main
+from image_core import apply_removal, clamp_clone_offset, clamp_roi, create_mask
+
+
+# ─── clamp_roi ───────────────────────────────────────────────────────────────
+
+def test_clamp_roi_leaves_an_inside_rect_alone():
+    assert clamp_roi(1920, 1080, 100, 100, 200, 50) == (100, 100, 200, 50)
+
+
+def test_clamp_roi_trims_a_rect_running_off_the_right_edge():
+    # A rounding error in the UI pushes the box 10px past the frame
+    assert clamp_roi(640, 480, 600, 100, 50, 50) == (600, 100, 40, 50)
+
+
+def test_clamp_roi_trims_a_rect_running_off_the_bottom_edge():
+    assert clamp_roi(640, 480, 100, 460, 50, 50) == (100, 460, 50, 20)
+
+
+def test_clamp_roi_pulls_negative_origins_back_to_zero():
+    # Origin moves to 0 and the width shrinks by the amount that was off-frame
+    assert clamp_roi(640, 480, -10, -20, 100, 100) == (0, 0, 90, 80)
+
+
+def test_clamp_roi_rejects_a_rect_entirely_outside_the_frame():
+    with pytest.raises(ValueError, match="outside"):
+        clamp_roi(640, 480, 700, 100, 50, 50)
+
+
+# ─── clamp_clone_offset ──────────────────────────────────────────────────────
+
+def test_clone_offset_is_untouched_when_the_source_fits():
+    assert clamp_clone_offset(640, 480, 100, 100, 50, 50, dx=0, dy=-50) == (0, -50)
+
+
+def test_clone_offset_is_pulled_back_when_the_source_runs_off_the_top():
+    # ROI sits 20px from the top, so the default -50 offset cannot be honoured
+    assert clamp_clone_offset(640, 480, 100, 20, 50, 50, dx=0, dy=-50) == (0, -20)
+
+
+def test_clone_offset_is_pulled_back_when_the_source_runs_off_the_right():
+    assert clamp_clone_offset(640, 480, 560, 100, 50, 50, dx=100, dy=0) == (30, 0)
+
+
+# ─── apply_removal with an out-of-bounds ROI ─────────────────────────────────
+
+@pytest.mark.parametrize('method', ['inpaint', 'blur', 'solidFill', 'cloneStamp'])
+def test_apply_removal_survives_an_roi_over_the_frame_edge(method):
+    """Every engine must cope with a box that hangs off the frame."""
+    frame = np.full((100, 100, 3), 128, dtype=np.uint8)
+    mask = create_mask(100, 100, 80, 80, 40, 40)
+    config = {
+        'method': method,
+        'roi': {'x': 80, 'y': 80, 'w': 40, 'h': 40},  # 20px past both edges
+        'radius': 3,
+        'kernelSize': 21,
+        'color': [255, 0, 0],
+        'dx': 0,
+        'dy': -50,
+    }
+    result = apply_removal(frame, mask, config)
+    assert result.shape == frame.shape
+
+
+def test_apply_removal_still_rejects_a_fully_outside_roi():
+    frame = np.full((100, 100, 3), 128, dtype=np.uint8)
+    mask = create_mask(100, 100, 0, 0, 10, 10)
+    config = {'method': 'blur', 'roi': {'x': 200, 'y': 200, 'w': 40, 'h': 40}}
+    with pytest.raises(ValueError, match="outside"):
+        apply_removal(frame, mask, config)
+
+
+# ─── preview_window ──────────────────────────────────────────────────────────
+
+def test_preview_window_is_centred_in_a_long_video():
+    start, length = backend_main.preview_window(60.0)
+    assert length == 3.0
+    assert start == pytest.approx(28.5)
+
+
+def test_preview_window_shrinks_to_fit_a_short_video():
+    # A 2-second clip cannot yield 3 seconds — take all of it from the start
+    assert backend_main.preview_window(2.0) == (0.0, 2.0)
+
+
+def test_preview_window_handles_an_unknown_duration():
+    assert backend_main.preview_window(0.0) == (0.0, 3.0)
+
+
+# ─── audio_args_for ──────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize('codec', ['aac', 'mp3', 'ac3'])
+def test_mp4_native_audio_is_copied(codec):
+    assert ff_utils.audio_args_for(codec) == ['-c:a', 'copy']
+
+
+def test_missing_audio_track_uses_copy():
+    # '-map 1:a:0?' drops the audio arguments entirely for a silent source
+    assert ff_utils.audio_args_for(None) == ['-c:a', 'copy']
+
+
+@pytest.mark.parametrize('codec', ['opus', 'vorbis', 'flac', 'pcm_s16le'])
+def test_non_mp4_audio_is_transcoded_to_aac(codec):
+    assert ff_utils.audio_args_for(codec)[:2] == ['-c:a', 'aac']
+
+
+# ─── _run / terminate (the cancel path) ──────────────────────────────────────
+
+def test_run_returns_child_stdout():
+    result = ff_utils._run([sys.executable, '-c', 'print("hello")'])
+    assert result.stdout.decode().strip() == 'hello'
+
+
+def test_run_raises_with_stderr_on_failure():
+    with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        ff_utils._run([sys.executable, '-c', 'import sys; sys.stderr.write("boom"); sys.exit(3)'])
+    assert excinfo.value.returncode == 3
+    assert b'boom' in excinfo.value.stderr
+
+
+def test_terminate_stops_a_running_child():
+    """A cancel must not leave the ffmpeg child running behind us."""
+    error: list[BaseException] = []
+
+    def run_long_child():
+        try:
+            ff_utils._run([sys.executable, '-c', 'import time; time.sleep(30)'])
+        except BaseException as exc:  # noqa: BLE001 — recorded for the assertion
+            error.append(exc)
+
+    thread = threading.Thread(target=run_long_child)
+    thread.start()
+
+    # Wait for the child to actually be running before cancelling it
+    deadline = time.monotonic() + 5
+    while ff_utils._active_proc is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert ff_utils._active_proc is not None, 'child never started'
+
+    ff_utils.terminate()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive(), 'child outlived terminate()'
+    assert error and isinstance(error[0], subprocess.CalledProcessError)
+    assert ff_utils._active_proc is None
+
+
+def test_terminate_is_a_no_op_when_nothing_is_running():
+    ff_utils.terminate()  # must not raise

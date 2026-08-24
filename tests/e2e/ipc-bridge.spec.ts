@@ -7,6 +7,8 @@
  */
 import { test, expect } from './fixtures/electron-fixture';
 
+test.use({ appTag: 'ipc-bridge' });
+
 test.describe('IPC bridge', () => {
   test('dialog:openFile returns null when dialog is cancelled', async ({ electronApp }) => {
     // Override the real handler to simulate cancel

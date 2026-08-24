@@ -72,6 +72,38 @@ def emit(msg: str) -> None:
     print(msg, flush=True)
 
 
+def emit_meta(meta: dict) -> None:
+    """
+    Publish probe results to the UI. Keys are camelCase to match the
+    renderer's VideoMeta type; probe_video keeps snake_case internally.
+    """
+    emit('STATE:meta:' + json.dumps({
+        'width': meta['width'],
+        'height': meta['height'],
+        'fps': meta['fps'],
+        'duration': meta['duration'],
+        'videoCodec': meta['video_codec'],
+        'audioCodec': meta['audio_codec'],
+    }))
+
+
+PREVIEW_SECONDS = 3.0
+
+
+def preview_window(duration: float, length: float = PREVIEW_SECONDS) -> tuple[float, float]:
+    """
+    Pick a clip window centred in the video, clamped to what actually exists.
+
+    A fixed offset would produce an empty clip for anything shorter than it,
+    and the middle of a video is more representative than its opening.
+    """
+    if duration <= 0:
+        return 0.0, length
+    clip = min(length, duration)
+    start = max(0.0, (duration - clip) / 2)
+    return start, clip
+
+
 def progress(value: float) -> None:
     emit(f'PROGRESS:{value:.1f}')
 
@@ -83,8 +115,13 @@ def state(label: str) -> None:
 # ─── Signal handler (cancel) ────────────────────────────────────────────────
 
 def _handle_sigterm(signum, frame):
-    """Abort any active worker pool, then exit (finally block cleans temp_dir)."""
+    """
+    Abort in-flight work, then exit (the finally block cleans temp_dir).
+    Both the worker pool and any running ffmpeg child have to go, or they
+    outlive this process and keep writing into a deleted temp directory.
+    """
     processor.terminate()
+    ff_utils.terminate()
     sys.exit(0)
 
 
@@ -93,17 +130,27 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 
 # ─── Core pipeline ──────────────────────────────────────────────────────────
 
-def run_pipeline(config: JobConfig, temp_dir: str, source_video: str) -> str:
+def run_pipeline(
+    config: JobConfig,
+    temp_dir: str,
+    source_video: str,
+    announce_meta: bool = True,
+) -> str:
     """
     Extract → process → reassemble. Returns the output file path.
     `source_video` is the file from which frames are extracted (may be a
     trimmed clip for preview mode).
+
+    `announce_meta` is off for preview runs: the metadata of a 3-second clip
+    would misreport the source video the UI is describing.
     """
     frames_dir = os.path.join(temp_dir, 'frames')
 
     # 1. Probe metadata
     state('Probing video metadata...')
     meta = ff_utils.probe_video(source_video)
+    if announce_meta:
+        emit_meta(meta)
     progress(5)
 
     # 2. Extract frames
@@ -146,10 +193,14 @@ def run_pipeline(config: JobConfig, temp_dir: str, source_video: str) -> str:
     output_path = config.outputPath
     ff_utils.reassemble_video(
         frames_dir,
-        config.inputPath,   # original for audio/metadata mux
+        # Audio and metadata come from the file the frames were extracted from.
+        # In preview mode that is the trimmed clip — muxing the full original
+        # here leaves a 3-second video carrying the whole soundtrack.
+        source_video,
         output_path,
         meta['fps'],
         temp_video=os.path.join(temp_dir, 'video_only.mp4'),
+        audio_codec=meta['audio_codec'],
     )
     progress(100)
     return output_path
@@ -170,7 +221,7 @@ def main() -> None:
         if config.mode == 'preview_frame':
             # Probe metadata first so the UI can display width/height/fps/duration.
             meta = ff_utils.probe_video(config.inputPath)
-            emit(f'STATE:meta:{json.dumps(meta)}')
+            emit_meta(meta)
 
             # Extract a single representative frame for the UI canvas.
             # Placed OUTSIDE temp_dir so finally:rmtree doesn't delete it
@@ -191,10 +242,14 @@ def main() -> None:
 
             state('Extracting preview clip...')
             clip_path = os.path.join(temp_dir, 'preview_src.mp4')
-            ff_utils.extract_clip(config.inputPath, clip_path, start=4.0, duration=3.0)
+            src_meta = ff_utils.probe_video(config.inputPath)
+            emit_meta(src_meta)
+            start, length = preview_window(src_meta['duration'])
+            ff_utils.extract_clip(config.inputPath, clip_path, start=start, duration=length)
             # Run pipeline on the clip, writing to the safe external path
             preview_config = config.model_copy(update={'outputPath': preview_out})
-            run_pipeline(preview_config, temp_dir, source_video=clip_path)
+            run_pipeline(preview_config, temp_dir, source_video=clip_path,
+                         announce_meta=False)
             emit(f'STATE:preview_ready:{preview_out}')
         else:
             output = run_pipeline(config, temp_dir, source_video=config.inputPath)
