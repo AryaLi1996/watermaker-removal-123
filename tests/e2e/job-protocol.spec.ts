@@ -147,10 +147,32 @@ test.describe('job stdout protocol', () => {
     );
   });
 
-  test('a second job:start is refused while one is running', async ({ page }) => {
+  test('a second export is refused while one is running', async ({ page }) => {
     await startCollecting(page);
     expect(await startJob(page, { scenario: 'hang', outputPath: '/tmp/hang.mp4' })).toBe(true);
     expect(await startJob(page, { scenario: 'success', outputPath: '/tmp/second.mp4' })).toBe(false);
     await page.evaluate(() => (window as any).electronAPI.cancelJob());
+  });
+
+  test('an export supersedes a preview that is still running', async ({ page }) => {
+    // The app starts a preview probe by itself on file load. If the user hits
+    // Export while it is still going, the export must win — refusing it
+    // silently reads as a dead button.
+    await startCollecting(page);
+    expect(await startJob(page, { scenario: 'hang', mode: 'preview_frame', outputPath: '/dev/null' })).toBe(true);
+
+    const started = await startJob(page, {
+      scenario: 'success', mode: 'full', outputPath: '/tmp/export-wins.mp4',
+    });
+    expect(started).toBe(true);
+
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'done'),
+      { timeout: 10_000 },
+    );
+    const received = await events(page);
+    // The completion belongs to the export, not the preview it replaced
+    expect(received.find((e) => e.type === 'done')?.value).toBe('/tmp/export-wins.mp4');
+    expect(received.some((e) => e.type === 'error')).toBe(false);
   });
 });

@@ -125,7 +125,14 @@ function App() {
     const payload: JobConfig = { inputPath, outputPath: out, roi: videoROI, method, mode: 'full', radius, kernelSize, color, dx, dy };
     setProgress(0); setStateLabel(''); setAppState('processing');
     registerJobListeners();
-    await window.electronAPI.startJob(payload);
+    const started = await window.electronAPI.startJob(payload);
+    if (!started) {
+      // Refused because another job holds the backend; don't sit in a
+      // "processing" state that nothing will ever complete.
+      window.electronAPI.removeJobListeners();
+      setErrorMsg('Another job is already running. Wait for it to finish, or cancel it.');
+      setAppState('error');
+    }
   }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, registerJobListeners]);
 
   const handlePreview = useCallback(async () => {
@@ -143,7 +150,12 @@ function App() {
       window.electronAPI.removeJobListeners();
     });
     window.electronAPI.onJobError((msg: string) => { setErrorMsg(msg); setAppState('error'); window.electronAPI.removeJobListeners(); });
-    await window.electronAPI.startJob(payload);
+    const started = await window.electronAPI.startJob(payload);
+    if (!started) {
+      window.electronAPI.removeJobListeners();
+      setErrorMsg('Another job is already running. Wait for it to finish, or cancel it.');
+      setAppState('error');
+    }
   }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy]);
 
   const handleCancel = useCallback(async () => {

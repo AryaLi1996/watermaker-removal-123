@@ -77,11 +77,19 @@ function missingBackendMessage(command) {
     : `Python environment not found at ${command}. Run ./dev.sh to create it.`;
 }
 
-/** Active Python child process reference (for cancel). */
-let activeJob = null;
+/**
+ * The job currently running, if any: { child, isExport, cancelled, superseded }.
+ *
+ * A record rather than a bare child process, because the exit handler has to
+ * know why the process ended and whether it is still the current job — a
+ * superseded preview must not clear the export that replaced it.
+ */
+let currentJob = null;
 
-/** Set while a cancel is in flight, so the exit is not reported as done/error. */
-let cancelRequested = false;
+/** Is this payload a full export, as opposed to one of the preview probes? */
+function isExportJob(payload) {
+  return !payload?.mode || payload.mode === 'full';
+}
 
 /**
  * Temp files created by the Python backend that live outside its own temp_dir
@@ -241,7 +249,19 @@ ipcMain.handle('python:run', async (_event, payload) => {
 
 // ─── Start full processing job ────────────────────────────────────
 ipcMain.handle('job:start', (_event, payload) => {
-  if (activeJob) return false; // already running
+  const isExport = isExportJob(payload);
+
+  if (currentJob) {
+    // Previews are short probes the app starts on its own (a still on load, a
+    // 3s clip on request). If one is still running when the user hits Export,
+    // the export wins — refusing it silently would look like a dead button.
+    if (isExport && !currentJob.isExport) {
+      currentJob.superseded = true;
+      currentJob.child.kill('SIGTERM');
+    } else {
+      return false;
+    }
+  }
 
   // Clean up any preview temp files from the previous job before starting.
   purgeTempFiles();
@@ -254,9 +274,9 @@ ipcMain.handle('job:start', (_event, payload) => {
     return false;
   }
 
-  cancelRequested = false;
   const child = spawn(command, args, { env: backendEnv() });
-  activeJob = child;
+  const job = { child, isExport, cancelled: false, superseded: false };
+  currentJob = job;
 
   // Per-job state shared with the line parser.
   const ctx = { outputPath: null, errored: false };
@@ -265,6 +285,8 @@ ipcMain.handle('job:start', (_event, payload) => {
   // so a message split across two chunks is still parsed correctly.
   let stdoutBuffer = '';
   child.stdout.on('data', (chunk) => {
+    // A superseded preview may still be draining; its output is no longer ours.
+    if (currentJob !== job) return;
     stdoutBuffer += chunk.toString();
     const lines = stdoutBuffer.split('\n');
     stdoutBuffer = lines.pop() ?? '';
@@ -279,7 +301,7 @@ ipcMain.handle('job:start', (_event, payload) => {
   });
 
   child.on('error', (err) => {
-    activeJob = null;
+    if (currentJob === job) currentJob = null;
     send('job:error', `Failed to start Python: ${err.message}`);
   });
 
@@ -288,26 +310,22 @@ ipcMain.handle('job:start', (_event, payload) => {
   child.stdin.end();
 
   child.on('close', (code) => {
+    // Only clear the slot if this job still owns it: a superseded preview
+    // exits after the export that replaced it has already started.
+    if (currentJob === job) currentJob = null;
+
+    if (job.cancelled || job.superseded) return;
+
     // Flush any final line that arrived without a trailing newline.
     const tail = stdoutBuffer.trim();
     stdoutBuffer = '';
     if (tail) handleBackendLine(tail, ctx);
 
-    activeJob = null;
-
-    if (cancelRequested) {
-      // The user asked for this exit — no done/error event.
-      cancelRequested = false;
-      return;
-    }
-
     // Only a full export completes with job:done. Preview jobs report through
     // job:preview-ready, and a preview finishing late would otherwise flip the
     // UI to "Export complete" — carrying the preview's own output path.
-    const isExport = !payload?.mode || payload.mode === 'full';
-
     if (code === 0) {
-      if (isExport) send('job:done', ctx.outputPath ?? payload?.outputPath ?? null);
+      if (job.isExport) send('job:done', ctx.outputPath ?? payload?.outputPath ?? null);
     } else if (!ctx.errored) {
       send('job:error', `Process exited with code ${code}`);
     }
@@ -318,10 +336,10 @@ ipcMain.handle('job:start', (_event, payload) => {
 
 // ─── Cancel / abort job ───────────────────────────────────────────
 ipcMain.handle('job:cancel', () => {
-  if (!activeJob) return false;
-  cancelRequested = true;
-  activeJob.kill('SIGTERM');
-  // activeJob is cleared by the 'close' handler, so a cancelled process is
+  if (!currentJob) return false;
+  currentJob.cancelled = true;
+  currentJob.child.kill('SIGTERM');
+  // The slot is cleared by the 'close' handler, so a cancelled process is
   // still reaped before a new job can start.
   return true;
 });
@@ -387,10 +405,10 @@ app.on('window-all-closed', () => {
 
 // Stop any running job and clean up preview temp files when the app quits.
 app.on('before-quit', () => {
-  if (activeJob) {
-    cancelRequested = true;
-    activeJob.kill('SIGTERM');
-    activeJob = null;
+  if (currentJob) {
+    currentJob.cancelled = true;
+    currentJob.child.kill('SIGTERM');
+    currentJob = null;
   }
   purgeTempFiles();
 });
