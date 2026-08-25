@@ -19,6 +19,15 @@ import shutil
 import subprocess
 import sys
 
+# Windows picks a legacy code page for stdout (cp1252 on the CI runners), and
+# the status line below is not encodable in it — printing it raised
+# UnicodeEncodeError and failed the release build *after* the freeze had
+# already succeeded. Ask for UTF-8 and never let an unprintable character be
+# the thing that fails a build.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, 'reconfigure'):
+        _stream.reconfigure(encoding='utf-8', errors='replace')
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKEND = os.path.join(ROOT, 'backend')
 DIST = os.path.join(BACKEND, 'dist')

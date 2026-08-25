@@ -209,6 +209,16 @@ Signing secrets are read by the release workflow when set (`CSC_LINK`,
 `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`).
 Without them the build still succeeds and produces **unsigned** artifacts.
 
+The "Signing environment" step is what makes that true, and it is not
+decoration. An unset secret expands to an empty string rather than to nothing
+at all, and electron-builder reads `CSC_LINK` as a certificate *path* whenever
+the variable is defined — empty included. Passing the secrets straight to the
+build step therefore resolved `""` against the checkout directory and failed
+the macOS job with `<workspace> not a file`. The step exports each variable
+only when it actually holds something, and otherwise sets
+`CSC_IDENTITY_AUTO_DISCOVERY=false` so electron-builder stops looking for a
+keychain identity that a fresh runner does not have.
+
 ---
 
 ## 3. Versioning
