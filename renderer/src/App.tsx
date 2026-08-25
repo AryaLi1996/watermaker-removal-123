@@ -31,6 +31,7 @@ function App() {
   const [stateLabel, setStateLabel] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [doneOutputPath, setDoneOutputPath] = useState('');
+  const [updateReady, setUpdateReady] = useState<string | null>(null);
 
   useEffect(() => {
     const update = () => {
@@ -46,6 +47,11 @@ function App() {
 
   // Drop any IPC listeners still attached when the app unmounts
   useEffect(() => () => window.electronAPI.removeJobListeners(), []);
+
+  // A downloaded update installs on the user's say-so, never mid-export.
+  useEffect(() => {
+    window.electronAPI.onUpdateDownloaded((version) => setUpdateReady(version ?? ''));
+  }, []);
 
   const handleSelectFile = useCallback(async () => {
     const path = await window.electronAPI.openFile();
@@ -173,6 +179,19 @@ function App() {
           >
             Load video
           </button>
+        )}
+
+        {updateReady !== null && !isProcessing && (
+          <div data-testid="update-banner" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, padding: '8px 12px', color: '#cbd5e1', fontSize: 12 }}>
+            Update {updateReady ? `${updateReady} ` : ''}ready to install
+            <button
+              data-testid="install-update"
+              onClick={() => window.electronAPI.installUpdate()}
+              style={{ display: 'block', marginTop: 6, background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}
+            >
+              Restart and install
+            </button>
+          </div>
         )}
 
         {isProcessing && <ProgressPanel progress={progress} stateLabel={stateLabel} onCancel={handleCancel} />}

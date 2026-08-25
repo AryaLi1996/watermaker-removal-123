@@ -25,6 +25,58 @@ function backendScript() {
   return process.env.WATERMARK_BACKEND || path.join(__dirname, '..', 'backend', 'main.py');
 }
 
+/** Path to the frozen backend shipped beside a packaged app. */
+function bundledBackend() {
+  const name = process.platform === 'win32' ? 'watermark-backend.exe' : 'watermark-backend';
+  return path.join(process.resourcesPath, 'backend', name);
+}
+
+/**
+ * How to launch the backend for this build.
+ *
+ * A packaged app has neither the venv (excluded from the build) nor a real
+ * file for backend/main.py (it lives inside app.asar, which is a virtual
+ * filesystem a child process cannot read). So the release ships a frozen
+ * single-file backend and runs that; development keeps using the venv.
+ */
+function backendCommand() {
+  // An explicit interpreter always wins — the E2E suite drives its own stub.
+  if (process.env.WATERMARK_PYTHON) {
+    return { command: process.env.WATERMARK_PYTHON, args: [backendScript()] };
+  }
+  if (app.isPackaged) {
+    return { command: bundledBackend(), args: [] };
+  }
+  return { command: getPythonPath(), args: [backendScript()] };
+}
+
+/**
+ * Environment for the backend child.
+ *
+ * A release can ship ffmpeg/ffprobe beside the frozen backend; point the child
+ * at them so an installed app does not depend on the user having ffmpeg on
+ * PATH. When they are absent the backend falls back to PATH by itself.
+ */
+function backendEnv() {
+  const env = { ...process.env };
+  if (!app.isPackaged) return env;
+
+  const dir = path.join(process.resourcesPath, 'backend');
+  const exe = process.platform === 'win32' ? '.exe' : '';
+  const ffmpeg = path.join(dir, `ffmpeg${exe}`);
+  const ffprobe = path.join(dir, `ffprobe${exe}`);
+  if (fs.existsSync(ffmpeg)) env.FFMPEG_PATH = ffmpeg;
+  if (fs.existsSync(ffprobe)) env.FFPROBE_PATH = ffprobe;
+  return env;
+}
+
+/** Explain a missing backend in terms of what the user can actually do. */
+function missingBackendMessage(command) {
+  return app.isPackaged
+    ? `Bundled backend not found at ${command}. This build is incomplete — please reinstall the app.`
+    : `Python environment not found at ${command}. Run ./dev.sh to create it.`;
+}
+
 /** Active Python child process reference (for cancel). */
 let activeJob = null;
 
@@ -166,7 +218,8 @@ ipcMain.handle('shell:openPath', (_event, filePath) => {
 // ─── Python quick hello (used during Epic 1 validation) ──────────
 ipcMain.handle('python:run', async (_event, payload) => {
   return new Promise((resolve, reject) => {
-    const child = spawn(getPythonPath(), [backendScript()]);
+    const { command, args } = backendCommand();
+    const child = spawn(command, args, { env: backendEnv() });
 
     let output = '';
     child.stdout.on('data', (chunk) => { output += chunk.toString(); });
@@ -193,16 +246,16 @@ ipcMain.handle('job:start', (_event, payload) => {
   // Clean up any preview temp files from the previous job before starting.
   purgeTempFiles();
 
-  const python = getPythonPath();
-  // Only a resolved venv path can be checked up front; a bare command name is
-  // left to the OS (and reported through the spawn 'error' handler below).
-  if (path.isAbsolute(python) && !fs.existsSync(python)) {
-    send('job:error', `Python environment not found at ${python}. Run ./dev.sh to create it.`);
+  const { command, args } = backendCommand();
+  // Only a resolved path can be checked up front; a bare command name is left
+  // to the OS (and reported through the spawn 'error' handler below).
+  if (path.isAbsolute(command) && !fs.existsSync(command)) {
+    send('job:error', missingBackendMessage(command));
     return false;
   }
 
   cancelRequested = false;
-  const child = spawn(python, [backendScript()]);
+  const child = spawn(command, args, { env: backendEnv() });
   activeJob = child;
 
   // Per-job state shared with the line parser.
@@ -264,8 +317,55 @@ ipcMain.handle('job:cancel', () => {
   return true;
 });
 
+/**
+ * Check for updates against the release feed electron-builder publishes.
+ *
+ * Only meaningful in a packaged build that carries an app-update.yml; a
+ * development run or a build made without a publish provider has no feed, so
+ * this stays quiet rather than reporting a failure the user cannot act on.
+ */
+function initAutoUpdate() {
+  if (!app.isPackaged) return;
+
+  const feed = path.join(process.resourcesPath, 'app-update.yml');
+  if (!fs.existsSync(feed)) return;
+
+  let autoUpdater;
+  try {
+    ({ autoUpdater } = require('electron-updater'));
+  } catch (err) {
+    console.warn('[update] electron-updater unavailable:', err.message);
+    return;
+  }
+
+  // A failed check is a log line, never a dialog: the app works without it.
+  autoUpdater.on('error', (err) => console.warn('[update] check failed:', err.message));
+  autoUpdater.on('update-available', (info) => send('update:available', info?.version ?? null));
+  autoUpdater.on('update-downloaded', (info) => send('update:downloaded', info?.version ?? null));
+
+  autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+    console.warn('[update] check failed:', err.message);
+  });
+
+  return autoUpdater;
+}
+
+// ─── Install a downloaded update ──────────────────────────────────
+ipcMain.handle('update:install', () => {
+  if (!app.isPackaged) return false;
+  try {
+    const { autoUpdater } = require('electron-updater');
+    autoUpdater.quitAndInstall();
+    return true;
+  } catch (err) {
+    console.warn('[update] install failed:', err.message);
+    return false;
+  }
+});
+
 app.whenReady().then(() => {
   createWindow();
+  initAutoUpdate();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

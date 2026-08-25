@@ -73,6 +73,23 @@ test.describe('renderer flow', () => {
     await expect(page.getByText('Blur Strength')).toBeHidden();
   });
 
+  test('an update banner appears only once one is downloaded', async ({ page, electronApp }) => {
+    await mockShell(electronApp);
+    await expect(page.getByTestId('update-banner')).toBeHidden();
+
+    // The main process emits this when electron-updater finishes a download
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('update:downloaded', '1.2.3');
+    });
+
+    await expect(page.getByTestId('update-banner')).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText('Update 1.2.3 ready to install')).toBeVisible();
+
+    // Clicking through reaches the main process without throwing
+    const installed = await page.evaluate(() => (window as any).electronAPI.installUpdate());
+    expect(installed).toBe(false); // not a packaged build, so it declines
+  });
+
   test('export reveals the finished file without being asked', async ({ page, electronApp }) => {
     await mockShell(electronApp);
     await loadVideo(page);

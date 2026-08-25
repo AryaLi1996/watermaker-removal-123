@@ -10,7 +10,7 @@
     "dev": "concurrently -k \"npm run dev:renderer\" \"npm run dev:electron\"",
     "build:renderer": "npm run build --prefix renderer",
     "build": "npm run build:renderer",
-    "dist": "npm run build && electron-builder --publish never",
+    "dist": "node scripts/build.js && electron-builder --publish never",
     "test:backend": "cd backend && .venv/bin/python -m pytest ../tests/unit/backend -v",
     "test:frontend": "npm run test:run --prefix renderer",
     "test:coverage": "cd backend && .venv/bin/python -m pytest ../tests/unit/backend --cov --cov-report=term-missing --cov-report=html",
@@ -19,7 +19,12 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:debug": "playwright test --debug",
-    "screenshots": "playwright test capture-screenshots --reporter=line"
+    "screenshots": "playwright test capture-screenshots --reporter=line",
+    "build:backend": "backend/.venv/bin/python scripts/build_backend.py",
+    "dist:mac": "node scripts/build.js && electron-builder --mac --publish never",
+    "dist:win": "node scripts/build.js && electron-builder --win --publish never",
+    "dist:linux": "node scripts/build.js && electron-builder --linux --publish never",
+    "release": "node scripts/build.js && electron-builder --publish always"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
@@ -34,23 +39,89 @@
   "build": {
     "appId": "com.watermark-remover.app",
     "productName": "Watermark Remover",
+    "copyright": "Copyright \u00a9 2026 pandac.in",
     "directories": {
-      "buildResources": "build"
+      "buildResources": "build",
+      "output": "release"
     },
     "files": [
       "electron/**",
       "renderer/dist/**",
-      "backend/**",
-      "!backend/.venv"
+      "!**/*.map",
+      "!**/*.ts",
+      "!**/*.spec.*",
+      "!**/__pycache__"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/dist",
+        "to": "backend",
+        "filter": [
+          "watermark-backend*",
+          "ffmpeg*",
+          "ffprobe*"
+        ]
+      }
     ],
     "mac": {
-      "target": "dmg"
+      "category": "public.app-category.video",
+      "icon": "build/icon.png",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "win": {
-      "target": "nsis"
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
     "linux": {
-      "target": "AppImage"
-    }
+      "icon": "build/icon.png",
+      "category": "Video",
+      "target": [
+        "AppImage"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 410,
+          "y": 150,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 130,
+          "y": 150,
+          "type": "file"
+        }
+      ]
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }
