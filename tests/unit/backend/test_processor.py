@@ -121,3 +121,42 @@ def test_worker_raises_on_an_unreadable_frame(tmp_path):
     broken.write_bytes(b'not a png')
     with pytest.raises(IOError):
         processor._process_single_frame((str(broken), BLUR_CONFIG, (320, 240, 10, 10, 50, 30)))
+
+
+# ─── OpenCV thread budget ────────────────────────────────────────────────────
+#
+# Each pool worker runs OpenCV, which by default spawns threads up to the core
+# count — so N workers each try to use N cores. Pinning them measured ~6%
+# faster. The setting is applied before forking: calling into OpenCV's
+# threading machinery *inside* a forked child deadlocks when the parent already
+# has a warm thread pool, which is exactly what a full test run produces.
+
+def test_thread_count_defaults_to_one_per_worker(monkeypatch):
+    monkeypatch.delenv('WATERMARK_CV_THREADS', raising=False)
+    assert processor.opencv_thread_count() == 1
+
+
+def test_thread_count_honours_an_override(monkeypatch):
+    monkeypatch.setenv('WATERMARK_CV_THREADS', '2')
+    assert processor.opencv_thread_count() == 2
+
+
+def test_zero_means_leave_opencv_alone(monkeypatch):
+    monkeypatch.setenv('WATERMARK_CV_THREADS', '0')
+    assert processor.opencv_thread_count() == 0
+
+
+def test_a_nonsense_override_falls_back_to_one(monkeypatch):
+    monkeypatch.setenv('WATERMARK_CV_THREADS', 'lots')
+    assert processor.opencv_thread_count() == 1
+
+
+def test_run_batch_restores_the_previous_thread_setting(tmp_path, monkeypatch):
+    """The setting is global to the process, so a job must put it back."""
+    monkeypatch.setenv('WATERMARK_CV_THREADS', '1')
+    cv2.setNumThreads(3)
+
+    paths = _write_frames(str(tmp_path / 'frames'), 2)
+    processor.run_batch(paths, BLUR_CONFIG, width=320, height=240)
+
+    assert cv2.getNumThreads() == 3

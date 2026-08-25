@@ -24,3 +24,51 @@ body {
   overflow: hidden;
 }
 
+/* ── Scrollbars ────────────────────────────────────────────────────────────
+   The sidebar scrolls on short windows; the default light scrollbar cuts a
+   bright stripe through a dark app. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #18181b;
+}
+::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+
+/* ── Narrow windows ────────────────────────────────────────────────────────
+   The window minimum is 900×600, so this is not about phones: it is about a
+   user dragging the window narrow or working on a small laptop beside other
+   apps. Below 820px the fixed sidebar leaves too little canvas, so the two
+   panes stack and the sidebar takes a capped, scrollable strip. */
+@media (max-width: 820px) {
+  .app-shell {
+    flex-direction: column;
+  }
+  .app-sidebar {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-height: 45vh;
+    border-right: none;
+    border-bottom: 1px solid #3f3f46;
+    padding: 16px !important;
+  }
+  .app-canvas {
+    min-height: 55vh;
+  }
+}
+
+/* Very short windows: reclaim vertical space from the sidebar padding. */
+@media (max-height: 620px) {
+  .app-sidebar {
+    padding-top: 14px !important;
+    padding-bottom: 14px !important;
+    gap: 12px !important;
+  }
+}

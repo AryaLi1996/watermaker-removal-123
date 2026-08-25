@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Presets: eight built-ins covering the common cases, plus your own saved to
+  this machine and restored on the next launch.
+- Keyboard shortcuts for the repeated actions — 1–4 pick a method, ⌘/Ctrl+P
+  previews, ⌘/Ctrl+E exports, ⌘/Ctrl+Z undoes, ⌘/Ctrl+S saves a preset, Esc
+  cancels — listed in the sidebar so they are findable.
+- Undo/redo over the selection, method and parameters.
+- A time-remaining estimate beside the progress bar, fitted to recent progress
+  so it tracks the current stage rather than a whole-job average.
+- Backend failures are explained in plain language, with the technical detail
+  kept behind "Copy details" for a bug report.
+- A timeout on preview extraction, so a backend that never answers reports
+  that instead of spinning forever.
+- The layout stacks and the sidebar scrolls in a narrow or short window.
 - Frozen Python backend (PyInstaller) shipped inside the installer, so an
   installed app needs neither a Python environment nor ffmpeg of its own.
 - ffmpeg and ffprobe bundled from the build machine into `resources/backend/`.
@@ -19,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the user's confirmation.
 
 ### Fixed
+- OpenCV no longer oversubscribes the CPU: each pool worker was spawning
+  threads up to the core count while the pool already used every core.
+  Measured a few percent faster end to end on a 4-core machine.
 - Packaged builds could not run a job at all: they pointed at the excluded
   `backend/.venv` and at a script path inside `app.asar`, which no child
   process can execute.
