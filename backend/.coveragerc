@@ -1,0 +1,19 @@
+# Coverage settings for the backend test suite.
+# Run via: npm run test:coverage
+[run]
+source = .
+omit =
+    .venv/*
+    */__pycache__/*
+
+[report]
+show_missing = True
+skip_covered = False
+# The suite is expected to stay above this; CI fails below it.
+fail_under = 80
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+
+[html]
+directory = ../htmlcov

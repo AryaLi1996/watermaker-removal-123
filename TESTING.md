@@ -8,8 +8,11 @@ How to run, understand, and extend the automated test suite.
 
 | Suite | Command | Tests | Location |
 |---|---|---|---|
-| Backend (Python) | `npm run test:backend` | 11 pytest | `tests/unit/backend/` |
-| Renderer (TypeScript) | `cd renderer && npm run test:run` | 15 vitest | `tests/unit/renderer/` |
+| Backend (Python) | `npm run test:backend` | 81 pytest | `tests/unit/backend/` |
+| Backend coverage | `npm run test:coverage` | ≥ 80% required | `htmlcov/` |
+| Renderer (TypeScript) | `npm run test:frontend` | 15 vitest | `tests/unit/renderer/` |
+| E2E (Electron) | `npm run test:e2e` | 31 Playwright | `tests/e2e/` |
+| Everything | `npm run test:all` | all of the above | root |
 | Environment check | `python scripts/validate_env.py` | manual | `scripts/` |
 | Full build validation | `npm run build` | build passes | root |
 
@@ -47,7 +50,7 @@ backend/.venv/bin/python -m pytest tests/unit/backend -v
 
 ### What is tested
 
-**File:** `tests/unit/backend/test_image_core.py`
+**File:** `tests/unit/backend/test_image_core.py` — the removal engines
 
 | Test | What it checks |
 |---|---|
@@ -63,11 +66,61 @@ backend/.venv/bin/python -m pytest tests/unit/backend -v
 | `test_clone_stamp_oob_raises` | Out-of-bounds source offset raises `ValueError` |
 | `test_apply_removal_routes_inpaint` | `apply_removal` dispatcher calls the right engine |
 
+**File:** `tests/unit/backend/test_backend_helpers.py` — clamping and the cancel path
+
+| Test group | What it checks |
+|---|---|
+| `clamp_roi` | A box running off any edge is trimmed; a fully outside box raises |
+| `clamp_clone_offset` | The clone source is nudged back in-frame instead of failing |
+| `apply_removal` | Every engine survives an ROI hanging off the frame edge |
+| `preview_window` | The 3s window is centred, and shrinks for a shorter video |
+| `audio_args_for` | MP4-native audio is copied; vorbis/opus/flac transcode to AAC |
+| `_run` / `terminate` | Child stdout and failures propagate; a cancel stops the child |
+
+**File:** `tests/unit/backend/test_ff_utils.py` — the ffmpeg layer (real ffmpeg, tiny synthetic clips)
+
+| Test group | What it checks |
+|---|---|
+| `probe_video` | Dimensions, fps, duration, codecs; missing and non-video files raise |
+| `extract_frames` / `extract_preview_frame` / `extract_clip` | One PNG per frame, a readable still, a trimmed clip |
+| `reassemble_video` | Audio preserved, silent sources handled, vorbis transcoded, temp file removed |
+
+**File:** `tests/unit/backend/test_processor.py` — the multi-core batch
+
+| Test group | What it checks |
+|---|---|
+| `run_batch` | Every frame rewritten, pixels outside the ROI untouched, progress 0→100 |
+| Engine sweep | All four methods run through the pool |
+| Worker body | One frame processed on disk; an unreadable frame raises |
+
+**File:** `tests/unit/backend/test_main_pipeline.py` — schema, protocol and dispatch
+
+| Test group | What it checks |
+|---|---|
+| `JobConfig` | Absolute paths required, missing input rejected, `/dev/null` allowed |
+| Protocol | `PROGRESS:`, `STATE:` and camelCase `STATE:meta:` line formats |
+| `run_pipeline` | Produces a playable video with its audio intact |
+| Dispatch | full / preview_frame / preview modes, error lines, temp dir cleaned up |
+
+Tests needing ffmpeg are marked `requires_ffmpeg` and skip (rather than fail)
+where it is not installed. `tests/unit/backend/conftest.py` builds the
+synthetic clips they use.
+
 ### Expected output
 
 ```
-tests/unit/backend/test_image_core.py ...........   11 passed
+tests/unit/backend/ ......................   81 passed
 ```
+
+### Coverage
+
+```bash
+npm run test:coverage
+```
+
+Prints a per-file table and writes a browsable report to `htmlcov/index.html`.
+Settings live in `backend/.coveragerc`, which fails the run below **80%**
+(currently ~96%).
 
 ---
 
