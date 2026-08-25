@@ -300,8 +300,17 @@ ipcMain.handle('job:start', (_event, payload) => {
       cancelRequested = false;
       return;
     }
-    if (code === 0) send('job:done', ctx.outputPath ?? payload?.outputPath ?? null);
-    else if (!ctx.errored) send('job:error', `Process exited with code ${code}`);
+
+    // Only a full export completes with job:done. Preview jobs report through
+    // job:preview-ready, and a preview finishing late would otherwise flip the
+    // UI to "Export complete" — carrying the preview's own output path.
+    const isExport = !payload?.mode || payload.mode === 'full';
+
+    if (code === 0) {
+      if (isExport) send('job:done', ctx.outputPath ?? payload?.outputPath ?? null);
+    } else if (!ctx.errored) {
+      send('job:error', `Process exited with code ${code}`);
+    }
   });
 
   return true;

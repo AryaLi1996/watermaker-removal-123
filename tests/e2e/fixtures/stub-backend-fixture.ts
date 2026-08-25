@@ -10,6 +10,14 @@ import { test as base, expect, _electron as electron } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
 
+/**
+ * Chromium's SUID sandbox needs chrome-sandbox owned by root with mode 4755.
+ * A CI checkout cannot carry a setuid bit, so Electron refuses to start there.
+ * Test-only: the shipped app keeps its sandbox.
+ */
+const SANDBOX_ARGS = process.platform === 'linux' ? ['--no-sandbox'] : [];
+
+
 const repoRoot = path.join(__dirname, '..', '..', '..');
 
 type Fixtures = { electronApp: ElectronApplication; page: Page };
@@ -26,7 +34,7 @@ export const test = base.extend<Fixtures, Options>({
     async ({ appTag }, use) => {
       void appTag; // depended on so a new tag forces a fresh app
       const app = await electron.launch({
-        args: [path.join(repoRoot, 'electron', 'main.js')],
+        args: [...SANDBOX_ARGS, path.join(repoRoot, 'electron', 'main.js')],
         env: {
           ...process.env,
           NODE_ENV: 'test',

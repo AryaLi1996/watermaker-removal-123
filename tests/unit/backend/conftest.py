@@ -72,8 +72,31 @@ def silent_video(tmp_path_factory) -> str:
     return _synth_video(path, audio=None)
 
 
+def _first_available_encoder(candidates: tuple[str, ...]) -> str | None:
+    """
+    Return the first encoder this ffmpeg build actually has.
+
+    Builds differ: Homebrew's ffmpeg ships without libvorbis, so a fixture that
+    hard-codes one encoder fails on macOS while passing on Linux.
+    """
+    try:
+        listing = subprocess.run(['ffmpeg', '-hide_banner', '-encoders'],
+                                 capture_output=True, check=True).stdout.decode()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return next((name for name in candidates if f' {name} ' in listing), None)
+
+
 @pytest.fixture(scope='session')
-def vorbis_video(tmp_path_factory) -> str:
-    """A .mkv carrying vorbis audio — a codec MP4 cannot simply copy."""
-    path = str(tmp_path_factory.mktemp('media') / 'vorbis.mkv')
-    return _synth_video(path, audio='libvorbis')
+def nonmp4_audio_video(tmp_path_factory) -> str:
+    """
+    A .mkv whose audio codec MP4 cannot carry, so the mux has to transcode.
+
+    flac is a native ffmpeg encoder and present nearly everywhere; opus and
+    vorbis stand in where a build lacks it.
+    """
+    codec = _first_available_encoder(('flac', 'libopus', 'libvorbis'))
+    if codec is None:
+        pytest.skip('no non-MP4 audio encoder available in this ffmpeg build')
+    path = str(tmp_path_factory.mktemp('media') / f'{codec}.mkv')
+    return _synth_video(path, audio=codec)

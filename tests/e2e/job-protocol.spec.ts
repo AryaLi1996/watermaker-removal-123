@@ -95,6 +95,36 @@ test.describe('job stdout protocol', () => {
     expect(received.some((e) => e.type === 'done')).toBe(false);
   });
 
+  test('a finished preview job does not report itself as a completed export', async ({ page }) => {
+    // A preview finishing late used to fire job:done, flipping the UI to
+    // "Export complete" with the preview's own output path.
+    await startCollecting(page);
+    await startJob(page, { mode: 'preview', outputPath: '/tmp/preview-clip.mp4' });
+
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'preview'),
+      { timeout: 10_000 },
+    );
+    await page.waitForTimeout(500); // let the process exit land
+
+    const received = await events(page);
+    expect(received.some((e) => e.type === 'done')).toBe(false);
+    expect(received.some((e) => e.type === 'error')).toBe(false);
+  });
+
+  test('a preview_frame job does not report itself as a completed export', async ({ page }) => {
+    await startCollecting(page);
+    await startJob(page, { mode: 'preview_frame', outputPath: '/dev/null' });
+
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'preview'),
+      { timeout: 10_000 },
+    );
+    await page.waitForTimeout(500);
+
+    expect((await events(page)).some((e) => e.type === 'done')).toBe(false);
+  });
+
   test('cancel stops the job without emitting done or error', async ({ page }) => {
     await startCollecting(page);
     await startJob(page, { scenario: 'hang', outputPath: '/tmp/hang.mp4' });

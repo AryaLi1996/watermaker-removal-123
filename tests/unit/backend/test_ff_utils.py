@@ -93,13 +93,17 @@ def test_reassemble_handles_a_silent_source(silent_video, tmp_path):
     assert ff_utils.probe_video(out)['audio_codec'] is None
 
 
-def test_reassemble_transcodes_audio_mp4_cannot_carry(vorbis_video, tmp_path):
-    """A vorbis .mkv used to fail the mux outright; it must come back as AAC."""
+def test_reassemble_transcodes_audio_mp4_cannot_carry(nonmp4_audio_video, tmp_path):
+    """Audio MP4 cannot carry used to fail the mux outright; it must come back as AAC."""
     frames_dir = str(tmp_path / 'frames')
-    ff_utils.extract_frames(vorbis_video, frames_dir)
+    ff_utils.extract_frames(nonmp4_audio_video, frames_dir)
+
+    source_codec = ff_utils.probe_video(nonmp4_audio_video)['audio_codec']
+    assert source_codec not in ff_utils.MP4_AUDIO_CODECS, 'fixture must use a codec MP4 rejects'
 
     out = str(tmp_path / 'out.mp4')
-    ff_utils.reassemble_video(frames_dir, vorbis_video, out, fps=10.0, audio_codec='vorbis')
+    ff_utils.reassemble_video(frames_dir, nonmp4_audio_video, out,
+                              fps=10.0, audio_codec=source_codec)
     assert ff_utils.probe_video(out)['audio_codec'] == 'aac'
 
 
