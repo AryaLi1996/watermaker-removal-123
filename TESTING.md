@@ -11,7 +11,8 @@ How to run, understand, and extend the automated test suite.
 | Backend (Python) | `npm run test:backend` | 81 pytest | `tests/unit/backend/` |
 | Backend coverage | `npm run test:coverage` | ≥ 80% required | `htmlcov/` |
 | Renderer (TypeScript) | `npm run test:frontend` | 15 vitest | `tests/unit/renderer/` |
-| E2E (Electron) | `npm run test:e2e` | 31 Playwright | `tests/e2e/` |
+| E2E (Electron) | `npm run test:e2e` | 35 Playwright | `tests/e2e/` |
+| Docs screenshots | `npm run screenshots` | 2 Playwright | `tests/e2e/capture-screenshots.spec.ts` |
 | Everything | `npm run test:all` | all of the above | root |
 | Environment check | `python scripts/validate_env.py` | manual | `scripts/` |
 | Full build validation | `npm run build` | build passes | root |
@@ -431,3 +432,26 @@ To trigger the pipeline:
 npm version patch          # bumps version, creates tag
 git push origin main --follow-tags
 ```
+
+---
+
+## Known issue: the screenshot generator hangs on the CI Ubuntu runner
+
+`tests/e2e/capture-screenshots.spec.ts` regenerates the images in
+`docs/screenshots/`. It drives a real export through the UI, which takes a few
+minutes, and it is **excluded from CI** (`testIgnore` in `playwright.config.ts`,
+active when `CI` is set and `SCREENSHOTS` is not).
+
+The reason is unresolved: on the GitHub `ubuntu-latest` runner the export test
+consumes whatever test budget it is given — 3.0m against a 180s limit, then
+7.0m against 420s — which is a deadlock rather than slowness. The same spec
+passes on the macOS and Windows runners, and locally, including pinned to two
+cores (`taskset -c 0,1`) to mimic the runner's size.
+
+What is *not* affected: the same end-to-end path — load a video, select an ROI,
+export, verify the output file — is covered in CI on all three platforms by
+`tests/e2e/watermark-removal.spec.ts`, which completes in about 23 seconds.
+
+To regenerate the screenshots, run `npm run screenshots` locally. If you pick
+this up, the Playwright trace from a failing CI run is the place to start: it is
+uploaded as the `playwright-report-ubuntu-latest` artifact.
