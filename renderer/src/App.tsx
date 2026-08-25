@@ -5,8 +5,17 @@ import VideoCanvas from './components/VideoCanvas';
 import MethodPicker from './components/MethodPicker';
 import ProgressPanel from './components/ProgressPanel';
 import DonePanel from './components/DonePanel';
+import PresetPicker from './components/PresetPicker';
 import type { AppState, JobConfig, RemovalMethod, ROI, VideoMeta } from './types';
 import { normalizeCoordinates, defaultOutputName, formatDuration } from './utils';
+import { friendlyError, hasTechnicalDetail, PREVIEW_TIMEOUT_MS, PREVIEW_TIMEOUT_MESSAGE } from './errors';
+import { BUILT_IN_PRESETS, loadCustomPresets, saveCustomPresets, presetFromCurrent } from './presets';
+import type { Preset, PresetParams } from './presets';
+import { useHistory } from './hooks/useHistory';
+import type { JobSettings } from './hooks/useHistory';
+import { useKeyboardShortcuts, SHORTCUT_HINTS } from './hooks/useKeyboardShortcuts';
+import { estimateSecondsRemaining, recordSample } from './eta';
+import type { ProgressSample } from './eta';
 
 const SIDEBAR_W = 280;
 
@@ -32,6 +41,29 @@ function App() {
   const [errorMsg, setErrorMsg] = useState('');
   const [doneOutputPath, setDoneOutputPath] = useState('');
   const [updateReady, setUpdateReady] = useState<string | null>(null);
+  const [rawError, setRawError] = useState('');
+  const [copiedDetail, setCopiedDetail] = useState(false);
+  const [customPresets, setCustomPresets] = useState<Preset[]>(() => loadCustomPresets());
+  const [samples, setSamples] = useState<ProgressSample[]>([]);
+  const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** One place to fail: keeps the raw text for a report, shows plain language. */
+  const failWith = useCallback((raw: string) => {
+    setRawError(raw);
+    setErrorMsg(friendlyError(raw));
+    setAppState('error');
+    setCopiedDetail(false);
+    window.electronAPI.removeJobListeners();
+  }, []);
+
+  const clearPreviewTimer = useCallback(() => {
+    if (previewTimer.current) {
+      clearTimeout(previewTimer.current);
+      previewTimer.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearPreviewTimer, [clearPreviewTimer]);
 
   useEffect(() => {
     const update = () => {
@@ -68,22 +100,26 @@ function App() {
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobMeta((meta) => { setVideoMeta(meta); });
     window.electronAPI.onPreviewReady((previewPath: string) => {
+      clearPreviewTimer();
       setPreviewFrameUrl(`file://${previewPath}`);
       window.electronAPI.removeJobListeners();
     });
     window.electronAPI.onJobError((msg: string) => {
       // Without this the canvas sits on "Loading preview…" forever whenever
       // the backend fails to produce the still.
-      setErrorMsg(msg);
-      setAppState('error');
-      window.electronAPI.removeJobListeners();
+      clearPreviewTimer();
+      failWith(msg);
     });
+
+    // A backend that never answers would leave the spinner running for good.
+    clearPreviewTimer();
+    previewTimer.current = setTimeout(() => failWith(PREVIEW_TIMEOUT_MESSAGE), PREVIEW_TIMEOUT_MS);
     window.electronAPI.startJob({
       inputPath: path, outputPath: '/dev/null',
       roi: { x: 0, y: 0, w: 1, h: 1 },
       method: 'inpaint', mode: 'preview_frame',
     });
-  }, []);
+  }, [failWith, clearPreviewTimer]);
 
   const handleSelectOutput = useCallback(async () => {
     if (!inputPath) return;
@@ -93,7 +129,10 @@ function App() {
 
   const registerJobListeners = useCallback(() => {
     window.electronAPI.removeJobListeners();
-    window.electronAPI.onJobProgress(setProgress);
+    window.electronAPI.onJobProgress((value) => {
+      setProgress(value);
+      setSamples((prev) => recordSample(prev, value, Date.now()));
+    });
     window.electronAPI.onJobState(setStateLabel);
     window.electronAPI.onJobDone((finalPath) => {
       // Prefer the path the backend actually wrote; fall back to the requested one.
@@ -106,12 +145,8 @@ function App() {
       if (written) window.electronAPI.openPath(written);
       window.electronAPI.removeJobListeners();
     });
-    window.electronAPI.onJobError((msg: string) => {
-      setErrorMsg(msg);
-      setAppState('error');
-      window.electronAPI.removeJobListeners();
-    });
-  }, [outputPath]);
+    window.electronAPI.onJobError(failWith);
+  }, [outputPath, failWith]);
 
   const handleExport = useCallback(async () => {
     if (!inputPath) return;
@@ -123,40 +158,39 @@ function App() {
     }
     const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
     const payload: JobConfig = { inputPath, outputPath: out, roi: videoROI, method, mode: 'full', radius, kernelSize, color, dx, dy };
-    setProgress(0); setStateLabel(''); setAppState('processing');
+    setProgress(0); setStateLabel(''); setSamples([]); setAppState('processing');
     registerJobListeners();
     const started = await window.electronAPI.startJob(payload);
     if (!started) {
       // Refused because another job holds the backend; don't sit in a
       // "processing" state that nothing will ever complete.
-      window.electronAPI.removeJobListeners();
-      setErrorMsg('Another job is already running. Wait for it to finish, or cancel it.');
-      setAppState('error');
+      failWith('Another job is already running. Wait for it to finish, or cancel it.');
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, registerJobListeners]);
+  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, registerJobListeners, failWith]);
 
   const handlePreview = useCallback(async () => {
     if (!inputPath) return;
     const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
     // outputPath is passed as placeholder; backend generates its own temp file for the preview clip
     const payload: JobConfig = { inputPath, outputPath: outputPath ?? '/dev/null', roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy };
-    setProgress(0); setStateLabel('Generating 3s preview…'); setAppState('processing');
+    setProgress(0); setStateLabel('Generating 3s preview…'); setSamples([]); setAppState('processing');
     window.electronAPI.removeJobListeners();
-    window.electronAPI.onJobProgress(setProgress);
+    window.electronAPI.onJobProgress((value) => {
+      setProgress(value);
+      setSamples((prev) => recordSample(prev, value, Date.now()));
+    });
     window.electronAPI.onJobState(setStateLabel);
     window.electronAPI.onPreviewReady((clipPath: string) => {
       setPreviewClipUrl(`file://${clipPath}`);
       setAppState('loaded');
       window.electronAPI.removeJobListeners();
     });
-    window.electronAPI.onJobError((msg: string) => { setErrorMsg(msg); setAppState('error'); window.electronAPI.removeJobListeners(); });
+    window.electronAPI.onJobError(failWith);
     const started = await window.electronAPI.startJob(payload);
     if (!started) {
-      window.electronAPI.removeJobListeners();
-      setErrorMsg('Another job is already running. Wait for it to finish, or cancel it.');
-      setAppState('error');
+      failWith('Another job is already running. Wait for it to finish, or cancel it.');
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy]);
+  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, failWith]);
 
   const handleCancel = useCallback(async () => {
     await window.electronAPI.cancelJob();
@@ -173,14 +207,98 @@ function App() {
     if (updates.dy !== undefined) setDy(updates.dy);
   }, []);
 
+  // ── Undo / redo over the settings that define a job ───────────────────
+  const params: PresetParams = { radius, kernelSize, color, dx, dy };
+  const settings: JobSettings = { roi: canvasROI, method, params };
+  const history = useHistory(settings);
+
+  const applySettings = useCallback((next: JobSettings) => {
+    setCanvasROI(next.roi);
+    setMethod(next.method);
+    setRadius(next.params.radius);
+    setKernelSize(next.params.kernelSize);
+    setColor(next.params.color);
+    setDx(next.params.dx);
+    setDy(next.params.dy);
+  }, []);
+
+  // Settle before recording: a drag or a slider sweep is one edit, not fifty.
+  const { push: pushHistory } = history;
+  useEffect(() => {
+    const timer = setTimeout(() => pushHistory({ roi: canvasROI, method, params: { radius, kernelSize, color, dx, dy } }), 400);
+    return () => clearTimeout(timer);
+  }, [canvasROI, method, radius, kernelSize, color, dx, dy, pushHistory]);
+
+  const handleUndo = useCallback(() => {
+    const previous = history.undo();
+    if (previous) applySettings(previous);
+  }, [history, applySettings]);
+
+  const handleRedo = useCallback(() => {
+    const next = history.redo();
+    if (next) applySettings(next);
+  }, [history, applySettings]);
+
+  // ── Presets ───────────────────────────────────────────────────────────
+  const presets = [...BUILT_IN_PRESETS, ...customPresets];
+
+  const applyPreset = useCallback((preset: Preset) => {
+    setMethod(preset.method);
+    setRadius(preset.params.radius);
+    setKernelSize(preset.params.kernelSize);
+    setColor(preset.params.color);
+    setDx(preset.params.dx);
+    setDy(preset.params.dy);
+  }, []);
+
+  const saveCurrentPreset = useCallback((name: string) => {
+    setCustomPresets((prev) => {
+      const next = [...prev, presetFromCurrent(name, method, { radius, kernelSize, color, dx, dy })];
+      saveCustomPresets(next);
+      return next;
+    });
+  }, [method, radius, kernelSize, color, dx, dy]);
+
+  const deletePreset = useCallback((id: string) => {
+    setCustomPresets((prev) => {
+      const next = prev.filter((p) => p.id !== id);
+      saveCustomPresets(next);
+      return next;
+    });
+  }, []);
+
+  /** Which preset the current settings match, so the picker can show it. */
+  const activePresetId = presets.find((p) =>
+    p.method === method &&
+    p.params.radius === radius &&
+    p.params.kernelSize === kernelSize &&
+    p.params.dx === dx &&
+    p.params.dy === dy &&
+    p.params.color[0] === color[0] && p.params.color[1] === color[1] && p.params.color[2] === color[2]
+  )?.id ?? null;
+
   const isLoaded = appState === 'loaded';
   const isProcessing = appState === 'processing';
   const canExport = isLoaded && !!inputPath;
 
+  const [namingPreset, setNamingPreset] = useState(false);
+
+  useKeyboardShortcuts({
+    onExport: () => { if (canExport) void handleExport(); },
+    onPreview: () => { if (canExport) void handlePreview(); },
+    onCancel: () => { if (isProcessing) void handleCancel(); },
+    onUndo: handleUndo,
+    onRedo: handleRedo,
+    onSavePreset: () => { if (isLoaded) setNamingPreset(true); },
+    onSelectMethod: (next) => { if (isLoaded) setMethod(next); },
+  }, appState !== 'empty');
+
+  const secondsRemaining = estimateSecondsRemaining(samples);
+
   return (
-    <div style={{ display: 'flex', width: '100%', height: '100%', background: '#18181b' }}>
+    <div className="app-shell" style={{ display: 'flex', width: '100%', height: '100%', background: '#18181b' }}>
       {/* Sidebar */}
-      <div style={{ width: SIDEBAR_W, minWidth: SIDEBAR_W, background: '#27272a', borderRight: '1px solid #3f3f46', display: 'flex', flexDirection: 'column', padding: 24, gap: 20, overflowY: 'auto' }}>
+      <div className="app-sidebar" style={{ width: SIDEBAR_W, minWidth: SIDEBAR_W, background: '#27272a', borderRight: '1px solid #3f3f46', display: 'flex', flexDirection: 'column', padding: 24, gap: 20, overflowY: 'auto' }}>
         <p style={{ color: '#f4f4f5', fontSize: 14, fontWeight: 500 }}>Watermark Remover</p>
 
         {appState === 'empty' && (
@@ -206,7 +324,14 @@ function App() {
           </div>
         )}
 
-        {isProcessing && <ProgressPanel progress={progress} stateLabel={stateLabel} onCancel={handleCancel} />}
+        {isProcessing && (
+          <ProgressPanel
+            progress={progress}
+            stateLabel={stateLabel}
+            secondsRemaining={secondsRemaining}
+            onCancel={handleCancel}
+          />
+        )}
 
         {appState === 'done' && (
           <DonePanel outputPath={doneOutputPath} onReveal={() => window.electronAPI.openPath(doneOutputPath)} onReset={() => setAppState('loaded')} />
@@ -214,9 +339,24 @@ function App() {
 
         {appState === 'error' && (
           <div data-testid="error-panel" style={{ background: '#450a0a', border: '1px solid #b91c1c', borderRadius: 6, padding: '8px 12px', color: '#fca5a5', fontSize: 12 }}>
-            <strong>Error: </strong>{errorMsg}
-            <br />
-            <button data-testid="dismiss-error" onClick={() => setAppState('loaded')} style={{ marginTop: 8, background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 11, textDecoration: 'underline' }}>Dismiss</button>
+            {errorMsg}
+            <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+              <button data-testid="dismiss-error" onClick={() => setAppState('loaded')} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}>Dismiss</button>
+              {hasTechnicalDetail(rawError) && (
+                <button
+                  data-testid="copy-error"
+                  onClick={() => {
+                    // Clipboard access can be refused; the button must not throw.
+                    void navigator.clipboard?.writeText(rawError)
+                      .then(() => setCopiedDetail(true))
+                      .catch(() => setCopiedDetail(false));
+                  }}
+                  style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}
+                >
+                  {copiedDetail ? 'Copied' : 'Copy details'}
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -229,6 +369,17 @@ function App() {
               </div>
             )}
 
+            <PresetPicker
+              presets={presets}
+              activeId={activePresetId}
+              disabled={!isLoaded}
+              onApply={applyPreset}
+              onDelete={deletePreset}
+              naming={namingPreset}
+              onNamingChange={setNamingPreset}
+              onSaveCurrent={saveCurrentPreset}
+            />
+
             <MethodPicker method={method} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} disabled={!isLoaded} onChange={handleMethodChange} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -239,16 +390,31 @@ function App() {
               </div>
             </div>
 
+            {/* Shortcuts are worth nothing if nobody can find them. */}
+            <details data-testid="shortcut-hints" style={{ marginTop: 4 }}>
+              <summary style={{ color: '#71717a', fontSize: 11, cursor: 'pointer', listStyle: 'none' }}>
+                Keyboard shortcuts
+              </summary>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
+                {SHORTCUT_HINTS.map((hint) => (
+                  <div key={hint.keys} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                    <span style={{ color: '#71717a', fontSize: 10 }}>{hint.label}</span>
+                    <span style={{ color: '#a1a1aa', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>{hint.keys}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 'auto' }}>
               <button data-testid="btn-preview" onClick={handlePreview} disabled={!canExport} style={{ background: 'transparent', border: `1px solid ${canExport ? '#3f3f46' : '#27272a'}`, borderRadius: 6, padding: '7px 0', color: canExport ? '#d4d4d8' : '#52525b', fontSize: 12, cursor: canExport ? 'pointer' : 'not-allowed' }}>Preview (3s)</button>
-              <button data-testid="btn-export" onClick={handleExport} disabled={!canExport} style={{ background: canExport ? '#6366f1' : '#312e81', border: 'none', borderRadius: 6, padding: '8px 0', color: canExport ? '#fff' : '#4338ca', fontSize: 13, fontWeight: 500, cursor: canExport ? 'pointer' : 'not-allowed' }}>Export</button>
+              <button data-testid="btn-export" onClick={() => { void handleExport(); }} disabled={!canExport} style={{ background: canExport ? '#6366f1' : '#312e81', border: 'none', borderRadius: 6, padding: '8px 0', color: canExport ? '#fff' : '#4338ca', fontSize: 13, fontWeight: 500, cursor: canExport ? 'pointer' : 'not-allowed' }}>Export</button>
             </div>
           </>
         )}
       </div>
 
       {/* Canvas */}
-      <div ref={canvasContainerRef} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', overflow: 'hidden', position: 'relative' }}>
+      <div ref={canvasContainerRef} className="app-canvas" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', overflow: 'hidden', position: 'relative' }}>
         {appState === 'empty' && <EmptyState onSelectFile={handleSelectFile} />}
 
         {appState !== 'empty' && previewFrameUrl && !previewClipUrl && (

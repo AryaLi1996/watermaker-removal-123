@@ -8,10 +8,10 @@ How to run, understand, and extend the automated test suite.
 
 | Suite | Command | Tests | Location |
 |---|---|---|---|
-| Backend (Python) | `npm run test:backend` | 81 pytest | `tests/unit/backend/` |
+| Backend (Python) | `npm run test:backend` | 90 pytest | `tests/unit/backend/` |
 | Backend coverage | `npm run test:coverage` | ≥ 80% required | `htmlcov/` |
-| Renderer (TypeScript) | `npm run test:frontend` | 15 vitest | `tests/unit/renderer/` |
-| E2E (Electron) | `npm run test:e2e` | 35 Playwright | `tests/e2e/` |
+| Renderer (TypeScript) | `npm run test:frontend` | 44 vitest | `tests/unit/renderer/` |
+| E2E (Electron) | `npm run test:e2e` | 44 Playwright | `tests/e2e/` |
 | Docs screenshots | `npm run screenshots` | 2 Playwright | `tests/e2e/capture-screenshots.spec.ts` |
 | Everything | `npm run test:all` | all of the above | root |
 | Environment check | `python scripts/validate_env.py` | manual | `scripts/` |
@@ -110,7 +110,7 @@ synthetic clips they use.
 ### Expected output
 
 ```
-tests/unit/backend/ ......................   81 passed
+tests/unit/backend/ ......................   90 passed
 ```
 
 ### Coverage
