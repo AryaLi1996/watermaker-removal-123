@@ -435,23 +435,21 @@ git push origin main --follow-tags
 
 ---
 
-## Known issue: the screenshot generator hangs on the CI Ubuntu runner
+## Note: the file-manager reveal is suppressed under test
 
-`tests/e2e/capture-screenshots.spec.ts` regenerates the images in
-`docs/screenshots/`. It drives a real export through the UI, which takes a few
-minutes, and it is **excluded from CI** (`testIgnore` in `playwright.config.ts`,
-active when `CI` is set and `SCREENSHOTS` is not).
+When an export finishes, the app reveals the output file in the OS file
+manager. `electron/main.js` skips that when `NODE_ENV=test`, which every E2E
+run sets.
 
-The reason is unresolved: on the GitHub `ubuntu-latest` runner the export test
-consumes whatever test budget it is given — 3.0m against a 180s limit, then
-7.0m against 420s — which is a deadlock rather than slowness. The same spec
-passes on the macOS and Windows runners, and locally, including pinned to two
-cores (`taskset -c 0,1`) to mimic the runner's size.
+The reason is not cosmetic. On a headless Linux runner — xdg-utils installed,
+no desktop session behind it — `shell.showItemInFolder` leaves a helper process
+that keeps Electron alive, so Playwright's `app.close()` never returns. That
+failed the Ubuntu job during *teardown* even when every test passed, and it
+consumed the whole test budget in `capture-screenshots.spec.ts`, which finishes
+a real export of its own (3.0m against a 180s limit, then 7.0m against 420s).
+macOS and Windows were unaffected, as both have a real file manager to hand the
+path to.
 
-What is *not* affected: the same end-to-end path — load a video, select an ROI,
-export, verify the output file — is covered in CI on all three platforms by
-`tests/e2e/watermark-removal.spec.ts`, which completes in about 23 seconds.
-
-To regenerate the screenshots, run `npm run screenshots` locally. If you pick
-this up, the Playwright trace from a failing CI run is the place to start: it is
-uploaded as the `playwright-report-ubuntu-latest` artifact.
+`tests/e2e/renderer-flow.spec.ts` still verifies that a finished export asks to
+reveal the file: it replaces the `shell:openPath` handler with its own recorder,
+so it observes the request without the OS ever being involved.

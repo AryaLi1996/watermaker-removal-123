@@ -220,7 +220,19 @@ ipcMain.handle('dialog:saveFile', async (_event, defaultName) => {
 
 // ─── Open folder in Finder / Explorer ────────────────────────────
 ipcMain.handle('shell:openPath', (_event, filePath) => {
-  if (filePath) shell.showItemInFolder(filePath);
+  if (!filePath) return false;
+
+  // Never launch the OS file manager during tests. A headless Linux box has
+  // xdg-utils but no desktop session behind it, so the helper this spawns can
+  // outlive the call and keep Electron from quitting — which surfaces as an
+  // app.close() that never returns, failing the run during teardown.
+  if (process.env.NODE_ENV === 'test') {
+    console.log('[shell] reveal suppressed under test:', filePath);
+    return false;
+  }
+
+  shell.showItemInFolder(filePath);
+  return true;
 });
 
 // ─── Python quick hello (used during Epic 1 validation) ──────────
