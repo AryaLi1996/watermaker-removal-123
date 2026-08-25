@@ -10,10 +10,48 @@ Make sure the build tools are installed:
 
 ```bash
 npm install          # root workspace
-cd renderer && npm install && cd ..
+npm install --prefix renderer
+python3 -m venv backend/.venv                             # or: ./dev.sh
+backend/.venv/bin/pip install -r backend/requirements.txt # includes PyInstaller
 ```
 
-FFmpeg is a **runtime dependency** — it must be present on the end-user's machine. It is **not** bundled into the installer. Document this requirement clearly in the release notes.
+FFmpeg must be on the build machine's `PATH`. `scripts/build.js` copies
+`ffmpeg` and `ffprobe` into the installer, so the app your users install does
+**not** need ffmpeg of their own. If the build machine has no ffmpeg the build
+still succeeds, but prints a warning and produces an installer that falls back
+to the user's own ffmpeg — say so in the release notes if you ship one.
+
+---
+
+## What ends up inside the installer
+
+A packaged app cannot use the development setup: `backend/.venv` is not shipped,
+and `backend/main.py` would live inside `app.asar`, a virtual filesystem that a
+child process cannot execute. So the build ships a **frozen backend** instead.
+
+| Piece | Where it comes from | Where it lands |
+|---|---|---|
+| Electron main + preload | `electron/` | `app.asar` |
+| Renderer bundle | `npm run build:renderer` | `app.asar` |
+| Frozen Python backend | `scripts/build_backend.py` (PyInstaller) | `resources/backend/watermark-backend` |
+| ffmpeg + ffprobe | copied from the build machine's `PATH` | `resources/backend/` |
+
+At runtime `electron/main.js` detects `app.isPackaged` and runs the frozen
+binary, pointing it at the bundled ffmpeg through `FFMPEG_PATH` / `FFPROBE_PATH`.
+In development it keeps using `backend/.venv` and `backend/main.py`.
+
+To verify a build is genuinely self-contained, run its backend with nothing on
+`PATH`:
+
+```bash
+R=release/linux-unpacked/resources/backend
+echo '{"inputPath":"/abs/clip.mp4","outputPath":"/tmp/out.mp4",
+       "roi":{"x":10,"y":10,"w":120,"h":40},"method":"blur","mode":"full"}' \
+  | env -i HOME=$HOME PATH=/nonexistent \
+      FFMPEG_PATH=$R/ffmpeg FFPROBE_PATH=$R/ffprobe $R/watermark-backend
+```
+
+It should end with `STATE:done:/tmp/out.mp4`.
 
 ---
 
@@ -22,28 +60,37 @@ FFmpeg is a **runtime dependency** — it must be present on the end-user's mach
 ### 1a. Verify tests pass
 
 ```bash
-npm run test:backend             # 11 pytest  → all green
-cd renderer && npm run test:run  # 15 vitest  → all green
-cd ..
+npm run test:all       # backend pytest + renderer vitest + Playwright E2E
+npm run test:coverage  # backend coverage, fails under 80%
 ```
 
 ### 1b. Production build
 
 ```bash
-npm run build
+npm run dist          # current platform
+npm run dist:mac      # .dmg + .zip
+npm run dist:win      # NSIS .exe
+npm run dist:linux    # .AppImage
 ```
 
-This produces:
-- `renderer/dist/` — bundled React app
-- No extra tsc output needed (electron `.js` files are already the source)
+Each runs `scripts/build.js` first, which installs the Python dependencies,
+freezes the backend, bundles ffmpeg and builds the renderer, then hands over to
+electron-builder. Output lands in `release/`.
 
-### 1c. Smoke test the production build
+To rebuild just the frozen backend:
 
 ```bash
-npm run dev:electron   # loads renderer/dist instead of dev server
+npm run build:backend   # → backend/dist/watermark-backend
 ```
 
-Confirm the app launches, opens a file, and runs a quick preview before packaging.
+### 1c. Smoke test the packaged app
+
+```bash
+./release/linux-unpacked/watermark-remover     # or open the .dmg / run the installer
+```
+
+Confirm it launches, opens a file, previews, and exports — on a machine without
+a Python venv, to prove the frozen backend is doing the work.
 
 ---
 
@@ -138,6 +185,33 @@ npm run dist -- --mac --win --linux
 
 ---
 
+## 2b. Linux `.deb` (not built by default)
+
+`.deb` requires a package maintainer with an email address, which this repo
+does not declare. To publish debs, add your own maintainer and target:
+
+```json
+"linux": {
+  "maintainer": "Your Name <you@example.com>",
+  "target": ["AppImage", "deb"]
+}
+```
+
+---
+
+## 2c. Continuous integration
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `.github/workflows/ci.yml` | push to `main`, every PR | Installs ffmpeg, runs backend + renderer + E2E tests and lint on Linux, macOS and Windows |
+| `.github/workflows/release.yml` | tag `v*`, or manual dispatch | Packages on all three platforms and attaches the installers to a GitHub release |
+
+Signing secrets are read by the release workflow when set (`CSC_LINK`,
+`CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`).
+Without them the build still succeeds and produces **unsigned** artifacts.
+
+---
+
 ## 3. Versioning
 
 Version is read from `package.json` → `"version"`. Update it before every release:
@@ -194,19 +268,19 @@ gh release create v1.1.0 \
 
 ## 5. Automated Releases via GitHub Actions
 
-The workflow is already configured at [`.github/workflows/release.yml`](.github/workflows/release.yml). It triggers automatically on any tag push matching `v*`.
+The workflow lives at [`.github/workflows/release.yml`](.github/workflows/release.yml). It triggers on any tag push matching `v*`, and can also be run manually from the Actions tab.
 
 **Pipeline overview:**
 
 | Job | Runner | What it does |
 |---|---|---|
-| `test` | ubuntu-latest | Runs Python pytest + Vitest — blocks all builds on failure |
-| `build-mac` | macos-latest | `npm run dist -- --mac` → uploads `.dmg` artifact |
-| `build-win` | windows-latest | `npm run dist -- --win` → uploads `.exe` artifact |
-| `build-linux` | ubuntu-latest | `npm run dist -- --linux` → uploads `.AppImage` artifact |
-| `publish` | ubuntu-latest | Downloads all artifacts, creates GitHub Release with `CHANGELOG.md` as notes |
+| `build` | ubuntu / macos / windows (matrix) | Installs ffmpeg and the Python venv, runs `npm run dist`, uploads the installers as artifacts |
+| `publish` | ubuntu-latest | Downloads every artifact and attaches them to a GitHub Release with generated notes |
 
-Tags containing `-` (e.g. `v1.0.0-beta`) are automatically published as **pre-releases**.
+Tags containing `-` (e.g. `v1.0.0-beta`) are published as **pre-releases**.
+
+Tests are not re-run here — `.github/workflows/ci.yml` covers every push to
+`main` and every PR. Run `npm run test:all` before tagging.
 
 To trigger a release, complete Steps 1–3 above (run tests, bump version, push tag):
 
@@ -219,15 +293,18 @@ git push origin main --follow-tags   # push both commit and tag → workflow sta
 
 Add these in **Settings → Secrets and variables → Actions**:
 
+All of these are optional: with none set, the workflow still builds and
+publishes **unsigned** installers.
+
 | Secret | Description |
 |---|---|
-| `MAC_CERT_P12` | Base64-encoded `.p12` certificate file |
-| `MAC_CERT_PASSWORD` | Password for the `.p12` file |
-| `APPLE_ID` | Apple Developer account email |
+| `CSC_LINK` | Base64-encoded signing certificate (`.p12` on macOS, `.pfx` on Windows) |
+| `CSC_KEY_PASSWORD` | Password for that certificate |
+| `APPLE_ID` | Apple Developer account email (notarization) |
 | `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password from appleid.apple.com |
 | `APPLE_TEAM_ID` | 10-character Apple Developer Team ID |
-| `WIN_CERT_PFX` | Base64-encoded `.pfx` certificate file (optional) |
-| `WIN_CERT_PASSWORD` | Password for the `.pfx` file (optional) |
+
+`GITHUB_TOKEN` is provided by Actions automatically — no need to add it.
 
 #### Encode a certificate to base64 for a GitHub Secret:
 ```bash

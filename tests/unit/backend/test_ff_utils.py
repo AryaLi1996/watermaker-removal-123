@@ -93,13 +93,17 @@ def test_reassemble_handles_a_silent_source(silent_video, tmp_path):
     assert ff_utils.probe_video(out)['audio_codec'] is None
 
 
-def test_reassemble_transcodes_audio_mp4_cannot_carry(vorbis_video, tmp_path):
-    """A vorbis .mkv used to fail the mux outright; it must come back as AAC."""
+def test_reassemble_transcodes_audio_mp4_cannot_carry(nonmp4_audio_video, tmp_path):
+    """Audio MP4 cannot carry used to fail the mux outright; it must come back as AAC."""
     frames_dir = str(tmp_path / 'frames')
-    ff_utils.extract_frames(vorbis_video, frames_dir)
+    ff_utils.extract_frames(nonmp4_audio_video, frames_dir)
+
+    source_codec = ff_utils.probe_video(nonmp4_audio_video)['audio_codec']
+    assert source_codec not in ff_utils.MP4_AUDIO_CODECS, 'fixture must use a codec MP4 rejects'
 
     out = str(tmp_path / 'out.mp4')
-    ff_utils.reassemble_video(frames_dir, vorbis_video, out, fps=10.0, audio_codec='vorbis')
+    ff_utils.reassemble_video(frames_dir, nonmp4_audio_video, out,
+                              fps=10.0, audio_codec=source_codec)
     assert ff_utils.probe_video(out)['audio_codec'] == 'aac'
 
 
@@ -111,3 +115,37 @@ def test_reassemble_removes_its_intermediate_file(sample_video, tmp_path):
     ff_utils.reassemble_video(frames_dir, sample_video, str(tmp_path / 'out.mp4'),
                               fps=10.0, temp_video=temp_video, audio_codec='aac')
     assert not os.path.exists(temp_video)
+
+
+# ─── binary resolution ───────────────────────────────────────────────────────
+#
+# A packaged app ships its own ffmpeg and points the backend at it; a
+# development run uses whatever is on PATH.
+
+def test_binaries_default_to_path(monkeypatch):
+    monkeypatch.delenv('FFMPEG_PATH', raising=False)
+    monkeypatch.delenv('FFPROBE_PATH', raising=False)
+    assert ff_utils.ffmpeg_bin() == 'ffmpeg'
+    assert ff_utils.ffprobe_bin() == 'ffprobe'
+
+
+def test_binaries_follow_the_bundled_paths(monkeypatch):
+    monkeypatch.setenv('FFMPEG_PATH', '/opt/app/resources/backend/ffmpeg')
+    monkeypatch.setenv('FFPROBE_PATH', '/opt/app/resources/backend/ffprobe')
+    assert ff_utils.ffmpeg_bin() == '/opt/app/resources/backend/ffmpeg'
+    assert ff_utils.ffprobe_bin() == '/opt/app/resources/backend/ffprobe'
+
+
+def test_an_empty_override_falls_back_to_path(monkeypatch):
+    """An unset-but-present env var must not produce an empty command."""
+    monkeypatch.setenv('FFMPEG_PATH', '')
+    assert ff_utils.ffmpeg_bin() == 'ffmpeg'
+
+
+def test_probe_uses_the_configured_ffprobe(monkeypatch, sample_video):
+    """The override is honoured by the real call path, not just the getter."""
+    import shutil
+
+    resolved = shutil.which('ffprobe')
+    monkeypatch.setenv('FFPROBE_PATH', resolved)
+    assert ff_utils.probe_video(sample_video)['width'] == 320

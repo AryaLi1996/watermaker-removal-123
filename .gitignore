@@ -218,3 +218,13 @@ __marimo__/
 .streamlit/secrets.toml
 test-results/
 playwright-report/
+
+# Packaging output (electron-builder, PyInstaller)
+release/
+backend/dist/
+backend/build/
+
+# electron-builder's buildResources (icon, entitlements) live at the repo root
+# and must be tracked, despite the generic build/ ignore above.
+!/build/
+!/build/**

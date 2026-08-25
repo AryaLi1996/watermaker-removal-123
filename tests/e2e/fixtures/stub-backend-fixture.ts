@@ -9,6 +9,8 @@
 import { test as base, expect, _electron as electron } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
+import { SANDBOX_ARGS } from './launch-args';
+
 
 const repoRoot = path.join(__dirname, '..', '..', '..');
 
@@ -26,7 +28,7 @@ export const test = base.extend<Fixtures, Options>({
     async ({ appTag }, use) => {
       void appTag; // depended on so a new tag forces a fresh app
       const app = await electron.launch({
-        args: [path.join(repoRoot, 'electron', 'main.js')],
+        args: [...SANDBOX_ARGS, path.join(repoRoot, 'electron', 'main.js')],
         env: {
           ...process.env,
           NODE_ENV: 'test',

@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onJobMeta:     (cb) => ipcRenderer.on('job:meta',     (_e, v) => cb(v)),
   onPreviewReady:(cb) => ipcRenderer.on('job:preview-ready', (_e, v) => cb(v)),
 
+  // Auto-update
+  onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (_e, v) => cb(v)),
+  onUpdateDownloaded: (cb) => ipcRenderer.on('update:downloaded', (_e, v) => cb(v)),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+
   // Remove all listeners (call on component unmount)
   removeJobListeners: () => {
     ['job:progress','job:state','job:error','job:done','job:meta','job:preview-ready']

@@ -16,6 +16,19 @@ from typing import Optional
 _active_proc: Optional[subprocess.Popen] = None
 
 
+def ffmpeg_bin() -> str:
+    """
+    The ffmpeg to run. A packaged app points FFMPEG_PATH at the copy shipped
+    beside it; a development run falls back to whatever is on PATH.
+    """
+    return os.environ.get('FFMPEG_PATH') or 'ffmpeg'
+
+
+def ffprobe_bin() -> str:
+    """The ffprobe to run — see ffmpeg_bin()."""
+    return os.environ.get('FFPROBE_PATH') or 'ffprobe'
+
+
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     """Run a subprocess, capturing stdout/stderr, raising on failure."""
     global _active_proc
@@ -48,7 +61,7 @@ def probe_video(filepath: str) -> dict:
         raise FileNotFoundError(f"Input video not found: {filepath}")
 
     result = _run([
-        'ffprobe',
+        ffprobe_bin(),
         '-v', 'quiet',
         '-print_format', 'json',
         '-show_format',
@@ -88,7 +101,7 @@ def probe_video(filepath: str) -> dict:
 def extract_preview_frame(input_path: str, output_path: str, timestamp: float = 5.0) -> None:
     """Extract a single frame at `timestamp` seconds as a PNG."""
     _run([
-        'ffmpeg', '-y',
+        ffmpeg_bin(), '-y',
         '-v', 'error',
         '-ss', str(timestamp),
         '-i', input_path,
@@ -105,7 +118,7 @@ def extract_frames(input_path: str, output_dir: str) -> int:
     os.makedirs(output_dir, exist_ok=True)
     pattern = os.path.join(output_dir, 'frame_%06d.png')
     _run([
-        'ffmpeg', '-y',
+        ffmpeg_bin(), '-y',
         '-v', 'error',
         '-i', input_path,
         '-q:v', '1',
@@ -118,7 +131,7 @@ def extract_frames(input_path: str, output_dir: str) -> int:
 def extract_clip(input_path: str, output_path: str, start: float, duration: float) -> None:
     """Extract a short clip from `start` seconds for `duration` seconds."""
     _run([
-        'ffmpeg', '-y',
+        ffmpeg_bin(), '-y',
         '-v', 'error',
         '-ss', str(start),
         '-i', input_path,
@@ -167,7 +180,7 @@ def reassemble_video(
 
     # Pass 1: encode video-only
     _run([
-        'ffmpeg', '-y',
+        ffmpeg_bin(), '-y',
         '-v', 'error',
         '-framerate', str(fps),
         '-i', frame_pattern,
@@ -179,7 +192,7 @@ def reassemble_video(
 
     # Pass 2: mux original audio + metadata
     _run([
-        'ffmpeg', '-y',
+        ffmpeg_bin(), '-y',
         '-v', 'error',
         '-i', temp_video,
         '-i', original_video,

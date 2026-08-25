@@ -25,11 +25,71 @@ function backendScript() {
   return process.env.WATERMARK_BACKEND || path.join(__dirname, '..', 'backend', 'main.py');
 }
 
-/** Active Python child process reference (for cancel). */
-let activeJob = null;
+/** Path to the frozen backend shipped beside a packaged app. */
+function bundledBackend() {
+  const name = process.platform === 'win32' ? 'watermark-backend.exe' : 'watermark-backend';
+  return path.join(process.resourcesPath, 'backend', name);
+}
 
-/** Set while a cancel is in flight, so the exit is not reported as done/error. */
-let cancelRequested = false;
+/**
+ * How to launch the backend for this build.
+ *
+ * A packaged app has neither the venv (excluded from the build) nor a real
+ * file for backend/main.py (it lives inside app.asar, which is a virtual
+ * filesystem a child process cannot read). So the release ships a frozen
+ * single-file backend and runs that; development keeps using the venv.
+ */
+function backendCommand() {
+  // An explicit interpreter always wins — the E2E suite drives its own stub.
+  if (process.env.WATERMARK_PYTHON) {
+    return { command: process.env.WATERMARK_PYTHON, args: [backendScript()] };
+  }
+  if (app.isPackaged) {
+    return { command: bundledBackend(), args: [] };
+  }
+  return { command: getPythonPath(), args: [backendScript()] };
+}
+
+/**
+ * Environment for the backend child.
+ *
+ * A release can ship ffmpeg/ffprobe beside the frozen backend; point the child
+ * at them so an installed app does not depend on the user having ffmpeg on
+ * PATH. When they are absent the backend falls back to PATH by itself.
+ */
+function backendEnv() {
+  const env = { ...process.env };
+  if (!app.isPackaged) return env;
+
+  const dir = path.join(process.resourcesPath, 'backend');
+  const exe = process.platform === 'win32' ? '.exe' : '';
+  const ffmpeg = path.join(dir, `ffmpeg${exe}`);
+  const ffprobe = path.join(dir, `ffprobe${exe}`);
+  if (fs.existsSync(ffmpeg)) env.FFMPEG_PATH = ffmpeg;
+  if (fs.existsSync(ffprobe)) env.FFPROBE_PATH = ffprobe;
+  return env;
+}
+
+/** Explain a missing backend in terms of what the user can actually do. */
+function missingBackendMessage(command) {
+  return app.isPackaged
+    ? `Bundled backend not found at ${command}. This build is incomplete — please reinstall the app.`
+    : `Python environment not found at ${command}. Run ./dev.sh to create it.`;
+}
+
+/**
+ * The job currently running, if any: { child, isExport, cancelled, superseded }.
+ *
+ * A record rather than a bare child process, because the exit handler has to
+ * know why the process ended and whether it is still the current job — a
+ * superseded preview must not clear the export that replaced it.
+ */
+let currentJob = null;
+
+/** Is this payload a full export, as opposed to one of the preview probes? */
+function isExportJob(payload) {
+  return !payload?.mode || payload.mode === 'full';
+}
 
 /**
  * Temp files created by the Python backend that live outside its own temp_dir
@@ -160,13 +220,26 @@ ipcMain.handle('dialog:saveFile', async (_event, defaultName) => {
 
 // ─── Open folder in Finder / Explorer ────────────────────────────
 ipcMain.handle('shell:openPath', (_event, filePath) => {
-  if (filePath) shell.showItemInFolder(filePath);
+  if (!filePath) return false;
+
+  // Never launch the OS file manager during tests. A headless Linux box has
+  // xdg-utils but no desktop session behind it, so the helper this spawns can
+  // outlive the call and keep Electron from quitting — which surfaces as an
+  // app.close() that never returns, failing the run during teardown.
+  if (process.env.NODE_ENV === 'test') {
+    console.log('[shell] reveal suppressed under test:', filePath);
+    return false;
+  }
+
+  shell.showItemInFolder(filePath);
+  return true;
 });
 
 // ─── Python quick hello (used during Epic 1 validation) ──────────
 ipcMain.handle('python:run', async (_event, payload) => {
   return new Promise((resolve, reject) => {
-    const child = spawn(getPythonPath(), [backendScript()]);
+    const { command, args } = backendCommand();
+    const child = spawn(command, args, { env: backendEnv() });
 
     let output = '';
     child.stdout.on('data', (chunk) => { output += chunk.toString(); });
@@ -188,22 +261,34 @@ ipcMain.handle('python:run', async (_event, payload) => {
 
 // ─── Start full processing job ────────────────────────────────────
 ipcMain.handle('job:start', (_event, payload) => {
-  if (activeJob) return false; // already running
+  const isExport = isExportJob(payload);
+
+  if (currentJob) {
+    // Previews are short probes the app starts on its own (a still on load, a
+    // 3s clip on request). If one is still running when the user hits Export,
+    // the export wins — refusing it silently would look like a dead button.
+    if (isExport && !currentJob.isExport) {
+      currentJob.superseded = true;
+      currentJob.child.kill('SIGTERM');
+    } else {
+      return false;
+    }
+  }
 
   // Clean up any preview temp files from the previous job before starting.
   purgeTempFiles();
 
-  const python = getPythonPath();
-  // Only a resolved venv path can be checked up front; a bare command name is
-  // left to the OS (and reported through the spawn 'error' handler below).
-  if (path.isAbsolute(python) && !fs.existsSync(python)) {
-    send('job:error', `Python environment not found at ${python}. Run ./dev.sh to create it.`);
+  const { command, args } = backendCommand();
+  // Only a resolved path can be checked up front; a bare command name is left
+  // to the OS (and reported through the spawn 'error' handler below).
+  if (path.isAbsolute(command) && !fs.existsSync(command)) {
+    send('job:error', missingBackendMessage(command));
     return false;
   }
 
-  cancelRequested = false;
-  const child = spawn(python, [backendScript()]);
-  activeJob = child;
+  const child = spawn(command, args, { env: backendEnv() });
+  const job = { child, isExport, cancelled: false, superseded: false };
+  currentJob = job;
 
   // Per-job state shared with the line parser.
   const ctx = { outputPath: null, errored: false };
@@ -212,6 +297,8 @@ ipcMain.handle('job:start', (_event, payload) => {
   // so a message split across two chunks is still parsed correctly.
   let stdoutBuffer = '';
   child.stdout.on('data', (chunk) => {
+    // A superseded preview may still be draining; its output is no longer ours.
+    if (currentJob !== job) return;
     stdoutBuffer += chunk.toString();
     const lines = stdoutBuffer.split('\n');
     stdoutBuffer = lines.pop() ?? '';
@@ -226,7 +313,7 @@ ipcMain.handle('job:start', (_event, payload) => {
   });
 
   child.on('error', (err) => {
-    activeJob = null;
+    if (currentJob === job) currentJob = null;
     send('job:error', `Failed to start Python: ${err.message}`);
   });
 
@@ -235,20 +322,25 @@ ipcMain.handle('job:start', (_event, payload) => {
   child.stdin.end();
 
   child.on('close', (code) => {
+    // Only clear the slot if this job still owns it: a superseded preview
+    // exits after the export that replaced it has already started.
+    if (currentJob === job) currentJob = null;
+
+    if (job.cancelled || job.superseded) return;
+
     // Flush any final line that arrived without a trailing newline.
     const tail = stdoutBuffer.trim();
     stdoutBuffer = '';
     if (tail) handleBackendLine(tail, ctx);
 
-    activeJob = null;
-
-    if (cancelRequested) {
-      // The user asked for this exit — no done/error event.
-      cancelRequested = false;
-      return;
+    // Only a full export completes with job:done. Preview jobs report through
+    // job:preview-ready, and a preview finishing late would otherwise flip the
+    // UI to "Export complete" — carrying the preview's own output path.
+    if (code === 0) {
+      if (job.isExport) send('job:done', ctx.outputPath ?? payload?.outputPath ?? null);
+    } else if (!ctx.errored) {
+      send('job:error', `Process exited with code ${code}`);
     }
-    if (code === 0) send('job:done', ctx.outputPath ?? payload?.outputPath ?? null);
-    else if (!ctx.errored) send('job:error', `Process exited with code ${code}`);
   });
 
   return true;
@@ -256,16 +348,63 @@ ipcMain.handle('job:start', (_event, payload) => {
 
 // ─── Cancel / abort job ───────────────────────────────────────────
 ipcMain.handle('job:cancel', () => {
-  if (!activeJob) return false;
-  cancelRequested = true;
-  activeJob.kill('SIGTERM');
-  // activeJob is cleared by the 'close' handler, so a cancelled process is
+  if (!currentJob) return false;
+  currentJob.cancelled = true;
+  currentJob.child.kill('SIGTERM');
+  // The slot is cleared by the 'close' handler, so a cancelled process is
   // still reaped before a new job can start.
   return true;
 });
 
+/**
+ * Check for updates against the release feed electron-builder publishes.
+ *
+ * Only meaningful in a packaged build that carries an app-update.yml; a
+ * development run or a build made without a publish provider has no feed, so
+ * this stays quiet rather than reporting a failure the user cannot act on.
+ */
+function initAutoUpdate() {
+  if (!app.isPackaged) return;
+
+  const feed = path.join(process.resourcesPath, 'app-update.yml');
+  if (!fs.existsSync(feed)) return;
+
+  let autoUpdater;
+  try {
+    ({ autoUpdater } = require('electron-updater'));
+  } catch (err) {
+    console.warn('[update] electron-updater unavailable:', err.message);
+    return;
+  }
+
+  // A failed check is a log line, never a dialog: the app works without it.
+  autoUpdater.on('error', (err) => console.warn('[update] check failed:', err.message));
+  autoUpdater.on('update-available', (info) => send('update:available', info?.version ?? null));
+  autoUpdater.on('update-downloaded', (info) => send('update:downloaded', info?.version ?? null));
+
+  autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+    console.warn('[update] check failed:', err.message);
+  });
+
+  return autoUpdater;
+}
+
+// ─── Install a downloaded update ──────────────────────────────────
+ipcMain.handle('update:install', () => {
+  if (!app.isPackaged) return false;
+  try {
+    const { autoUpdater } = require('electron-updater');
+    autoUpdater.quitAndInstall();
+    return true;
+  } catch (err) {
+    console.warn('[update] install failed:', err.message);
+    return false;
+  }
+});
+
 app.whenReady().then(() => {
   createWindow();
+  initAutoUpdate();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -278,10 +417,10 @@ app.on('window-all-closed', () => {
 
 // Stop any running job and clean up preview temp files when the app quits.
 app.on('before-quit', () => {
-  if (activeJob) {
-    cancelRequested = true;
-    activeJob.kill('SIGTERM');
-    activeJob = null;
+  if (currentJob) {
+    currentJob.cancelled = true;
+    currentJob.child.kill('SIGTERM');
+    currentJob = null;
   }
   purgeTempFiles();
 });

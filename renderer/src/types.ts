@@ -49,6 +49,9 @@ declare global {
       onJobDone: (cb: (outputPath: string | null) => void) => void;
       onJobMeta: (cb: (meta: VideoMeta) => void) => void;
       onPreviewReady: (cb: (path: string) => void) => void;
+      onUpdateAvailable: (cb: (version: string | null) => void) => void;
+      onUpdateDownloaded: (cb: (version: string | null) => void) => void;
+      installUpdate: () => Promise<boolean>;
       removeJobListeners: () => void;
     };
   }

@@ -13,6 +13,8 @@
 import { test as base, expect, _electron as electron } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
+import { SANDBOX_ARGS } from './launch-args';
+
 
 type ElectronFixtures = {
   electronApp: ElectronApplication;
@@ -32,7 +34,7 @@ export const test = base.extend<ElectronFixtures, ElectronOptions>({
     async ({ appTag }, use) => {
       void appTag; // depended on so a new tag forces a fresh app
       const app = await electron.launch({
-        args: [path.join(__dirname, '..', '..', '..', 'electron', 'main.js')],
+        args: [...SANDBOX_ARGS, path.join(__dirname, '..', '..', '..', 'electron', 'main.js')],
         env: {
           ...process.env,
           NODE_ENV: 'test',

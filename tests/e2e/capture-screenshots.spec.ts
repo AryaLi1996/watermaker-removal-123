@@ -6,20 +6,27 @@
  * Run with:
  *   npm run screenshots
  */
-import { test } from '@playwright/test';
 import { _electron as electron } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
+import { test } from './fixtures/electron-fixture';
+import { SANDBOX_ARGS } from './fixtures/launch-args';
 
+// This spec drives its own Electron sessions rather than using the shared
+// fixture, so it needs the same launch arguments.
+//
+// It still imports the fixture's `test` and declares an appTag: changing that
+// option makes Playwright tear down the previous spec file's Electron app
+// before this one starts. Without it that app lingers for the whole file, and
+// this spec launches two more — three Electron instances plus a real export
+// starve a 2-core CI runner. The fixture itself is lazy, so nothing extra is
+// launched here.
 test.use({ appTag: 'capture-screenshots' });
 
 const ROOT    = path.join(__dirname, '..', '..');
 const OUT_DIR = path.join(ROOT, 'docs', 'screenshots');
 const SAMPLE  = path.join(ROOT, 'sample', 'samplevideo.mp4');
 const OUTPUT  = path.join(ROOT, 'sample', 'samplevideo-output.mp4');
-
-// ROI: bottom-right corner of the 784×1168 frame (where the "Watermark" text lives)
-const BOTTOM_ROI = { x: 490, y: 1080, w: 294, h: 88 };
 
 test.beforeAll(() => {
   fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -28,7 +35,7 @@ test.beforeAll(() => {
 // ──────────────────────────────────────────────────────────────────────────
 test('capture: idle (empty) state', async () => {
   const app = await electron.launch({
-    args: [path.join(ROOT, 'electron', 'main.js')],
+    args: [...SANDBOX_ARGS, path.join(ROOT, 'electron', 'main.js')],
     env: { ...process.env, NODE_ENV: 'test' },
   });
   const win = await app.firstWindow();
@@ -42,10 +49,12 @@ test('capture: idle (empty) state', async () => {
 // One Electron session for all remaining shots: real video, real Python preview,
 // real export, real done state.
 test('capture: video loaded / processing / done (real sample video)', async () => {
-  // Override the default 30s config timeout for this test — Python export takes ~20s
-  test.setTimeout(180_000);
+  // A real 300-frame inpaint export. It takes ~20s on a fast workstation but
+  // ~1m45s on a 2-core CI runner (measured), so the budget has to suit the
+  // slowest machine that runs it, not the fastest.
+  test.setTimeout(420_000);
   const app = await electron.launch({
-    args: [path.join(ROOT, 'electron', 'main.js')],
+    args: [...SANDBOX_ARGS, path.join(ROOT, 'electron', 'main.js')],
     env: { ...process.env, NODE_ENV: 'test' },
   });
 
@@ -82,14 +91,10 @@ test('capture: video loaded / processing / done (real sample video)', async () =
   // Screenshot 03: ready to export — Export button bright, output filename shown
   await win.screenshot({ path: path.join(OUT_DIR, '03-ready-to-export.png') });
 
-  // ─ Patch startJob to pin the ROI to the bottom watermark strip ───────────
-  await win.evaluate((roi) => {
-    const orig = (window as any).electronAPI.startJob;
-    (window as any).electronAPI.startJob = async (cfg: any) => {
-      if (cfg.mode === 'full') { cfg.roi = roi; cfg.method = 'inpaint'; }
-      return orig(cfg);
-    };
-  }, BOTTOM_ROI);
+  // The default selection box already sits over the watermark strip in this
+  // sample, so the export needs no ROI override. (An earlier attempt to patch
+  // window.electronAPI.startJob from the page did nothing: contextBridge
+  // exposes a frozen object, so the assignment silently failed.)
 
   // ─ Start the real export job ────────────────────────────────────────────
   await win.getByTestId('btn-export').click();

@@ -11,7 +11,8 @@ How to run, understand, and extend the automated test suite.
 | Backend (Python) | `npm run test:backend` | 81 pytest | `tests/unit/backend/` |
 | Backend coverage | `npm run test:coverage` | ≥ 80% required | `htmlcov/` |
 | Renderer (TypeScript) | `npm run test:frontend` | 15 vitest | `tests/unit/renderer/` |
-| E2E (Electron) | `npm run test:e2e` | 31 Playwright | `tests/e2e/` |
+| E2E (Electron) | `npm run test:e2e` | 35 Playwright | `tests/e2e/` |
+| Docs screenshots | `npm run screenshots` | 2 Playwright | `tests/e2e/capture-screenshots.spec.ts` |
 | Everything | `npm run test:all` | all of the above | root |
 | Environment check | `python scripts/validate_env.py` | manual | `scripts/` |
 | Full build validation | `npm run build` | build passes | root |
@@ -431,3 +432,24 @@ To trigger the pipeline:
 npm version patch          # bumps version, creates tag
 git push origin main --follow-tags
 ```
+
+---
+
+## Note: the file-manager reveal is suppressed under test
+
+When an export finishes, the app reveals the output file in the OS file
+manager. `electron/main.js` skips that when `NODE_ENV=test`, which every E2E
+run sets.
+
+The reason is not cosmetic. On a headless Linux runner — xdg-utils installed,
+no desktop session behind it — `shell.showItemInFolder` leaves a helper process
+that keeps Electron alive, so Playwright's `app.close()` never returns. That
+failed the Ubuntu job during *teardown* even when every test passed, and it
+consumed the whole test budget in `capture-screenshots.spec.ts`, which finishes
+a real export of its own (3.0m against a 180s limit, then 7.0m against 420s).
+macOS and Windows were unaffected, as both have a real file manager to hand the
+path to.
+
+`tests/e2e/renderer-flow.spec.ts` still verifies that a finished export asks to
+reveal the file: it replaces the `shell:openPath` handler with its own recorder,
+so it observes the request without the OS ever being involved.
