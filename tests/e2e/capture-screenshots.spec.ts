@@ -6,14 +6,22 @@
  * Run with:
  *   npm run screenshots
  */
-import { test } from '@playwright/test';
 import { _electron as electron } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
+import { test } from './fixtures/electron-fixture';
 import { SANDBOX_ARGS } from './fixtures/launch-args';
 
 // This spec drives its own Electron sessions rather than using the shared
 // fixture, so it needs the same launch arguments.
+//
+// It still imports the fixture's `test` and declares an appTag: changing that
+// option makes Playwright tear down the previous spec file's Electron app
+// before this one starts. Without it that app lingers for the whole file, and
+// this spec launches two more — three Electron instances plus a real export
+// starve a 2-core CI runner. The fixture itself is lazy, so nothing extra is
+// launched here.
+test.use({ appTag: 'capture-screenshots' });
 
 const ROOT    = path.join(__dirname, '..', '..');
 const OUT_DIR = path.join(ROOT, 'docs', 'screenshots');
