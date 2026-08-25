@@ -49,6 +49,10 @@ export const test = base.extend<ElectronFixtures, ElectronOptions>({
   // Get the first BrowserWindow page — waits for any stable app state
   page: async ({ electronApp }, use) => {
     const window = await electronApp.firstWindow();
+    // Pin the language: the app otherwise follows the host's system locale, so
+    // assertions on visible text would depend on the machine running the suite.
+    await window.evaluate(() => window.localStorage.setItem('watermark-remover:locale', 'en'));
+    await window.reload();
     // Accept idle state OR any loaded state so shared Electron instances keep working
     await window.waitForSelector(
       '[data-testid="empty-state"], [data-testid="btn-export"], [data-testid="progress-panel"], [data-testid="done-panel"]',

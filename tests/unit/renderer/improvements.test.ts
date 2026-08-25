@@ -4,7 +4,8 @@
  */
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
-import { friendlyError, hasTechnicalDetail } from '../../../renderer/src/errors';
+import { classifyError, hasTechnicalDetail } from '../../../renderer/src/errors';
+import { setLocale, t } from '../../../renderer/src/i18n';
 import {
   estimateSecondsRemaining,
   formatRemaining,
@@ -16,15 +17,24 @@ import {
   DEFAULT_PARAMS,
   loadCustomPresets,
   presetFromCurrent,
+  presetLabel,
   saveCustomPresets,
   type Preset,
 } from '../../../renderer/src/presets';
 
 // ─── friendlyError ───────────────────────────────────────────────────────────
 
-describe('friendlyError', () => {
+describe('classifyError', () => {
+  beforeEach(() => setLocale('en'));
+
+  /** What the user would actually see for a raw failure. */
+  const shown = (raw: unknown) => {
+    const error = classifyError(raw);
+    return error.key ? t(error.key) : error.raw;
+  };
+
   it('turns an ffmpeg failure into something actionable', () => {
-    const message = friendlyError('ERROR:FFmpeg failed. The video file may be corrupted or unsupported.');
+    const message = shown('ERROR:FFmpeg failed. The video file may be corrupted or unsupported.');
     expect(message).toContain('Could not read or write the video');
     expect(message).not.toContain('FFmpeg failed.');
   });
@@ -37,26 +47,26 @@ describe('friendlyError', () => {
     ['No video stream found in file.', 'no video track'],
     ['numpy.core._exceptions.MemoryError: Unable to allocate', 'Ran out of memory'],
   ])('maps %s', (raw, expected) => {
-    expect(friendlyError(raw)).toContain(expected);
+    expect(shown(raw)).toContain(expected);
   });
 
   it('passes an unrecognised message through rather than inventing one', () => {
-    expect(friendlyError('Some brand new failure')).toBe('Some brand new failure');
+    expect(shown('Some brand new failure')).toBe('Some brand new failure');
   });
 
   it('says something useful when the backend gave no reason at all', () => {
-    expect(friendlyError('')).toContain('no reason');
-    expect(friendlyError(null)).toContain('no reason');
+    expect(shown('')).toContain('no reason');
+    expect(shown(null)).toContain('no reason');
   });
 
   it('accepts an Error as well as a string', () => {
-    expect(friendlyError(new Error('Permission denied'))).toContain('No permission');
+    expect(shown(new Error('Permission denied'))).toContain('No permission');
   });
 
   it('offers the raw detail only when the friendly text replaced it', () => {
-    expect(hasTechnicalDetail('Permission denied: /root/out.mp4')).toBe(true);
-    expect(hasTechnicalDetail('Some brand new failure')).toBe(false);
-    expect(hasTechnicalDetail('')).toBe(false);
+    expect(hasTechnicalDetail(classifyError('Permission denied: /root/out.mp4'))).toBe(true);
+    expect(hasTechnicalDetail(classifyError('Some brand new failure'))).toBe(false);
+    expect(hasTechnicalDetail(classifyError(''))).toBe(false);
   });
 });
 
@@ -114,13 +124,15 @@ describe('recordSample', () => {
 });
 
 describe('formatRemaining', () => {
+  beforeEach(() => setLocale('en'));
+
   it.each([
     [null, 'estimating…'],
     [4, 'almost done'],
     [45, '45s left'],
     [300, 'about 5 min left'],
   ])('formats %s', (seconds, expected) => {
-    expect(formatRemaining(seconds as number | null)).toBe(expected);
+    expect(formatRemaining(seconds as number | null, t)).toBe(expected);
   });
 });
 
@@ -134,9 +146,10 @@ describe('presets', () => {
   it('ships built-ins that name real backend methods', () => {
     const methods = new Set(['inpaint', 'blur', 'solidFill', 'cloneStamp']);
     expect(BUILT_IN_PRESETS.length).toBeGreaterThan(0);
+    setLocale('en');
     for (const preset of BUILT_IN_PRESETS) {
       expect(methods).toContain(preset.method);
-      expect(preset.description).not.toHaveLength(0);
+      expect(presetLabel(preset, t).description).not.toHaveLength(0);
     }
   });
 

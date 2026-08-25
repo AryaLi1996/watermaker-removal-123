@@ -3,6 +3,7 @@
  * Auto-transitions back to loaded state after 5 seconds.
  */
 import { useEffect, useState } from 'react';
+import { useTranslation } from '../hooks/useTranslation';
 
 interface DonePanelProps {
   outputPath: string;
@@ -11,6 +12,7 @@ interface DonePanelProps {
 }
 
 export default function DonePanel({ outputPath, onReveal, onReset }: DonePanelProps) {
+  const { t } = useTranslation();
   const [countdown, setCountdown] = useState(5);
 
   useEffect(() => {
@@ -36,7 +38,7 @@ export default function DonePanel({ outputPath, onReveal, onReset }: DonePanelPr
         color: '#86efac',
         fontSize: 13,
       }}>
-        ✓ Export complete
+        ✓ {t('status.exportComplete')}
       </div>
 
       <p style={{ color: '#a1a1aa', fontSize: 11, wordBreak: 'break-all' }}>{filename}</p>
@@ -54,11 +56,11 @@ export default function DonePanel({ outputPath, onReveal, onReset }: DonePanelPr
           cursor: 'pointer',
         }}
       >
-        Reveal in Finder
+        {t('actions.reveal')}
       </button>
 
       <p style={{ color: '#52525b', fontSize: 11 }}>
-        Returning to editor in {countdown}s…
+        {t('status.returningIn', { seconds: countdown })}
       </p>
     </div>
   );

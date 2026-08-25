@@ -90,8 +90,10 @@
       "icon": "build/icon.png",
       "category": "Video",
       "target": [
-        "AppImage"
-      ]
+        "AppImage",
+        "deb"
+      ],
+      "maintainer": "AryaLi1996 <82909467+AryaLi1996@users.noreply.github.com>"
     },
     "nsis": {
       "oneClick": false,

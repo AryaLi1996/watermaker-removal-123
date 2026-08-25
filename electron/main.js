@@ -1,9 +1,10 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const system = require('./system');
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -27,8 +28,7 @@ function backendScript() {
 
 /** Path to the frozen backend shipped beside a packaged app. */
 function bundledBackend() {
-  const name = process.platform === 'win32' ? 'watermark-backend.exe' : 'watermark-backend';
-  return path.join(process.resourcesPath, 'backend', name);
+  return path.join(system.bundledBinaryDir(), system.executableName('watermark-backend'));
 }
 
 /**
@@ -61,10 +61,9 @@ function backendEnv() {
   const env = { ...process.env };
   if (!app.isPackaged) return env;
 
-  const dir = path.join(process.resourcesPath, 'backend');
-  const exe = process.platform === 'win32' ? '.exe' : '';
-  const ffmpeg = path.join(dir, `ffmpeg${exe}`);
-  const ffprobe = path.join(dir, `ffprobe${exe}`);
+  const dir = system.bundledBinaryDir();
+  const ffmpeg = path.join(dir, system.executableName('ffmpeg'));
+  const ffprobe = path.join(dir, system.executableName('ffprobe'));
   if (fs.existsSync(ffmpeg)) env.FFMPEG_PATH = ffmpeg;
   if (fs.existsSync(ffprobe)) env.FFPROBE_PATH = ffprobe;
   return env;
@@ -219,21 +218,12 @@ ipcMain.handle('dialog:saveFile', async (_event, defaultName) => {
 });
 
 // ─── Open folder in Finder / Explorer ────────────────────────────
-ipcMain.handle('shell:openPath', (_event, filePath) => {
-  if (!filePath) return false;
+ipcMain.handle('shell:openPath', (_event, filePath) => system.revealInFileManager(filePath));
 
-  // Never launch the OS file manager during tests. A headless Linux box has
-  // xdg-utils but no desktop session behind it, so the helper this spawns can
-  // outlive the call and keep Electron from quitting — which surfaces as an
-  // app.close() that never returns, failing the run during teardown.
-  if (process.env.NODE_ENV === 'test') {
-    console.log('[shell] reveal suppressed under test:', filePath);
-    return false;
-  }
-
-  shell.showItemInFolder(filePath);
-  return true;
-});
+// ─── Host platform facts and notifications ───────────────────────
+ipcMain.handle('system:info', () => system.platformInfo());
+ipcMain.handle('system:tempDir', () => system.tempDir());
+ipcMain.handle('system:notify', (_event, title, body) => system.notify(title, body));
 
 // ─── Python quick hello (used during Epic 1 validation) ──────────
 ipcMain.handle('python:run', async (_event, payload) => {

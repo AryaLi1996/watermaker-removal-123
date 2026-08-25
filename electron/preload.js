@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateDownloaded: (cb) => ipcRenderer.on('update:downloaded', (_e, v) => cb(v)),
   installUpdate: () => ipcRenderer.invoke('update:install'),
 
+  // Host platform
+  systemInfo: () => ipcRenderer.invoke('system:info'),
+  tempDir: () => ipcRenderer.invoke('system:tempDir'),
+  notify: (title, body) => ipcRenderer.invoke('system:notify', title, body),
+
   // Remove all listeners (call on component unmount)
   removeJobListeners: () => {
     ['job:progress','job:state','job:error','job:done','job:meta','job:preview-ready']

@@ -59,18 +59,65 @@ jobs:
 
       # scripts/build.js freezes the backend and builds the renderer; the
       # frozen binary is what the installed app actually runs.
+      # AppImage packaging needs FUSE on the runner; the others need nothing.
+      - name: Platform build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libfuse2
+
+      # Code signing — set these secrets to produce signed builds.
+      #
+      # They cannot be passed to the build step directly. An unset secret
+      # expands to an empty string, and electron-builder treats CSC_LINK as a
+      # certificate path whenever it is *defined*, empty or not: it resolved
+      # "" against the checkout directory and failed the macOS job with
+      # "<workspace> not a file". So export each variable only when there is
+      # something in it, and tell electron-builder plainly when there is not.
+      - name: Signing environment
+        shell: bash
+        env:
+          IN_CSC_LINK: ${{ secrets.CSC_LINK }}
+          IN_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          IN_APPLE_ID: ${{ secrets.APPLE_ID }}
+          IN_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          IN_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Heredoc form: a certificate is base64 and a password is arbitrary.
+          export_env() {
+            {
+              echo "$1<<__WATERMARK_EOF__"
+              echo "$2"
+              echo "__WATERMARK_EOF__"
+            } >> "$GITHUB_ENV"
+          }
+
+          if [ -n "$IN_CSC_LINK" ]; then
+            export_env CSC_LINK "$IN_CSC_LINK"
+            export_env CSC_KEY_PASSWORD "$IN_CSC_KEY_PASSWORD"
+            echo "Signing with the certificate in CSC_LINK."
+          else
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+            echo "No signing certificate configured — building unsigned."
+          fi
+
+          if [ -n "$IN_APPLE_ID" ] && [ -n "$IN_APPLE_TEAM_ID" ]; then
+            export_env APPLE_ID "$IN_APPLE_ID"
+            export_env APPLE_APP_SPECIFIC_PASSWORD "$IN_APPLE_APP_SPECIFIC_PASSWORD"
+            export_env APPLE_TEAM_ID "$IN_APPLE_TEAM_ID"
+            echo "Notarization credentials present."
+          else
+            echo "No notarization credentials — the macOS build will not be notarized."
+          fi
+
       - name: Build and package
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Code signing — set these secrets to produce signed builds.
-          # Unset, electron-builder produces unsigned artifacts and says so.
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run dist
+        run: |
+          case "$RUNNER_OS" in
+            macOS)   npm run dist:mac ;;
+            Windows) npm run dist:win ;;
+            *)       npm run dist:linux ;;
+          esac
 
       - name: Upload installers
         uses: actions/upload-artifact@v4

@@ -47,11 +47,16 @@ export function estimateSecondsRemaining(samples: ProgressSample[]): number | nu
   return remaining / 1000;
 }
 
-/** "about 2 min", "45s" — deliberately vague, because the estimate is. */
-export function formatRemaining(seconds: number | null): string {
-  if (seconds === null) return 'estimating…';
-  if (seconds < 10) return 'almost done';
-  if (seconds < 90) return `${Math.round(seconds)}s left`;
-  const minutes = Math.round(seconds / 60);
-  return `about ${minutes} min left`;
+/**
+ * "about 2 min", "45s" — deliberately vague, because the estimate is.
+ * Takes the translator so the wording follows the chosen language.
+ */
+export function formatRemaining(
+  seconds: number | null,
+  translate: (key: string, vars?: Record<string, string | number>) => string,
+): string {
+  if (seconds === null) return translate('progress.estimating');
+  if (seconds < 10) return translate('progress.almostDone');
+  if (seconds < 90) return translate('progress.secondsLeft', { seconds: Math.round(seconds) });
+  return translate('progress.minutesLeft', { minutes: Math.round(seconds / 60) });
 }

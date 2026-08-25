@@ -5,7 +5,8 @@
  * alongside them and can be removed again.
  */
 import { useState } from 'react';
-import type { Preset } from '../presets';
+import { presetLabel, type Preset } from '../presets';
+import { useTranslation } from '../hooks/useTranslation';
 
 interface PresetPickerProps {
   presets: Preset[];
@@ -30,6 +31,7 @@ export default function PresetPicker({
   onDelete,
   onSaveCurrent,
 }: PresetPickerProps) {
+  const { t } = useTranslation();
   const [name, setName] = useState('');
 
   const save = () => {
@@ -43,7 +45,7 @@ export default function PresetPicker({
     <div className="flex flex-col gap-2" style={{ opacity: disabled ? 0.5 : 1 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-          Presets
+          {t('presets.heading')}
         </p>
         <button
           data-testid="save-preset"
@@ -54,7 +56,7 @@ export default function PresetPicker({
             cursor: disabled ? 'not-allowed' : 'pointer', padding: 0, textDecoration: 'underline',
           }}
         >
-          Save current
+          {t('presets.saveCurrent')}
         </button>
       </div>
 
@@ -64,7 +66,7 @@ export default function PresetPicker({
             data-testid="preset-name"
             autoFocus
             value={name}
-            placeholder="Preset name"
+            placeholder={t('presets.namePlaceholder')}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') save();
@@ -83,7 +85,7 @@ export default function PresetPicker({
               color: '#fff', fontSize: 11, cursor: 'pointer',
             }}
           >
-            Save
+            {t('presets.save')}
           </button>
         </div>
       )}
@@ -102,13 +104,14 @@ export default function PresetPicker({
       >
         {presets.map((preset) => {
           const active = preset.id === activeId;
+          const label = presetLabel(preset, t);
           return (
             <div key={preset.id} style={{ position: 'relative' }}>
               <button
                 data-testid={`preset-${preset.id}`}
                 onClick={() => onApply(preset)}
                 disabled={disabled}
-                title={preset.description}
+                title={label.description}
                 style={{
                   width: '100%',
                   textAlign: 'left',
@@ -119,16 +122,16 @@ export default function PresetPicker({
                   cursor: disabled ? 'not-allowed' : 'pointer',
                 }}
               >
-                <span style={{ display: 'block', color: '#f4f4f5', fontSize: 11 }}>{preset.name}</span>
+                <span style={{ display: 'block', color: '#f4f4f5', fontSize: 11 }}>{label.name}</span>
                 <span style={{ display: 'block', color: '#71717a', fontSize: 10, marginTop: 2 }}>
-                  {preset.description}
+                  {label.description}
                 </span>
               </button>
               {preset.custom && (
                 <button
                   data-testid={`delete-${preset.id}`}
                   onClick={() => onDelete(preset.id)}
-                  aria-label={`Delete preset ${preset.name}`}
+                  aria-label={t('presets.delete', { name: label.name })}
                   style={{
                     position: 'absolute', top: 2, right: 4, background: 'none', border: 'none',
                     color: '#71717a', fontSize: 12, lineHeight: 1, cursor: 'pointer', padding: 2,

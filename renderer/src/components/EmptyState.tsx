@@ -2,11 +2,15 @@
  * EmptyState — shown when no video is loaded.
  * Clicking anywhere triggers the file picker.
  */
+import { useTranslation } from '../hooks/useTranslation';
+
 interface EmptyStateProps {
   onSelectFile: () => void;
 }
 
 export default function EmptyState({ onSelectFile }: EmptyStateProps) {
+  const { t } = useTranslation();
+
   return (
     <div
       data-testid="empty-state"
@@ -35,10 +39,10 @@ export default function EmptyState({ onSelectFile }: EmptyStateProps) {
         <line x1="17" y1="7" x2="22" y2="7" />
       </svg>
       <p className="mt-4 text-sm" style={{ color: '#52525b' }}>
-        Click to browse for a video file
+        {t('file.emptyPrompt')}
       </p>
       <p className="mt-1 text-xs" style={{ color: '#3f3f46' }}>
-        MP4 · MKV · MOV · AVI
+        {t('file.emptyFormats')}
       </p>
     </div>
   );

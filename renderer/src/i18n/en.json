@@ -1,0 +1,111 @@
+{
+  "app": {
+    "title": "Watermark Remover",
+    "language": "Language"
+  },
+  "file": {
+    "load": "Load video",
+    "change": "Change video",
+    "browse": "Browse",
+    "output": "Output",
+    "notSet": "Not set",
+    "emptyPrompt": "Click to browse for a video file",
+    "emptyFormats": "MP4 · MKV · MOV · AVI",
+    "loadingPreview": "Loading preview…",
+    "closePreview": "Close preview"
+  },
+  "method": {
+    "heading": "Removal method",
+    "inpaint": "Smart Fill",
+    "inpaintDescription": "Reconstructs background (best for logos)",
+    "blur": "Blur",
+    "blurDescription": "Gaussian blur censor effect",
+    "solidFill": "Solid Color",
+    "solidFillDescription": "Paint a solid color over the area",
+    "cloneStamp": "Clone Stamp",
+    "cloneStampDescription": "Copy nearby pixels over the watermark"
+  },
+  "params": {
+    "radius": "Smoothness (radius px)",
+    "kernelSize": "Blur Strength",
+    "color": "Fill Color",
+    "dx": "Source Offset X (px)",
+    "dy": "Source Offset Y (px)"
+  },
+  "actions": {
+    "preview": "Preview (3s)",
+    "export": "Export",
+    "cancel": "Cancel",
+    "dismiss": "Dismiss",
+    "copyDetails": "Copy details",
+    "copied": "Copied",
+    "reveal": "Reveal in Finder",
+    "restartAndInstall": "Restart and install"
+  },
+  "status": {
+    "starting": "Starting…",
+    "generatingPreview": "Generating 3s preview…",
+    "exportComplete": "Export complete",
+    "returningIn": "Returning to editor in {seconds}s…",
+    "updateReady": "Update {version} ready to install",
+    "updateReadyNoVersion": "Update ready to install"
+  },
+  "progress": {
+    "estimating": "estimating…",
+    "almostDone": "almost done",
+    "secondsLeft": "{seconds}s left",
+    "minutesLeft": "about {minutes} min left"
+  },
+  "presets": {
+    "heading": "Presets",
+    "saveCurrent": "Save current",
+    "namePlaceholder": "Preset name",
+    "save": "Save",
+    "delete": "Delete preset {name}",
+    "savedByYou": "Saved by you",
+    "smartSmall": "Smart fill — small",
+    "smartSmallDescription": "Logos and badges",
+    "smartLarge": "Smart fill — large",
+    "smartLargeDescription": "Bigger marks on busy backgrounds",
+    "blurSoft": "Soft blur",
+    "blurSoftDescription": "Subtitles and captions",
+    "blurStrong": "Strong blur",
+    "blurStrongDescription": "Hides a mark completely",
+    "fillBlack": "Black box",
+    "fillBlackDescription": "Letterboxed or dark footage",
+    "fillWhite": "White box",
+    "fillWhiteDescription": "Light backgrounds",
+    "cloneAbove": "Clone from above",
+    "cloneAboveDescription": "Marks over flat areas",
+    "cloneLeft": "Clone from the left",
+    "cloneLeftDescription": "Marks near the top or bottom edge"
+  },
+  "shortcuts": {
+    "heading": "Keyboard shortcuts",
+    "method": "Method",
+    "preview": "Preview",
+    "export": "Export",
+    "undo": "Undo",
+    "savePreset": "Save preset",
+    "cancel": "Cancel"
+  },
+  "errors": {
+    "ffmpeg": "Could not read or write the video. The file may be corrupted, or in a format this build of FFmpeg does not support.",
+    "pythonMissing": "The Python environment is missing. Run ./dev.sh to create it, then restart the app.",
+    "backendMissing": "This installation is incomplete — the processing backend is missing. Reinstalling should fix it.",
+    "permission": "No permission to write there. Choose a different output location.",
+    "diskFull": "The disk is full. Free some space or choose another location, then try again.",
+    "inputMissing": "The video file is no longer where it was. It may have been moved, renamed or deleted.",
+    "roiOutside": "The selection sits outside the video frame. Draw the box over the area you want removed.",
+    "noVideoStream": "That file has no video track, so there is nothing to process.",
+    "outOfMemory": "Ran out of memory processing this video. A shorter clip, or a smaller selection, should get through.",
+    "timeout": "The job took too long and was stopped. Try a shorter video, or a smaller selection.",
+    "unknown": "Something went wrong, and the backend gave no reason.",
+    "jobRunning": "Another job is already running. Wait for it to finish, or cancel it.",
+    "previewTimeout": "Still waiting for a preview of this video after 90 seconds. It may be very large, or the backend may be stuck — try loading it again."
+  },
+  "notifications": {
+    "exportDoneTitle": "Export complete",
+    "exportDoneBody": "{name} is ready."
+  }
+}

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- English and Chinese interfaces, switchable from the sidebar without a
+  restart. The choice is remembered; a first run follows the system language.
+  Backend failures are translated too, since they are classified to a key
+  rather than a sentence.
+- `electron/system.js` gathers the platform-specific calls — app data and temp
+  directories, revealing a file, notifications, host facts — behind one module.
+- A desktop notification when an export finishes, for when the app is in the
+  background.
+- Linux builds now produce a `.deb` alongside the `.AppImage`.
 - Presets: eight built-ins covering the common cases, plus your own saved to
   this machine and restored on the next launch.
 - Keyboard shortcuts for the repeated actions — 1–4 pick a method, ⌘/Ctrl+P
@@ -32,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the user's confirmation.
 
 ### Fixed
+- The release workflow packaged on Linux only. macOS failed in
+  electron-builder because an unset `CSC_LINK` secret still arrives as an
+  empty string and was read as a certificate path; Windows failed *after*
+  freezing the backend, when a status line containing `✅` met the runner's
+  cp1252 stdout. Signing variables are now exported only when they hold
+  something, and the build scripts ask for UTF-8 output.
 - OpenCV no longer oversubscribes the CPU: each pool worker was spawning
   threads up to the core count while the pool already used every core.
   Measured a few percent faster end to end on a 4-core machine.

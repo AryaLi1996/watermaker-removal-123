@@ -3,6 +3,7 @@
  * Shows a thin progress bar, stage label, time remaining, and a Cancel button.
  */
 import { formatRemaining } from '../eta';
+import { useTranslation } from '../hooks/useTranslation';
 
 interface ProgressPanelProps {
   progress: number; // 0–100
@@ -13,10 +14,12 @@ interface ProgressPanelProps {
 }
 
 export default function ProgressPanel({ progress, stateLabel, secondsRemaining, onCancel }: ProgressPanelProps) {
+  const { t } = useTranslation();
+
   return (
     <div data-testid="progress-panel" className="flex flex-col gap-4 pt-2">
       {/* Stage label */}
-      <p style={{ color: '#a1a1aa', fontSize: 12 }}>{stateLabel || 'Starting…'}</p>
+      <p style={{ color: '#a1a1aa', fontSize: 12 }}>{stateLabel || t('status.starting')}</p>
 
       {/* Progress bar */}
       <div style={{ background: '#27272a', borderRadius: 2, height: 2, overflow: 'hidden' }}>
@@ -37,7 +40,7 @@ export default function ProgressPanel({ progress, stateLabel, secondsRemaining, 
           {Math.round(progress)}%
         </p>
         <p data-testid="eta" style={{ color: '#71717a', fontSize: 11 }}>
-          {formatRemaining(secondsRemaining)}
+          {formatRemaining(secondsRemaining, t)}
         </p>
       </div>
 
@@ -56,7 +59,7 @@ export default function ProgressPanel({ progress, stateLabel, secondsRemaining, 
           textDecoration: 'underline',
         }}
       >
-        Cancel
+        {t('actions.cancel')}
       </button>
     </div>
   );

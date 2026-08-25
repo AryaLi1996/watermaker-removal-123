@@ -44,6 +44,10 @@ export const test = base.extend<Fixtures, Options>({
   page: async ({ electronApp }, use) => {
     const window = await electronApp.firstWindow();
     await window.waitForLoadState('domcontentloaded');
+    // Pin the language — see electron-fixture.ts for why.
+    await window.evaluate(() => window.localStorage.setItem('watermark-remover:locale', 'en'));
+    await window.reload();
+    await window.waitForLoadState('domcontentloaded');
     await use(window);
   },
 });

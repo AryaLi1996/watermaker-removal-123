@@ -1,0 +1,101 @@
+/**
+ * E2E: switching the interface language.
+ *
+ * The fixture pins English, so this spec drives the switcher itself and puts
+ * it back afterwards.
+ */
+import { test, expect } from './fixtures/stub-backend-fixture';
+import type { ElectronApplication, Page } from '@playwright/test';
+
+test.use({ appTag: 'i18n' });
+
+const INPUT = '/fake/clip.mp4';
+
+async function mockDialogs(electronApp: ElectronApplication) {
+  await electronApp.evaluate(({ ipcMain }, input) => {
+    ipcMain.removeHandler('dialog:openFile');
+    ipcMain.removeHandler('shell:openPath');
+    ipcMain.handle('dialog:openFile', async () => input);
+    ipcMain.handle('shell:openPath', () => true);
+  }, INPUT);
+}
+
+async function chooseLanguage(page: Page, code: 'en' | 'zh') {
+  await page.getByTestId('language-select').selectOption(code);
+}
+
+test.describe('language', () => {
+  test.afterEach(async ({ page }) => {
+    // Leave the app in English for whatever runs next.
+    await chooseLanguage(page, 'en');
+  });
+
+  test('switching to Chinese translates the interface immediately', async ({ page, electronApp }) => {
+    await mockDialogs(electronApp);
+
+    await expect(page.getByText('Watermark Remover')).toBeVisible();
+    await expect(page.getByText('Click to browse for a video file')).toBeVisible();
+
+    await chooseLanguage(page, 'zh');
+
+    await expect(page.getByText('视频水印去除工具')).toBeVisible();
+    await expect(page.getByText('点击选择视频文件')).toBeVisible();
+    // No reload was needed
+    await expect(page.getByText('Watermark Remover')).toBeHidden();
+  });
+
+  test('the choice survives a restart', async ({ page, electronApp }) => {
+    await mockDialogs(electronApp);
+    await chooseLanguage(page, 'zh');
+    await expect(page.getByText('视频水印去除工具')).toBeVisible();
+
+    await page.reload();
+
+    await expect(page.getByText('视频水印去除工具')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('language-select')).toHaveValue('zh');
+  });
+
+  test('the controls that appear after loading a video are translated too', async ({ page, electronApp }) => {
+    await mockDialogs(electronApp);
+    await chooseLanguage(page, 'zh');
+
+    await page.getByTestId('btn-load-video').click();
+    await expect(page.getByTestId('btn-export')).toBeVisible({ timeout: 10_000 });
+
+    // Sidebar headings, method names and the action buttons
+    await expect(page.getByText('去除方式')).toBeVisible();
+    await expect(page.getByText('智能修复', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('btn-export')).toHaveText('导出');
+    await expect(page.getByTestId('btn-preview')).toHaveText('预览（3 秒）');
+    await expect(page.getByTestId('save-preset')).toHaveText('保存当前设置');
+  });
+
+  test('backend failures are reported in the chosen language', async ({ page, electronApp }) => {
+    await mockDialogs(electronApp);
+    await electronApp.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('job:start');
+      ipcMain.handle('job:start', () => true);
+    });
+
+    await page.getByTestId('btn-load-video').click();
+    await expect(page.getByTestId('btn-export')).toBeVisible({ timeout: 10_000 });
+    await chooseLanguage(page, 'zh');
+
+    await page.getByTestId('btn-export').click();
+    await expect(page.getByTestId('progress-panel')).toBeVisible({ timeout: 5_000 });
+
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('job:error', "Permission denied: '/root/out.mp4'");
+    });
+
+    const panel = page.getByTestId('error-panel');
+    await expect(panel).toBeVisible({ timeout: 5_000 });
+    await expect(panel).toContainText('没有写入该位置的权限');
+
+    // Switching language re-renders the message that is already on screen
+    await chooseLanguage(page, 'en');
+    await expect(panel).toContainText('No permission to write there');
+
+    await page.getByTestId('dismiss-error').click();
+  });
+});
