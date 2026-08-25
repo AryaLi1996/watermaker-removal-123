@@ -10,8 +10,10 @@ import { test } from '@playwright/test';
 import { _electron as electron } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
+import { SANDBOX_ARGS } from './fixtures/launch-args';
 
-test.use({ appTag: 'capture-screenshots' });
+// This spec drives its own Electron sessions rather than using the shared
+// fixture, so it needs the same launch arguments.
 
 const ROOT    = path.join(__dirname, '..', '..');
 const OUT_DIR = path.join(ROOT, 'docs', 'screenshots');
@@ -28,7 +30,7 @@ test.beforeAll(() => {
 // ──────────────────────────────────────────────────────────────────────────
 test('capture: idle (empty) state', async () => {
   const app = await electron.launch({
-    args: [path.join(ROOT, 'electron', 'main.js')],
+    args: [...SANDBOX_ARGS, path.join(ROOT, 'electron', 'main.js')],
     env: { ...process.env, NODE_ENV: 'test' },
   });
   const win = await app.firstWindow();
@@ -45,7 +47,7 @@ test('capture: video loaded / processing / done (real sample video)', async () =
   // Override the default 30s config timeout for this test — Python export takes ~20s
   test.setTimeout(180_000);
   const app = await electron.launch({
-    args: [path.join(ROOT, 'electron', 'main.js')],
+    args: [...SANDBOX_ARGS, path.join(ROOT, 'electron', 'main.js')],
     env: { ...process.env, NODE_ENV: 'test' },
   });
 
