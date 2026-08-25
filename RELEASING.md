@@ -102,9 +102,18 @@ a Python venv, to prove the frozen backend is doing the work.
 npm run dist
 ```
 
-Output: `dist/Watermark Remover-1.0.0.dmg`
+Output: `release/Watermark Remover-1.0.0-<arch>.dmg` — `arm64` on an Apple
+silicon Mac, `x64` on an Intel one. Building locally gives you your own
+machine's architecture only; both are produced in CI (below).
 
-The DMG contains a drag-to-Applications installer. The app bundle is at `dist/mac/Watermark Remover.app`.
+macOS artifacts cannot be cross-built here, and a universal binary is not an
+option either. The app ships a PyInstaller-frozen backend and a copy of the
+runner's `ffmpeg`, and both are architecture-specific native executables — an
+`arm64` backend simply will not launch on an Intel Mac. Each Mac build
+therefore has to happen on a machine of that architecture.
+
+The DMG contains a drag-to-Applications installer. The app bundle is at
+`release/mac[-arm64]/Watermark Remover.app`.
 
 #### Code signing (required for distribution outside App Store)
 
@@ -203,7 +212,7 @@ and Ubuntu); the release workflow installs it.
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `.github/workflows/ci.yml` | push to `main`, every PR | Installs ffmpeg, runs backend + renderer + E2E tests and lint on Linux, macOS and Windows |
-| `.github/workflows/release.yml` | tag `v*`, or manual dispatch | Packages on all three platforms and attaches the installers to a GitHub release |
+| `.github/workflows/release.yml` | tag `v*`, or manual dispatch | Packages on Linux, Windows and both Mac architectures (`macos-latest` for Apple silicon, `macos-15-intel` for Intel), then attaches the installers to a GitHub release |
 
 Signing secrets are read by the release workflow when set (`CSC_LINK`,
 `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`).
