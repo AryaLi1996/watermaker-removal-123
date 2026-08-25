@@ -16,7 +16,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # macos-latest is Apple silicon and macos-15-intel is Intel. Both are
+        # needed: the backend is frozen by PyInstaller and ffmpeg is copied
+        # from the runner, so each macOS artifact carries binaries for the
+        # architecture that built it and cannot be cross-built from the other.
+        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
 
     steps:
       - uses: actions/checkout@v4

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Intel Macs get their own build. Releases now carry both
+  `Watermark Remover-<version>-x64.dmg` and `-arm64.dmg`, each packaged on a
+  runner of that architecture — the frozen backend and the bundled ffmpeg are
+  native executables, so one Mac build cannot serve both.
 - English and Chinese interfaces, switchable from the sidebar without a
   restart. The choice is remembered; a first run follows the system language.
   Backend failures are translated too, since they are classified to a key
