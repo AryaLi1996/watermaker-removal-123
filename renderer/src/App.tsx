@@ -8,18 +8,22 @@ import DonePanel from './components/DonePanel';
 import PresetPicker from './components/PresetPicker';
 import type { AppState, JobConfig, RemovalMethod, ROI, VideoMeta } from './types';
 import { normalizeCoordinates, defaultOutputName, formatDuration } from './utils';
-import { friendlyError, hasTechnicalDetail, PREVIEW_TIMEOUT_MS, PREVIEW_TIMEOUT_MESSAGE } from './errors';
+import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX, PREVIEW_TIMEOUT_MS } from './errors';
+import type { FriendlyError } from './errors';
 import { BUILT_IN_PRESETS, loadCustomPresets, saveCustomPresets, presetFromCurrent } from './presets';
 import type { Preset, PresetParams } from './presets';
 import { useHistory } from './hooks/useHistory';
 import type { JobSettings } from './hooks/useHistory';
 import { useKeyboardShortcuts, SHORTCUT_HINTS } from './hooks/useKeyboardShortcuts';
+import { useTranslation } from './hooks/useTranslation';
+import { LOCALES, LOCALE_NAMES } from './i18n';
 import { estimateSecondsRemaining, recordSample } from './eta';
 import type { ProgressSample } from './eta';
 
 const SIDEBAR_W = 280;
 
 function App() {
+  const { t, locale, setLocale } = useTranslation();
   const [appState, setAppState] = useState<AppState>('empty');
   const [inputPath, setInputPath] = useState<string | null>(null);
   const [outputPath, setOutputPath] = useState<string | null>(null);
@@ -38,10 +42,9 @@ function App() {
   const [dy, setDy] = useState(-50);
   const [progress, setProgress] = useState(0);
   const [stateLabel, setStateLabel] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
+  const [error, setError] = useState<FriendlyError>({ key: null, raw: '' });
   const [doneOutputPath, setDoneOutputPath] = useState('');
   const [updateReady, setUpdateReady] = useState<string | null>(null);
-  const [rawError, setRawError] = useState('');
   const [copiedDetail, setCopiedDetail] = useState(false);
   const [customPresets, setCustomPresets] = useState<Preset[]>(() => loadCustomPresets());
   const [samples, setSamples] = useState<ProgressSample[]>([]);
@@ -49,8 +52,7 @@ function App() {
 
   /** One place to fail: keeps the raw text for a report, shows plain language. */
   const failWith = useCallback((raw: string) => {
-    setRawError(raw);
-    setErrorMsg(friendlyError(raw));
+    setError(classifyError(raw));
     setAppState('error');
     setCopiedDetail(false);
     window.electronAPI.removeJobListeners();
@@ -113,7 +115,10 @@ function App() {
 
     // A backend that never answers would leave the spinner running for good.
     clearPreviewTimer();
-    previewTimer.current = setTimeout(() => failWith(PREVIEW_TIMEOUT_MESSAGE), PREVIEW_TIMEOUT_MS);
+    previewTimer.current = setTimeout(
+      () => failWith(`${OWN_MESSAGE_PREFIX}errors.previewTimeout`),
+      PREVIEW_TIMEOUT_MS,
+    );
     window.electronAPI.startJob({
       inputPath: path, outputPath: '/dev/null',
       roi: { x: 0, y: 0, w: 1, h: 1 },
@@ -140,13 +145,20 @@ function App() {
       setDoneOutputPath(written);
       setProgress(100);
       setAppState('done');
+      // A long export usually finishes while the user is in another window.
+      if (written) {
+        void window.electronAPI.notify(
+          t('notifications.exportDoneTitle'),
+          t('notifications.exportDoneBody', { name: written.split(/[\\/]/).pop() ?? '' }),
+        );
+      }
       // Surface the result straight away — the DonePanel's Reveal button is
       // there for a second look.
       if (written) window.electronAPI.openPath(written);
       window.electronAPI.removeJobListeners();
     });
     window.electronAPI.onJobError(failWith);
-  }, [outputPath, failWith]);
+  }, [outputPath, failWith, t]);
 
   const handleExport = useCallback(async () => {
     if (!inputPath) return;
@@ -164,7 +176,7 @@ function App() {
     if (!started) {
       // Refused because another job holds the backend; don't sit in a
       // "processing" state that nothing will ever complete.
-      failWith('Another job is already running. Wait for it to finish, or cancel it.');
+      failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
   }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, registerJobListeners, failWith]);
 
@@ -173,7 +185,7 @@ function App() {
     const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
     // outputPath is passed as placeholder; backend generates its own temp file for the preview clip
     const payload: JobConfig = { inputPath, outputPath: outputPath ?? '/dev/null', roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy };
-    setProgress(0); setStateLabel('Generating 3s preview…'); setSamples([]); setAppState('processing');
+    setProgress(0); setStateLabel(t('status.generatingPreview')); setSamples([]); setAppState('processing');
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobProgress((value) => {
       setProgress(value);
@@ -188,9 +200,9 @@ function App() {
     window.electronAPI.onJobError(failWith);
     const started = await window.electronAPI.startJob(payload);
     if (!started) {
-      failWith('Another job is already running. Wait for it to finish, or cancel it.');
+      failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, failWith]);
+  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, failWith, t]);
 
   const handleCancel = useCallback(async () => {
     await window.electronAPI.cancelJob();
@@ -299,7 +311,23 @@ function App() {
     <div className="app-shell" style={{ display: 'flex', width: '100%', height: '100%', background: '#18181b' }}>
       {/* Sidebar */}
       <div className="app-sidebar" style={{ width: SIDEBAR_W, minWidth: SIDEBAR_W, background: '#27272a', borderRight: '1px solid #3f3f46', display: 'flex', flexDirection: 'column', padding: 24, gap: 20, overflowY: 'auto' }}>
-        <p style={{ color: '#f4f4f5', fontSize: 14, fontWeight: 500 }}>Watermark Remover</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <p style={{ color: '#f4f4f5', fontSize: 14, fontWeight: 500 }}>{t('app.title')}</p>
+          <select
+            data-testid="language-select"
+            aria-label={t('app.language')}
+            value={locale}
+            onChange={(e) => setLocale(e.target.value as typeof locale)}
+            style={{
+              background: '#18181b', color: '#a1a1aa', border: '1px solid #3f3f46',
+              borderRadius: 4, fontSize: 11, padding: '2px 4px', cursor: 'pointer',
+            }}
+          >
+            {LOCALES.map((code) => (
+              <option key={code} value={code}>{LOCALE_NAMES[code]}</option>
+            ))}
+          </select>
+        </div>
 
         {appState === 'empty' && (
           <button
@@ -307,19 +335,21 @@ function App() {
             onClick={handleSelectFile}
             style={{ background: '#6366f1', border: 'none', borderRadius: 6, padding: '8px 0', color: '#fff', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}
           >
-            Load video
+            {t('file.load')}
           </button>
         )}
 
         {updateReady !== null && !isProcessing && (
           <div data-testid="update-banner" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, padding: '8px 12px', color: '#cbd5e1', fontSize: 12 }}>
-            Update {updateReady ? `${updateReady} ` : ''}ready to install
+            {updateReady
+              ? t('status.updateReady', { version: updateReady })
+              : t('status.updateReadyNoVersion')}
             <button
               data-testid="install-update"
               onClick={() => window.electronAPI.installUpdate()}
               style={{ display: 'block', marginTop: 6, background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}
             >
-              Restart and install
+              {t('actions.restartAndInstall')}
             </button>
           </div>
         )}
@@ -339,21 +369,21 @@ function App() {
 
         {appState === 'error' && (
           <div data-testid="error-panel" style={{ background: '#450a0a', border: '1px solid #b91c1c', borderRadius: 6, padding: '8px 12px', color: '#fca5a5', fontSize: 12 }}>
-            {errorMsg}
+            {error.key ? t(error.key) : error.raw}
             <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-              <button data-testid="dismiss-error" onClick={() => setAppState('loaded')} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}>Dismiss</button>
-              {hasTechnicalDetail(rawError) && (
+              <button data-testid="dismiss-error" onClick={() => setAppState('loaded')} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}>{t('actions.dismiss')}</button>
+              {hasTechnicalDetail(error) && (
                 <button
                   data-testid="copy-error"
                   onClick={() => {
                     // Clipboard access can be refused; the button must not throw.
-                    void navigator.clipboard?.writeText(rawError)
+                    void navigator.clipboard?.writeText(error.raw)
                       .then(() => setCopiedDetail(true))
                       .catch(() => setCopiedDetail(false));
                   }}
                   style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}
                 >
-                  {copiedDetail ? 'Copied' : 'Copy details'}
+                  {copiedDetail ? t('actions.copied') : t('actions.copyDetails')}
                 </button>
               )}
             </div>
@@ -383,22 +413,22 @@ function App() {
             <MethodPicker method={method} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} disabled={!isLoaded} onChange={handleMethodChange} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Output</p>
+              <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{t('file.output')}</p>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <p style={{ color: outputPath ? '#d4d4d8' : '#52525b', fontSize: 11, flex: 1, wordBreak: 'break-all' }}>{outputPath ? outputPath.split(/[\\/]/).pop() : 'Not set'}</p>
-                <button data-testid="browse-output" onClick={handleSelectOutput} style={{ background: 'transparent', border: '1px solid #3f3f46', borderRadius: 6, padding: '4px 10px', color: '#a1a1aa', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>Browse</button>
+                <p style={{ color: outputPath ? '#d4d4d8' : '#52525b', fontSize: 11, flex: 1, wordBreak: 'break-all' }}>{outputPath ? outputPath.split(/[\\/]/).pop() : t('file.notSet')}</p>
+                <button data-testid="browse-output" onClick={handleSelectOutput} style={{ background: 'transparent', border: '1px solid #3f3f46', borderRadius: 6, padding: '4px 10px', color: '#a1a1aa', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>{t('file.browse')}</button>
               </div>
             </div>
 
             {/* Shortcuts are worth nothing if nobody can find them. */}
             <details data-testid="shortcut-hints" style={{ marginTop: 4 }}>
               <summary style={{ color: '#71717a', fontSize: 11, cursor: 'pointer', listStyle: 'none' }}>
-                Keyboard shortcuts
+                {t('shortcuts.heading')}
               </summary>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
                 {SHORTCUT_HINTS.map((hint) => (
                   <div key={hint.keys} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                    <span style={{ color: '#71717a', fontSize: 10 }}>{hint.label}</span>
+                    <span style={{ color: '#71717a', fontSize: 10 }}>{t(hint.labelKey)}</span>
                     <span style={{ color: '#a1a1aa', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>{hint.keys}</span>
                   </div>
                 ))}
@@ -406,8 +436,8 @@ function App() {
             </details>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 'auto' }}>
-              <button data-testid="btn-preview" onClick={handlePreview} disabled={!canExport} style={{ background: 'transparent', border: `1px solid ${canExport ? '#3f3f46' : '#27272a'}`, borderRadius: 6, padding: '7px 0', color: canExport ? '#d4d4d8' : '#52525b', fontSize: 12, cursor: canExport ? 'pointer' : 'not-allowed' }}>Preview (3s)</button>
-              <button data-testid="btn-export" onClick={() => { void handleExport(); }} disabled={!canExport} style={{ background: canExport ? '#6366f1' : '#312e81', border: 'none', borderRadius: 6, padding: '8px 0', color: canExport ? '#fff' : '#4338ca', fontSize: 13, fontWeight: 500, cursor: canExport ? 'pointer' : 'not-allowed' }}>Export</button>
+              <button data-testid="btn-preview" onClick={handlePreview} disabled={!canExport} style={{ background: 'transparent', border: `1px solid ${canExport ? '#3f3f46' : '#27272a'}`, borderRadius: 6, padding: '7px 0', color: canExport ? '#d4d4d8' : '#52525b', fontSize: 12, cursor: canExport ? 'pointer' : 'not-allowed' }}>{t('actions.preview')}</button>
+              <button data-testid="btn-export" onClick={() => { void handleExport(); }} disabled={!canExport} style={{ background: canExport ? '#6366f1' : '#312e81', border: 'none', borderRadius: 6, padding: '8px 0', color: canExport ? '#fff' : '#4338ca', fontSize: 13, fontWeight: 500, cursor: canExport ? 'pointer' : 'not-allowed' }}>{t('actions.export')}</button>
             </div>
           </>
         )}
@@ -424,20 +454,20 @@ function App() {
         {previewClipUrl && (
           <div style={{ position: 'absolute', inset: 0, background: '#000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
             <video src={previewClipUrl} autoPlay controls loop style={{ maxWidth: '100%', maxHeight: 'calc(100% - 44px)', outline: 'none' }} />
-            <button onClick={() => setPreviewClipUrl(null)} style={{ marginTop: 10, background: 'rgba(39,39,42,0.9)', border: '1px solid #3f3f46', borderRadius: 6, padding: '5px 16px', color: '#d4d4d8', fontSize: 11, cursor: 'pointer' }}>Close preview</button>
+            <button onClick={() => setPreviewClipUrl(null)} style={{ marginTop: 10, background: 'rgba(39,39,42,0.9)', border: '1px solid #3f3f46', borderRadius: 6, padding: '5px 16px', color: '#d4d4d8', fontSize: 11, cursor: 'pointer' }}>{t('file.closePreview')}</button>
           </div>
         )}
 
         {appState !== 'empty' && !previewFrameUrl && (
           <div style={{ color: '#52525b', fontSize: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 24, height: 24, border: '2px solid #52525b', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-            <span>Loading preview…</span>
+            <span>{t('file.loadingPreview')}</span>
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           </div>
         )}
 
         {appState !== 'empty' && (
-          <button data-testid="change-video" onClick={handleSelectFile} style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(39,39,42,0.85)', border: '1px solid #3f3f46', borderRadius: 6, padding: '5px 12px', color: '#d4d4d8', fontSize: 11, cursor: 'pointer' }}>Change video</button>
+          <button data-testid="change-video" onClick={handleSelectFile} style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(39,39,42,0.85)', border: '1px solid #3f3f46', borderRadius: 6, padding: '5px 12px', color: '#d4d4d8', fontSize: 11, cursor: 'pointer' }}>{t('file.change')}</button>
         )}
       </div>
     </div>

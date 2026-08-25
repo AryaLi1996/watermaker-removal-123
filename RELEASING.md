@@ -185,17 +185,16 @@ npm run dist -- --mac --win --linux
 
 ---
 
-## 2b. Linux `.deb` (not built by default)
+## 2b. Linux `.deb`
 
-`.deb` requires a package maintainer with an email address, which this repo
-does not declare. To publish debs, add your own maintainer and target:
+Linux builds produce both an `.AppImage` and a `.deb`. `.deb` requires a
+package maintainer with an email address; `package.json` declares the
+repository owner's GitHub noreply address, which is public and account-scoped
+rather than a personal inbox. Change it in `build.linux.maintainer` if you
+publish under a different identity.
 
-```json
-"linux": {
-  "maintainer": "Your Name <you@example.com>",
-  "target": ["AppImage", "deb"]
-}
-```
+Packaging an AppImage needs FUSE on the build machine (`libfuse2` on Debian
+and Ubuntu); the release workflow installs it.
 
 ---
 

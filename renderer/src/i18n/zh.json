@@ -1,0 +1,111 @@
+{
+  "app": {
+    "title": "视频水印去除工具",
+    "language": "语言"
+  },
+  "file": {
+    "load": "加载视频",
+    "change": "更换视频",
+    "browse": "浏览",
+    "output": "输出路径",
+    "notSet": "未设置",
+    "emptyPrompt": "点击选择视频文件",
+    "emptyFormats": "MP4 · MKV · MOV · AVI",
+    "loadingPreview": "正在加载预览…",
+    "closePreview": "关闭预览"
+  },
+  "method": {
+    "heading": "去除方式",
+    "inpaint": "智能修复",
+    "inpaintDescription": "重建背景，适合去除标志",
+    "blur": "高斯模糊",
+    "blurDescription": "以模糊遮挡该区域",
+    "solidFill": "纯色填充",
+    "solidFillDescription": "用纯色覆盖该区域",
+    "cloneStamp": "克隆图章",
+    "cloneStampDescription": "复制附近的像素覆盖水印"
+  },
+  "params": {
+    "radius": "修复平滑度（半径 px）",
+    "kernelSize": "模糊强度",
+    "color": "填充颜色",
+    "dx": "取样水平偏移（px）",
+    "dy": "取样垂直偏移（px）"
+  },
+  "actions": {
+    "preview": "预览（3 秒）",
+    "export": "导出",
+    "cancel": "取消",
+    "dismiss": "关闭",
+    "copyDetails": "复制详情",
+    "copied": "已复制",
+    "reveal": "在文件夹中显示",
+    "restartAndInstall": "重启并安装"
+  },
+  "status": {
+    "starting": "正在开始…",
+    "generatingPreview": "正在生成 3 秒预览…",
+    "exportComplete": "导出完成",
+    "returningIn": "{seconds} 秒后返回编辑器…",
+    "updateReady": "更新 {version} 已就绪，可安装",
+    "updateReadyNoVersion": "更新已就绪，可安装"
+  },
+  "progress": {
+    "estimating": "正在估算…",
+    "almostDone": "即将完成",
+    "secondsLeft": "剩余约 {seconds} 秒",
+    "minutesLeft": "剩余约 {minutes} 分钟"
+  },
+  "presets": {
+    "heading": "预设",
+    "saveCurrent": "保存当前设置",
+    "namePlaceholder": "预设名称",
+    "save": "保存",
+    "delete": "删除预设 {name}",
+    "savedByYou": "由你保存",
+    "smartSmall": "智能修复 — 小面积",
+    "smartSmallDescription": "标志与角标",
+    "smartLarge": "智能修复 — 大面积",
+    "smartLargeDescription": "复杂背景上的较大水印",
+    "blurSoft": "轻度模糊",
+    "blurSoftDescription": "字幕与说明文字",
+    "blurStrong": "强力模糊",
+    "blurStrongDescription": "彻底遮挡水印",
+    "fillBlack": "黑色填充",
+    "fillBlackDescription": "黑边或暗色画面",
+    "fillWhite": "白色填充",
+    "fillWhiteDescription": "浅色背景",
+    "cloneAbove": "从上方克隆",
+    "cloneAboveDescription": "位于平坦区域的水印",
+    "cloneLeft": "从左侧克隆",
+    "cloneLeftDescription": "靠近上下边缘的水印"
+  },
+  "shortcuts": {
+    "heading": "键盘快捷键",
+    "method": "切换方式",
+    "preview": "预览",
+    "export": "导出",
+    "undo": "撤销",
+    "savePreset": "保存预设",
+    "cancel": "取消"
+  },
+  "errors": {
+    "ffmpeg": "无法读取或写入该视频。文件可能已损坏，或其格式不受当前 FFmpeg 版本支持。",
+    "pythonMissing": "缺少 Python 运行环境。请运行 ./dev.sh 创建后重启应用。",
+    "backendMissing": "安装不完整——缺少处理后端。重新安装即可解决。",
+    "permission": "没有写入该位置的权限。请选择其他输出位置。",
+    "diskFull": "磁盘空间已满。请清理空间或选择其他位置后重试。",
+    "inputMissing": "找不到原视频文件，它可能已被移动、重命名或删除。",
+    "roiOutside": "选区超出了画面范围。请在需要去除的区域上重新框选。",
+    "noVideoStream": "该文件不含视频轨道，无法处理。",
+    "outOfMemory": "处理该视频时内存不足。请尝试更短的片段或更小的选区。",
+    "timeout": "任务耗时过长已停止。请尝试更短的视频或更小的选区。",
+    "unknown": "出现了错误，后端未提供原因。",
+    "jobRunning": "已有任务正在运行。请等待其完成，或先取消。",
+    "previewTimeout": "已等待 90 秒仍未生成预览。视频可能过大，或后端已卡住——请重新加载试试。"
+  },
+  "notifications": {
+    "exportDoneTitle": "导出完成",
+    "exportDoneBody": "{name} 已就绪。"
+  }
+}

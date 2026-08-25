@@ -59,6 +59,11 @@ jobs:
 
       # scripts/build.js freezes the backend and builds the renderer; the
       # frozen binary is what the installed app actually runs.
+      # AppImage packaging needs FUSE on the runner; the others need nothing.
+      - name: Platform build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libfuse2
+
       - name: Build and package
         shell: bash
         env:
@@ -70,7 +75,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run dist
+        run: |
+          case "$RUNNER_OS" in
+            macOS)   npm run dist:mac ;;
+            Windows) npm run dist:win ;;
+            *)       npm run dist:linux ;;
+          esac
 
       - name: Upload installers
         uses: actions/upload-artifact@v4

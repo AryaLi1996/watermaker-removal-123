@@ -16,9 +16,11 @@ export interface PresetParams {
 
 export interface Preset {
   id: string;
-  name: string;
-  /** What it is good for — shown under the name. */
-  description: string;
+  /** Built-ins carry a translation key; a saved preset carries its own name. */
+  nameKey?: string;
+  name?: string;
+  /** What it is good for — shown under the name. Key for built-ins. */
+  descriptionKey?: string;
   method: RemovalMethod;
   params: PresetParams;
   custom?: boolean;
@@ -35,23 +37,28 @@ export const DEFAULT_PARAMS: PresetParams = {
 
 function preset(
   id: string,
-  name: string,
-  description: string,
+  key: string,
   method: RemovalMethod,
   params: Partial<PresetParams>,
 ): Preset {
-  return { id, name, description, method, params: { ...DEFAULT_PARAMS, ...params } };
+  return {
+    id,
+    nameKey: `presets.${key}`,
+    descriptionKey: `presets.${key}Description`,
+    method,
+    params: { ...DEFAULT_PARAMS, ...params },
+  };
 }
 
 export const BUILT_IN_PRESETS: Preset[] = [
-  preset('smart-small', 'Smart fill — small', 'Logos and badges', 'inpaint', { radius: 3 }),
-  preset('smart-large', 'Smart fill — large', 'Bigger marks on busy backgrounds', 'inpaint', { radius: 7 }),
-  preset('blur-soft', 'Soft blur', 'Subtitles and captions', 'blur', { kernelSize: 21 }),
-  preset('blur-strong', 'Strong blur', 'Hides a mark completely', 'blur', { kernelSize: 81 }),
-  preset('fill-black', 'Black box', 'Letterboxed or dark footage', 'solidFill', { color: [0, 0, 0] }),
-  preset('fill-white', 'White box', 'Light backgrounds', 'solidFill', { color: [255, 255, 255] }),
-  preset('clone-above', 'Clone from above', 'Marks over flat areas', 'cloneStamp', { dx: 0, dy: -50 }),
-  preset('clone-left', 'Clone from the left', 'Marks near the top or bottom edge', 'cloneStamp', { dx: -80, dy: 0 }),
+  preset('smart-small', 'smartSmall', 'inpaint', { radius: 3 }),
+  preset('smart-large', 'smartLarge', 'inpaint', { radius: 7 }),
+  preset('blur-soft', 'blurSoft', 'blur', { kernelSize: 21 }),
+  preset('blur-strong', 'blurStrong', 'blur', { kernelSize: 81 }),
+  preset('fill-black', 'fillBlack', 'solidFill', { color: [0, 0, 0] }),
+  preset('fill-white', 'fillWhite', 'solidFill', { color: [255, 255, 255] }),
+  preset('clone-above', 'cloneAbove', 'cloneStamp', { dx: 0, dy: -50 }),
+  preset('clone-left', 'cloneLeft', 'cloneStamp', { dx: -80, dy: 0 }),
 ];
 
 const STORAGE_KEY = 'watermark-remover:custom-presets';
@@ -100,9 +107,21 @@ export function presetFromCurrent(name: string, method: RemovalMethod, params: P
   return {
     id: `custom-${Date.now()}`,
     name: name.trim(),
-    description: 'Saved by you',
+    // Description is a fixed key: the user's own name carries the meaning.
+    descriptionKey: 'presets.savedByYou',
     method,
     params: { ...params },
     custom: true,
+  };
+}
+
+/** The label to show for a preset, translated for built-ins. */
+export function presetLabel(
+  preset: Preset,
+  translate: (key: string) => string,
+): { name: string; description: string } {
+  return {
+    name: preset.name ?? (preset.nameKey ? translate(preset.nameKey) : preset.id),
+    description: preset.descriptionKey ? translate(preset.descriptionKey) : '',
   };
 }

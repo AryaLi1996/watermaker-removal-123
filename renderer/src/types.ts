@@ -52,6 +52,9 @@ declare global {
       onUpdateAvailable: (cb: (version: string | null) => void) => void;
       onUpdateDownloaded: (cb: (version: string | null) => void) => void;
       installUpdate: () => Promise<boolean>;
+      systemInfo: () => Promise<{ platform: string; arch: string; packaged: boolean; appVersion: string }>;
+      tempDir: () => Promise<string>;
+      notify: (title: string, body: string) => Promise<boolean>;
       removeJobListeners: () => void;
     };
   }

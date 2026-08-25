@@ -86,11 +86,11 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers, enabled = true)
 }
 
 /** Rendered in the sidebar so the shortcuts are discoverable. */
-export const SHORTCUT_HINTS: { keys: string; label: string }[] = [
-  { keys: '1–4', label: 'Method' },
-  { keys: '⌘/Ctrl + P', label: 'Preview' },
-  { keys: '⌘/Ctrl + E', label: 'Export' },
-  { keys: '⌘/Ctrl + Z', label: 'Undo' },
-  { keys: '⌘/Ctrl + S', label: 'Save preset' },
-  { keys: 'Esc', label: 'Cancel' },
+export const SHORTCUT_HINTS: { keys: string; labelKey: string }[] = [
+  { keys: '1–4', labelKey: 'shortcuts.method' },
+  { keys: '⌘/Ctrl + P', labelKey: 'shortcuts.preview' },
+  { keys: '⌘/Ctrl + E', labelKey: 'shortcuts.export' },
+  { keys: '⌘/Ctrl + Z', labelKey: 'shortcuts.undo' },
+  { keys: '⌘/Ctrl + S', labelKey: 'shortcuts.savePreset' },
+  { keys: 'Esc', labelKey: 'shortcuts.cancel' },
 ];

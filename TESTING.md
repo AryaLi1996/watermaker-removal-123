@@ -10,8 +10,8 @@ How to run, understand, and extend the automated test suite.
 |---|---|---|---|
 | Backend (Python) | `npm run test:backend` | 90 pytest | `tests/unit/backend/` |
 | Backend coverage | `npm run test:coverage` | ≥ 80% required | `htmlcov/` |
-| Renderer (TypeScript) | `npm run test:frontend` | 44 vitest | `tests/unit/renderer/` |
-| E2E (Electron) | `npm run test:e2e` | 44 Playwright | `tests/e2e/` |
+| Renderer (TypeScript) | `npm run test:frontend` | 61 vitest | `tests/unit/renderer/` |
+| E2E (Electron) | `npm run test:e2e` | 48 Playwright | `tests/e2e/` |
 | Docs screenshots | `npm run screenshots` | 2 Playwright | `tests/e2e/capture-screenshots.spec.ts` |
 | Everything | `npm run test:all` | all of the above | root |
 | Environment check | `python scripts/validate_env.py` | manual | `scripts/` |
@@ -453,3 +453,17 @@ path to.
 `tests/e2e/renderer-flow.spec.ts` still verifies that a finished export asks to
 reveal the file: it replaces the `shell:openPath` handler with its own recorder,
 so it observes the request without the OS ever being involved.
+
+---
+
+## A note on language in tests
+
+The app follows the host's system language on first run, so assertions on
+visible text would otherwise depend on the machine running the suite. Both
+Electron fixtures pin the locale to English before handing the window over;
+`tests/e2e/i18n.spec.ts` drives the switcher itself and restores English
+afterwards.
+
+`tests/unit/renderer/i18n.test.ts` checks that `en.json` and `zh.json` define
+exactly the same keys, with the same `{placeholders}` — that is what stops a
+new English string shipping without its Chinese counterpart.

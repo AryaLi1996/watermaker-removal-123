@@ -2,6 +2,7 @@
  * MethodPicker — sidebar control panel for removal algorithm and parameters.
  */
 import type { RemovalMethod } from '../types';
+import { useTranslation } from '../hooks/useTranslation';
 
 interface MethodPickerProps {
   method: RemovalMethod;
@@ -21,12 +22,8 @@ interface MethodPickerProps {
   }>) => void;
 }
 
-const METHODS: { id: RemovalMethod; label: string; description: string }[] = [
-  { id: 'inpaint',    label: 'Smart Fill',   description: 'Reconstructs background (best for logos)' },
-  { id: 'blur',       label: 'Blur',         description: 'Gaussian blur censor effect' },
-  { id: 'solidFill',  label: 'Solid Color',  description: 'Paint a solid color over the area' },
-  { id: 'cloneStamp', label: 'Clone Stamp',  description: 'Copy nearby pixels over the watermark' },
-];
+/** Labels come from the resources; the order is what the number keys map to. */
+const METHODS: RemovalMethod[] = ['inpaint', 'blur', 'solidFill', 'cloneStamp'];
 
 function Slider({
   label,
@@ -76,21 +73,23 @@ export default function MethodPicker({
   disabled,
   onChange,
 }: MethodPickerProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex flex-col gap-4" style={{ opacity: disabled ? 0.5 : 1 }}>
       <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-        Removal Method
+        {t('method.heading')}
       </p>
 
       <div className="flex flex-col gap-1">
-        {METHODS.map((m) => (
+        {METHODS.map((id) => (
           <button
-            key={m.id}
+            key={id}
             disabled={disabled}
-            onClick={() => !disabled && onChange({ method: m.id })}
+            onClick={() => !disabled && onChange({ method: id })}
             style={{
-              background: method === m.id ? '#312e81' : 'transparent',
-              border: `1px solid ${method === m.id ? '#6366f1' : '#3f3f46'}`,
+              background: method === id ? '#312e81' : 'transparent',
+              border: `1px solid ${method === id ? '#6366f1' : '#3f3f46'}`,
               borderRadius: 6,
               padding: '7px 10px',
               cursor: disabled ? 'not-allowed' : 'pointer',
@@ -98,8 +97,8 @@ export default function MethodPicker({
               transition: 'background 0.15s, border-color 0.15s',
             }}
           >
-            <div style={{ color: method === m.id ? '#e0e7ff' : '#d4d4d8', fontSize: 13 }}>{m.label}</div>
-            <div style={{ color: '#71717a', fontSize: 11, marginTop: 1 }}>{m.description}</div>
+            <div style={{ color: method === id ? '#e0e7ff' : '#d4d4d8', fontSize: 13 }}>{t(`method.${id}`)}</div>
+            <div style={{ color: '#71717a', fontSize: 11, marginTop: 1 }}>{t(`method.${id}Description`)}</div>
           </button>
         ))}
       </div>
@@ -108,7 +107,7 @@ export default function MethodPicker({
       <div className="flex flex-col gap-3 pt-1" style={{ borderTop: '1px solid #27272a' }}>
         {method === 'inpaint' && (
           <Slider
-            label="Smoothness (radius px)"
+            label={t('params.radius')}
             value={radius}
             min={1} max={20}
             disabled={disabled}
@@ -117,7 +116,7 @@ export default function MethodPicker({
         )}
         {method === 'blur' && (
           <Slider
-            label="Blur Strength"
+            label={t('params.kernelSize')}
             value={kernelSize}
             min={3} max={99} step={2}
             disabled={disabled}
@@ -126,7 +125,7 @@ export default function MethodPicker({
         )}
         {method === 'solidFill' && (
           <div className="flex flex-col gap-1">
-            <span style={{ color: '#a1a1aa', fontSize: 11 }}>Fill Color</span>
+            <span style={{ color: '#a1a1aa', fontSize: 11 }}>{t('params.color')}</span>
             <input
               type="color"
               disabled={disabled}
