@@ -29,6 +29,9 @@ const RULES: ErrorRule[] = [
   { match: /no space left|ENOSPC/i, key: 'errors.diskFull' },
   { match: /input file not found|no such file/i, key: 'errors.inputMissing' },
   { match: /selection .* lies outside|outside the frame bounds/i, key: 'errors.roiOutside' },
+  // The backend rejected the job payload. The raw text names the field, which
+  // is worth keeping for a report but means nothing to the person exporting.
+  { match: /invalid job configuration|validation error for jobconfig/i, key: 'errors.invalidConfig' },
   { match: /no video stream/i, key: 'errors.noVideoStream' },
   { match: /out of memory|cannot allocate|MemoryError/i, key: 'errors.outOfMemory' },
   { match: /timed out|timeout/i, key: 'errors.timeout' },

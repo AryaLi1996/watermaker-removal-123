@@ -137,6 +137,29 @@ describe('translated surfaces', () => {
     expect(t(permission.key!)).toContain('没有写入');
   });
 
+  it('explains a rejected job payload in both languages, keeping the detail', () => {
+    const invalid = classifyError(
+      "Invalid job configuration — roi.w: Input should be greater than 0",
+    );
+    expect(invalid.key).toBe('errors.invalidConfig');
+    // The field name is no use to the user, but it belongs in a bug report.
+    expect(hasTechnicalDetail(invalid)).toBe(true);
+    expect(invalid.raw).toContain('roi.w');
+
+    setLocale('en');
+    expect(t(invalid.key!)).toContain('could not use');
+    setLocale('zh');
+    expect(t(invalid.key!)).toContain('无法使用');
+  });
+
+  it('still names the missing file when validation is what caught it', () => {
+    // The payload-level wrapper must not swallow the more specific cause.
+    const missing = classifyError(
+      "Invalid job configuration — inputPath: Input file not found: '/gone.mp4'",
+    );
+    expect(missing.key).toBe('errors.inputMissing');
+  });
+
   it('passes an unrecognised failure through untranslated', () => {
     const unknown = classifyError('Some brand new failure');
     expect(unknown.key).toBeNull();

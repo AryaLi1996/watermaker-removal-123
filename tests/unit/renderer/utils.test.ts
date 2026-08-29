@@ -30,6 +30,24 @@ describe('normalizeCoordinates', () => {
     const result = normalizeCoordinates(200, 400, 100, 200, 2);
     expect(result).toEqual({ x: 100, y: 200, w: 50, h: 100 });
   });
+
+  it('falls back to 1:1 when the scale is unusable', () => {
+    // A container that has not been measured yet leaves the scale at 0.
+    // Dividing by it gives Infinity, which JSON.stringify writes as null and
+    // the backend rejects as an invalid job configuration.
+    for (const scale of [0, NaN, -1, Infinity]) {
+      const result = normalizeCoordinates(10, 20, 30, 40, scale);
+      expect(Object.values(result).every(Number.isInteger), `scale ${scale}`).toBe(true);
+      expect(result).toEqual({ x: 10, y: 20, w: 30, h: 40 });
+    }
+  });
+
+  it('never yields a box with no area', () => {
+    // A sub-pixel drag rounds to 0, which the backend refuses.
+    const result = normalizeCoordinates(10, 20, 0.2, 0, 1);
+    expect(result.w).toBe(1);
+    expect(result.h).toBe(1);
+  });
 });
 
 // ─── calcScaleFactor ──────────────────────────────────────────────────────────

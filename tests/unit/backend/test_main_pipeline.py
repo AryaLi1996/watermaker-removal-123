@@ -5,6 +5,7 @@ The dispatcher is also driven the way Electron drives it (a JSON payload on
 stdin, protocol lines on stdout), so the contract the main process parses is
 covered end to end.
 """
+import io
 import json
 import os
 import subprocess
@@ -76,6 +77,120 @@ def test_job_config_allows_dev_null_as_a_probe_only_output(existing_file):
     assert config.outputPath == '/dev/null'
 
 
+def test_job_config_rounds_the_fractional_pixels_the_canvas_produces(existing_file):
+    """The renderer divides canvas pixels by a zoom factor; 10.5 is a box the
+    user drew correctly, not a bad payload."""
+    config = backend_main.JobConfig.model_validate({
+        'inputPath': existing_file,
+        'outputPath': '/tmp/out.mp4',
+        'roi': {'x': 10.5, 'y': 2.4, 'w': 100.6, 'h': 50.0},
+        'method': 'inpaint',
+    })
+    assert (config.roi.x, config.roi.y, config.roi.w, config.roi.h) == (10, 2, 101, 50)
+
+
+def test_job_config_rejects_a_selection_with_no_area(existing_file):
+    with pytest.raises(ValidationError, match='greater than 0'):
+        backend_main.JobConfig.model_validate({
+            'inputPath': existing_file,
+            'outputPath': '/tmp/out.mp4',
+            'roi': {'x': 0, 'y': 0, 'w': 0, 'h': 10},
+            'method': 'inpaint',
+        })
+
+
+def test_job_config_rejects_an_unknown_method(existing_file):
+    """Caught here rather than one frame at a time, after a whole video has
+    already been extracted."""
+    with pytest.raises(ValidationError, match='cloneStamp'):
+        backend_main.JobConfig.model_validate({
+            'inputPath': existing_file,
+            'outputPath': '/tmp/out.mp4',
+            'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
+            'method': 'magic',
+        })
+
+
+def test_job_config_rejects_an_unknown_mode(existing_file):
+    with pytest.raises(ValidationError, match='preview_frame'):
+        backend_main.JobConfig.model_validate({
+            'inputPath': existing_file,
+            'outputPath': '/tmp/out.mp4',
+            'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
+            'method': 'inpaint',
+            'mode': 'previewFrame',
+        })
+
+
+@pytest.mark.parametrize('color', [[255, 0], [0, 0, 0, 0], [300, 0, 0], [-1, 0, 0]])
+def test_job_config_rejects_a_colour_that_is_not_three_channels_in_range(existing_file, color):
+    with pytest.raises(ValidationError):
+        backend_main.JobConfig.model_validate({
+            'inputPath': existing_file,
+            'outputPath': '/tmp/out.mp4',
+            'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
+            'method': 'solidFill',
+            'color': color,
+        })
+
+
+# ─── validation errors the UI can read ───────────────────────────────────────
+
+def _validation_error(payload) -> ValidationError:
+    try:
+        backend_main.JobConfig.model_validate(payload)
+    except ValidationError as exc:
+        return exc
+    raise AssertionError('payload was expected to fail validation')
+
+
+def test_a_validation_failure_is_described_on_a_single_line(existing_file):
+    """The stdout protocol is line-based: anything after the first newline is
+    dropped by the Electron parser, which is how "1 validation error for
+    JobConfig" used to reach the user with no field and no reason."""
+    exc = _validation_error({
+        'inputPath': existing_file,
+        'outputPath': '/tmp/out.mp4',
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
+        'method': 'magic',
+    })
+    described = backend_main.describe_validation_error(exc)
+    assert '\n' not in described
+    assert 'method' in described
+    assert 'inpaint' in described
+
+
+def test_every_failed_field_is_named(existing_file):
+    exc = _validation_error({
+        'inputPath': existing_file,
+        'outputPath': '/tmp/out.mp4',
+        'roi': {'x': 0, 'y': 0},
+        'method': 'inpaint',
+    })
+    described = backend_main.describe_validation_error(exc)
+    assert 'roi.w' in described and 'roi.h' in described
+    assert '\n' not in described
+
+
+def test_a_malformed_payload_is_reported_on_stdout_with_its_reason(existing_file, capsys, monkeypatch):
+    """End to end through main(): what Electron would actually parse."""
+    payload = json.dumps({
+        'inputPath': existing_file,
+        'outputPath': '/tmp/out.mp4',
+        'roi': {'x': 0, 'y': 0, 'w': 0, 'h': 0},
+        'method': 'inpaint',
+    })
+    monkeypatch.setattr('sys.stdin', io.StringIO(payload))
+
+    with pytest.raises(SystemExit):
+        backend_main.main()
+
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith('ERROR:Invalid job configuration')
+    assert 'roi.w' in lines[0]
+
+
 # ─── stdout protocol ─────────────────────────────────────────────────────────
 
 def test_progress_is_emitted_with_one_decimal(capsys):
@@ -124,15 +239,57 @@ def test_run_pipeline_writes_a_playable_video_with_audio(sample_video, tmp_path)
 
 # ─── the dispatcher, driven as Electron drives it ────────────────────────────
 
-def _run_backend(payload: dict) -> list[str]:
-    """Feed a job payload on stdin and return the emitted protocol lines."""
+def _run_backend(payload: dict, env: dict | None = None) -> list[str]:
+    """
+    Feed a job payload on stdin and return the emitted protocol lines.
+
+    Decoded as UTF-8 because that is what Electron does with the bytes
+    (`chunk.toString()`), so a line this cannot decode is one the app cannot
+    read either.
+    """
     proc = subprocess.run(
         [PYTHON, os.path.join(BACKEND_DIR, 'main.py')],
         input=json.dumps(payload).encode(),
         capture_output=True,
         timeout=180,
+        env=env,
     )
     return [line for line in proc.stdout.decode().splitlines() if line]
+
+
+def _legacy_codepage_env() -> dict:
+    """
+    A console that is not UTF-8 — what a Windows runner, or a machine in a
+    Chinese locale, gives the backend by default.
+    """
+    return {**os.environ, 'PYTHONIOENCODING': 'cp1252'}
+
+
+def test_an_error_line_is_utf8_whatever_the_console_encoding_is(tmp_path):
+    """Electron decodes stdout as UTF-8. Python otherwise follows the console
+    code page, on which the em dash in a validation message is a single
+    un-decodable byte."""
+    lines = _run_backend({
+        'inputPath': str(tmp_path / 'missing.mp4'), 'outputPath': '/tmp/out.mp4',
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1}, 'method': 'inpaint',
+    }, env=_legacy_codepage_env())
+
+    assert len(lines) == 1
+    assert lines[0].startswith('ERROR:Invalid job configuration')
+
+
+def test_a_non_ascii_path_still_reaches_the_ui(tmp_path):
+    """A bilingual app will be handed such a path. Encoding it against a legacy
+    code page raised inside the emit itself, so no ERROR: line was written at
+    all and the user got a bare exit code."""
+    missing = str(tmp_path / '视频.mp4')
+    lines = _run_backend({
+        'inputPath': missing, 'outputPath': '/tmp/out.mp4',
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1}, 'method': 'inpaint',
+    }, env=_legacy_codepage_env())
+
+    assert len(lines) == 1
+    assert '视频.mp4' in lines[0]
 
 
 @requires_ffmpeg

@@ -45,6 +45,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the user's confirmation.
 
 ### Fixed
+- A rejected job now says which field it rejected and why. The backend's
+  stdout protocol is line-based, so only the first line of a pydantic failure
+  survived the trip to the UI — and pydantic puts the count there
+  ("1 validation error for JobConfig") and the field and reason on the lines
+  after, which the parser dropped. The message is flattened onto one line
+  before it is emitted, and classified to plain language in both interface
+  languages.
+- An export no longer fails over a selection the user drew correctly. A canvas
+  that had not been measured yet left the zoom factor at zero, so converting
+  the box to video pixels produced `Infinity`, which crosses IPC as `null`;
+  fractional pixel counts, which the same conversion produces routinely, are
+  now rounded by the backend rather than refused.
+- Backend messages now reach the UI as UTF-8 whatever the console encoding
+  is. Electron decodes the backend's output as UTF-8, but Python followed the
+  console code page — so on Windows, or in a Chinese locale, an error naming a
+  file with non-ASCII characters failed to encode inside the emit itself and
+  no `ERROR:` line was written at all, leaving the user with a bare exit code.
+- The job payload is validated where it arrives rather than deep in a frame
+  worker: an unknown removal method, an unknown mode, a selection with no
+  area, and a fill colour that is not three channels in range are all refused
+  before a video is extracted, instead of failing one frame at a time after
+  minutes of work.
 - A failed export no longer reports itself as finished. The backend exited 0
   after printing its error, and Electron reads a zero exit as success, so an
   `ERROR:` line could be followed by `job:done` naming a file that was never
