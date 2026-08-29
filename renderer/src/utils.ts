@@ -11,12 +11,25 @@ export function normalizeCoordinates(
   ui_h: number,
   scale: number,
 ): ROI {
+  // A container that has not been measured yet, or a video whose dimensions
+  // never arrived, leaves the scale at 0 (or NaN). Dividing by it yields
+  // Infinity, which JSON.stringify writes as null — the backend then rejects
+  // the whole job over a rectangle the user drew perfectly well. Falling back
+  // to 1:1 keeps the box the user sees.
+  const factor = Number.isFinite(scale) && scale > 0 ? scale : 1;
   return {
-    x: Math.round(ui_x / scale),
-    y: Math.round(ui_y / scale),
-    w: Math.round(ui_w / scale),
-    h: Math.round(ui_h / scale),
+    x: toPixels(ui_x / factor),
+    y: toPixels(ui_y / factor),
+    // A box has to enclose something: the backend rejects a zero-width
+    // selection, and rounding a sub-pixel drag down to 0 would trip it.
+    w: Math.max(1, toPixels(ui_w / factor)),
+    h: Math.max(1, toPixels(ui_h / factor)),
   };
+}
+
+/** Round to a whole pixel, treating an unusable number as 0. */
+function toPixels(value: number): number {
+  return Number.isFinite(value) ? Math.round(value) : 0;
 }
 
 /**

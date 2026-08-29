@@ -12,14 +12,16 @@ Stdout protocol:
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import signal
 import sys
 import tempfile
 from glob import glob
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, BeforeValidator, Field, ValidationError, field_validator
 
 import ff_utils
 import processor
@@ -27,24 +29,61 @@ import processor
 
 # ─── Pydantic schema ────────────────────────────────────────────────────────
 
+def _round_pixels(value: object) -> object:
+    """
+    Accept the pixel counts the canvas actually produces.
+
+    The renderer works in scaled canvas pixels and divides by the zoom factor
+    to get back to video pixels, so a box the user drew correctly can arrive
+    as 10.5 rather than 10. Rejecting that would fail an export over a
+    rounding artefact, so round it here. A non-finite value is a different
+    story — it means the scale factor was zero or unknown, and there is no
+    rectangle to recover.
+    """
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError('must be a finite number of pixels')
+        return round(value)
+    return value
+
+
+Pixels = Annotated[int, BeforeValidator(_round_pixels)]
+
+RemovalMethod = Literal['inpaint', 'blur', 'solidFill', 'cloneStamp']
+JobMode = Literal['full', 'preview', 'preview_frame']
+
+
 class ROI(BaseModel):
-    x: int
-    y: int
-    w: int
-    h: int
+    x: Pixels
+    y: Pixels
+    # A zero-width or negative box selects nothing. It survives as far as the
+    # frame workers, which fail one frame at a time after the whole video has
+    # already been extracted; saying so up front costs the user seconds
+    # instead of minutes.
+    w: Pixels = Field(gt=0)
+    h: Pixels = Field(gt=0)
 
 
 class JobConfig(BaseModel):
     inputPath: str
     outputPath: str
     roi: ROI
-    method: str                       # inpaint | blur | solidFill | cloneStamp
-    mode: str = 'full'                # full | preview
-    radius: int = 3
-    kernelSize: int = 51
-    color: list[int] = [0, 0, 0]
-    dx: int = 0
-    dy: int = -50
+    method: RemovalMethod
+    mode: JobMode = 'full'
+    radius: Pixels = Field(default=3, ge=1)
+    # OpenCV needs an odd kernel; image_core rounds an even one up, so the
+    # bound here is only about it being a usable size at all.
+    kernelSize: Pixels = Field(default=51, ge=1)
+    color: list[int] = Field(default=[0, 0, 0], min_length=3, max_length=3)
+    dx: Pixels = 0
+    dy: Pixels = -50
+
+    @field_validator('color')
+    @classmethod
+    def color_channels_in_range(cls, v: list[int]) -> list[int]:
+        if any(c < 0 or c > 255 for c in v):
+            raise ValueError(f"colour channels must be between 0 and 255: {v}")
+        return v
 
     @field_validator('inputPath')
     @classmethod
@@ -70,6 +109,26 @@ class JobConfig(BaseModel):
 
 def emit(msg: str) -> None:
     print(msg, flush=True)
+
+
+def describe_validation_error(exc: ValidationError) -> str:
+    """
+    Flatten a pydantic failure into one line the UI can actually show.
+
+    The stdout protocol is line-based, so only the first line of a message
+    survives the trip to Electron. Pydantic puts its count on that line
+    ("1 validation error for JobConfig") and every useful word — the field and
+    what was wrong with it — on the ones after, which the parser drops. The
+    user is then told a field is invalid without being told which.
+    """
+    parts = []
+    for err in exc.errors():
+        field = '.'.join(str(p) for p in err['loc'])
+        # Pydantic prefixes messages raised from our own validators.
+        detail = err['msg'].removeprefix('Value error, ')
+        parts.append(f'{field}: {detail}' if field else detail)
+    joined = '; '.join(parts)
+    return f'Invalid job configuration — {joined}'.replace('\n', ' ')
 
 
 def emit_meta(meta: dict) -> None:
@@ -226,7 +285,12 @@ def main() -> None:
         if not raw:
             raise ValueError('No input received on stdin.')
 
-        config = JobConfig.model_validate_json(raw)
+        try:
+            config = JobConfig.model_validate_json(raw)
+        except ValidationError as exc:
+            # Re-raised as a plain error so the single-line stdout protocol
+            # carries the field and the reason, not just the error count.
+            raise ValueError(describe_validation_error(exc)) from exc
 
         if config.mode == 'preview_frame':
             # Probe metadata first so the UI can display width/height/fps/duration.

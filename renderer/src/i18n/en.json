@@ -97,6 +97,7 @@
     "diskFull": "The disk is full. Free some space or choose another location, then try again.",
     "inputMissing": "The video file is no longer where it was. It may have been moved, renamed or deleted.",
     "roiOutside": "The selection sits outside the video frame. Draw the box over the area you want removed.",
+    "invalidConfig": "The app sent the backend a selection or setting it could not use. Redraw the box over the area you want removed, then try again.",
     "noVideoStream": "That file has no video track, so there is nothing to process.",
     "outOfMemory": "Ran out of memory processing this video. A shorter clip, or a smaller selection, should get through.",
     "timeout": "The job took too long and was stopped. Try a shorter video, or a smaller selection.",
