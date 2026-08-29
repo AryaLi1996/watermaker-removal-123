@@ -107,6 +107,30 @@ class JobConfig(BaseModel):
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
+def force_utf8_stdio() -> None:
+    """
+    Speak UTF-8 whatever the console is set to.
+
+    Electron decodes this process's output with `chunk.toString()`, which is
+    UTF-8. Python instead follows the console encoding, which on a Windows
+    runner or a Chinese-locale machine is a legacy code page: a message naming
+    a file with non-ASCII characters then fails to encode and the `ERROR:` line
+    is never written at all, leaving the user with a bare exit code. Even pure
+    ASCII prose is not safe — an em dash lands as one un-decodable byte.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, 'reconfigure', None)
+        if reconfigure is None:
+            continue
+        try:
+            # A path that survived a lossy decode on the way in has no valid
+            # encoding on the way out; a replacement character in a diagnostic
+            # beats losing the whole line.
+            reconfigure(encoding='utf-8', errors='replace')
+        except (ValueError, OSError):  # a stream that cannot be reconfigured
+            pass
+
+
 def emit(msg: str) -> None:
     print(msg, flush=True)
 
@@ -278,6 +302,7 @@ def run_pipeline(
 # ─── Entry point ────────────────────────────────────────────────────────────
 
 def main() -> None:
+    force_utf8_stdio()
     temp_dir = tempfile.mkdtemp(prefix='watermark_app_')
 
     try:

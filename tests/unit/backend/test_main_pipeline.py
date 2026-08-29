@@ -239,15 +239,57 @@ def test_run_pipeline_writes_a_playable_video_with_audio(sample_video, tmp_path)
 
 # ─── the dispatcher, driven as Electron drives it ────────────────────────────
 
-def _run_backend(payload: dict) -> list[str]:
-    """Feed a job payload on stdin and return the emitted protocol lines."""
+def _run_backend(payload: dict, env: dict | None = None) -> list[str]:
+    """
+    Feed a job payload on stdin and return the emitted protocol lines.
+
+    Decoded as UTF-8 because that is what Electron does with the bytes
+    (`chunk.toString()`), so a line this cannot decode is one the app cannot
+    read either.
+    """
     proc = subprocess.run(
         [PYTHON, os.path.join(BACKEND_DIR, 'main.py')],
         input=json.dumps(payload).encode(),
         capture_output=True,
         timeout=180,
+        env=env,
     )
     return [line for line in proc.stdout.decode().splitlines() if line]
+
+
+def _legacy_codepage_env() -> dict:
+    """
+    A console that is not UTF-8 — what a Windows runner, or a machine in a
+    Chinese locale, gives the backend by default.
+    """
+    return {**os.environ, 'PYTHONIOENCODING': 'cp1252'}
+
+
+def test_an_error_line_is_utf8_whatever_the_console_encoding_is(tmp_path):
+    """Electron decodes stdout as UTF-8. Python otherwise follows the console
+    code page, on which the em dash in a validation message is a single
+    un-decodable byte."""
+    lines = _run_backend({
+        'inputPath': str(tmp_path / 'missing.mp4'), 'outputPath': '/tmp/out.mp4',
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1}, 'method': 'inpaint',
+    }, env=_legacy_codepage_env())
+
+    assert len(lines) == 1
+    assert lines[0].startswith('ERROR:Invalid job configuration')
+
+
+def test_a_non_ascii_path_still_reaches_the_ui(tmp_path):
+    """A bilingual app will be handed such a path. Encoding it against a legacy
+    code page raised inside the emit itself, so no ERROR: line was written at
+    all and the user got a bare exit code."""
+    missing = str(tmp_path / '视频.mp4')
+    lines = _run_backend({
+        'inputPath': missing, 'outputPath': '/tmp/out.mp4',
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1}, 'method': 'inpaint',
+    }, env=_legacy_codepage_env())
+
+    assert len(lines) == 1
+    assert '视频.mp4' in lines[0]
 
 
 @requires_ffmpeg

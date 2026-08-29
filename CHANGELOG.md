@@ -57,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the box to video pixels produced `Infinity`, which crosses IPC as `null`;
   fractional pixel counts, which the same conversion produces routinely, are
   now rounded by the backend rather than refused.
+- Backend messages now reach the UI as UTF-8 whatever the console encoding
+  is. Electron decodes the backend's output as UTF-8, but Python followed the
+  console code page — so on Windows, or in a Chinese locale, an error naming a
+  file with non-ASCII characters failed to encode inside the emit itself and
+  no `ERROR:` line was written at all, leaving the user with a bare exit code.
 - The job payload is validated where it arrives rather than deep in a frame
   worker: an unknown removal method, an unknown mode, a selection with no
   area, and a fill colour that is not three channels in range are all refused
