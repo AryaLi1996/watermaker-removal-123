@@ -17,8 +17,12 @@ interface ErrorRule {
   key: string;
 }
 
+// Order matters: the first match wins, so the rules run from the most specific
+// cause to the least. A failed ffmpeg call reports its own stderr, and that text
+// carries the command line — which contains the word "ffmpeg". Were the generic
+// rule first, it would swallow every disk-full and permission failure ffmpeg
+// raised and tell the user their file was corrupt.
 const RULES: ErrorRule[] = [
-  { match: /ffmpeg|ffprobe/i, key: 'errors.ffmpeg' },
   { match: /python environment not found/i, key: 'errors.pythonMissing' },
   { match: /bundled backend not found/i, key: 'errors.backendMissing' },
   { match: /permission denied|EACCES|read-only file system/i, key: 'errors.permission' },
@@ -28,6 +32,9 @@ const RULES: ErrorRule[] = [
   { match: /no video stream/i, key: 'errors.noVideoStream' },
   { match: /out of memory|cannot allocate|MemoryError/i, key: 'errors.outOfMemory' },
   { match: /timed out|timeout/i, key: 'errors.timeout' },
+  // Last: a decode that produced nothing, and anything else an ffmpeg or
+  // ffprobe call reported — both mean "this file did not read or write".
+  { match: /no frames could be extracted|ffmpeg|ffprobe/i, key: 'errors.ffmpeg' },
 ];
 
 /** Marks a message the app itself raised, already translated. */

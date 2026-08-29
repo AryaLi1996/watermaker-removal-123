@@ -50,6 +50,36 @@ describe('classifyError', () => {
     expect(shown(raw)).toContain(expected);
   });
 
+  // ffmpeg reports its failures with the command line attached, so the word
+  // "ffmpeg" appears in the text of a disk-full or permission error too. The
+  // specific cause has to win, or every such failure reads as a corrupt file.
+  it.each([
+    [
+      "Command '['ffmpeg', '-i', 'in.mp4', 'out.mp4']' returned non-zero exit status 1. av_interleaved_write_frame(): No space left on device",
+      'The disk is full',
+    ],
+    [
+      "Command '['ffmpeg', '-y', 'out.mp4']' returned non-zero exit status 1. out.mp4: Permission denied",
+      'No permission to write there',
+    ],
+    [
+      "Command '['ffprobe', 'gone.mp4']' returned non-zero exit status 1. gone.mp4: No such file or directory",
+      'no longer where it was',
+    ],
+  ])('reads the real cause out of an ffmpeg failure: %#', (raw, expected) => {
+    expect(shown(raw)).toContain(expected);
+  });
+
+  it('still falls back to the ffmpeg message when there is no specific cause', () => {
+    const raw = "Command '['ffmpeg', '-i', 'in.mkv']' returned non-zero exit status 1. Invalid data found when processing input";
+    expect(shown(raw)).toContain('Could not read or write the video');
+  });
+
+  it('explains a decode that produced no frames at all', () => {
+    expect(shown('No frames could be extracted from the video. The file may be corrupted or use an unsupported codec.'))
+      .toContain('Could not read or write the video');
+  });
+
   it('passes an unrecognised message through rather than inventing one', () => {
     expect(shown('Some brand new failure')).toBe('Some brand new failure');
   });

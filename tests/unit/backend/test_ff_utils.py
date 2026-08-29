@@ -149,3 +149,54 @@ def test_probe_uses_the_configured_ffprobe(monkeypatch, sample_video):
     resolved = shutil.which('ffprobe')
     monkeypatch.setenv('FFPROBE_PATH', resolved)
     assert ff_utils.probe_video(sample_video)['width'] == 320
+
+
+# ─── failure reporting ───────────────────────────────────────────────────────
+#
+# The UI classifies a failure by matching on the message text, so whatever the
+# tool wrote to stderr has to survive into the exception.
+
+@pytest.mark.parametrize('stderr, expected', [
+    (None, ''),
+    (b'', ''),
+    (b'\n  \n', ''),
+    (b'only line\n', 'only line'),
+    (b'a\nb\nc\nd\ne\nf\n', 'c | d | e | f'),  # last four, oldest first
+])
+def test_stderr_tail_keeps_the_closing_lines(stderr, expected):
+    assert ff_utils.stderr_tail(stderr) == expected
+
+
+def test_stderr_tail_is_bounded():
+    assert len(ff_utils.stderr_tail(b'x' * 10_000)) <= 500
+
+
+def test_stderr_tail_survives_undecodable_bytes():
+    assert ff_utils.stderr_tail(b'\xff\xfe bad') != ''
+
+
+def test_a_failed_call_reports_what_the_tool_said():
+    """
+    Without this the message is 'returned non-zero exit status 1' and nothing
+    else: a full disk and a corrupt file look identical to the user.
+    """
+    error = ff_utils.FFmpegError(1, ['ffmpeg', '-i', 'x'],
+                                 b'', b'x: No space left on device\n')
+    assert 'No space left on device' in str(error)
+    # Still a CalledProcessError, so existing handlers keep working.
+    assert isinstance(error, subprocess.CalledProcessError)
+
+
+def test_a_failed_call_without_stderr_reads_as_before():
+    assert str(ff_utils.FFmpegError(1, ['ffmpeg'], b'', b'')).endswith('status 1.')
+
+
+def test_a_real_ffprobe_failure_carries_its_reason(tmp_path):
+    junk = tmp_path / 'junk.mp4'
+    junk.write_bytes(b'this is not a video')
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        ff_utils.probe_video(str(junk))
+    # ffprobe explains itself; '-v quiet' used to throw that explanation away,
+    # leaving an exit status and nothing to classify or report.
+    assert caught.value.stderr, 'ffprobe reported no reason at all'
+    assert ff_utils.stderr_tail(caught.value.stderr) in str(caught.value)
