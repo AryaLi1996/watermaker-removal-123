@@ -91,11 +91,31 @@ function isExportJob(payload) {
 }
 
 /**
- * Temp files created by the Python backend that live outside its own temp_dir
- * (preview PNG frames, preview clip MP4s). We track them here and delete them
- * when the next job starts or the app quits, ensuring no accumulation.
+ * Preview clip MP4s the backend wrote outside its own temp_dir. They are
+ * consumed once, so the next job start is free to delete them.
  */
-const trackedTempFiles = new Set();
+const previewClips = new Set();
+
+/**
+ * The preview still the canvas is currently drawing, or null.
+ *
+ * It is kept apart from the clips because its lifetime is different: the
+ * canvas reads it from disk for as long as the video stays loaded, including
+ * on a remount after the user closes a preview clip. Purging it with the
+ * clips left that remount with a deleted file, and the user with a blank
+ * canvas and no way back short of reloading the video.
+ */
+let previewStill = null;
+
+function removeFile(filePath) {
+  try { fs.unlinkSync(filePath); } catch { /* file may already be gone */ }
+}
+
+/** Adopt a new still, dropping the one it replaces. */
+function retainPreviewStill(filePath) {
+  if (previewStill && previewStill !== filePath) removeFile(previewStill);
+  previewStill = filePath;
+}
 
 /**
  * The live window to deliver job events to. Resolved on every send so the
@@ -141,12 +161,19 @@ function createWindow() {
   return win;
 }
 
-/** Delete every tracked preview temp file. */
+/** Delete the preview clips of previous jobs. The still is left in place. */
+function purgePreviewClips() {
+  for (const f of previewClips) removeFile(f);
+  previewClips.clear();
+}
+
+/** Everything the backend left behind, for shutdown. */
 function purgeTempFiles() {
-  for (const f of trackedTempFiles) {
-    try { fs.unlinkSync(f); } catch { /* file may already be gone */ }
+  purgePreviewClips();
+  if (previewStill) {
+    removeFile(previewStill);
+    previewStill = null;
   }
-  trackedTempFiles.clear();
 }
 
 /**
@@ -159,7 +186,9 @@ function handleBackendLine(line, ctx) {
   const previewMatch = line.match(/^STATE:preview_ready:(.+)$/);
   if (previewMatch) {
     const previewPath = previewMatch[1].trim();
-    trackedTempFiles.add(previewPath); // will be deleted on next job start / app quit
+    // A still stays readable while the canvas shows it; a clip is transient.
+    if (ctx.mode === 'preview_frame') retainPreviewStill(previewPath);
+    else previewClips.add(previewPath);
     send('job:preview-ready', previewPath);
     return;
   }
@@ -265,8 +294,8 @@ ipcMain.handle('job:start', (_event, payload) => {
     }
   }
 
-  // Clean up any preview temp files from the previous job before starting.
-  purgeTempFiles();
+  // Clean up the previous job's preview clip before starting.
+  purgePreviewClips();
 
   const { command, args } = backendCommand();
   // Only a resolved path can be checked up front; a bare command name is left
@@ -281,7 +310,7 @@ ipcMain.handle('job:start', (_event, payload) => {
   currentJob = job;
 
   // Per-job state shared with the line parser.
-  const ctx = { outputPath: null, errored: false };
+  const ctx = { outputPath: null, errored: false, mode: payload?.mode ?? 'full' };
 
   // stdout arrives in arbitrary chunks; keep the trailing partial line buffered
   // so a message split across two chunks is still parsed correctly.
@@ -323,10 +352,12 @@ ipcMain.handle('job:start', (_event, payload) => {
     stdoutBuffer = '';
     if (tail) handleBackendLine(tail, ctx);
 
-    // Only a full export completes with job:done. Preview jobs report through
-    // job:preview-ready, and a preview finishing late would otherwise flip the
-    // UI to "Export complete" — carrying the preview's own output path.
-    if (code === 0) {
+    // Two things must not reach job:done, because both would flip the UI to
+    // "Export complete" over something that is not a finished export: a
+    // preview job, which reports through job:preview-ready and carries its own
+    // temp path; and a job that printed an ERROR line, whatever it then exits
+    // with — that line is the backend's verdict on a file it never wrote.
+    if (code === 0 && !ctx.errored) {
       if (job.isExport) send('job:done', ctx.outputPath ?? payload?.outputPath ?? null);
     } else if (!ctx.errored) {
       send('job:error', `Process exited with code ${code}`);

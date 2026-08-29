@@ -29,6 +29,36 @@ def ffprobe_bin() -> str:
     return os.environ.get('FFPROBE_PATH') or 'ffprobe'
 
 
+# How much of ffmpeg's stderr to carry in an error message. Enough for the line
+# that names the real cause, short enough to stay readable in a dialog.
+_STDERR_LINES = 4
+_STDERR_CHARS = 500
+
+
+def stderr_tail(stderr: Optional[bytes]) -> str:
+    """The last few meaningful lines of a child's stderr, as text."""
+    if not stderr:
+        return ''
+    text = stderr.decode('utf-8', errors='replace')
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return ' | '.join(lines[-_STDERR_LINES:])[:_STDERR_CHARS]
+
+
+class FFmpegError(subprocess.CalledProcessError):
+    """
+    A failed ffmpeg/ffprobe call that reports what the tool actually said.
+
+    CalledProcessError stringifies to the exit status alone, so the reason —
+    "No space left on device", "Permission denied", "Invalid data found" — was
+    captured and then dropped. The UI classifies failures by matching on this
+    text, so without it a full disk is indistinguishable from a corrupt file.
+    """
+
+    def __str__(self) -> str:
+        detail = stderr_tail(self.stderr)
+        return f'{super().__str__()} {detail}' if detail else super().__str__()
+
+
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     """Run a subprocess, capturing stdout/stderr, raising on failure."""
     global _active_proc
@@ -40,7 +70,7 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
         _active_proc = None
 
     if proc.returncode != 0:
-        raise subprocess.CalledProcessError(proc.returncode, cmd, stdout, stderr)
+        raise FFmpegError(proc.returncode, cmd, stdout, stderr)
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
@@ -62,7 +92,9 @@ def probe_video(filepath: str) -> dict:
 
     result = _run([
         ffprobe_bin(),
-        '-v', 'quiet',
+        # 'error' rather than 'quiet': the JSON goes to stdout either way, and
+        # a quiet ffprobe fails with an empty stderr and nothing to report.
+        '-v', 'error',
         '-print_format', 'json',
         '-show_format',
         '-show_streams',

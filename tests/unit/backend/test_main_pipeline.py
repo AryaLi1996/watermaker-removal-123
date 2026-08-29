@@ -221,18 +221,26 @@ def test_the_temp_directory_is_removed_after_a_run(sample_video, tmp_path):
 # The subprocess tests above prove the real process contract; these call main()
 # directly so the dispatch branches are measured by coverage too.
 
-def _dispatch(monkeypatch, capsys, payload: dict) -> list[str]:
+def _dispatch(monkeypatch, capsys, payload: dict) -> tuple[list[str], int]:
+    """
+    Run main() in-process. Returns the protocol lines and the exit status,
+    which a failing job reports as non-zero the same way the real process does.
+    """
     import io
 
     monkeypatch.setattr('sys.stdin', io.StringIO(json.dumps(payload)))
-    backend_main.main()
-    return [line for line in capsys.readouterr().out.splitlines() if line]
+    status = 0
+    try:
+        backend_main.main()
+    except SystemExit as exc:
+        status = exc.code or 0
+    return [line for line in capsys.readouterr().out.splitlines() if line], status
 
 
 @requires_ffmpeg
 def test_dispatch_full_mode(monkeypatch, capsys, sample_video, tmp_path):
     out = str(tmp_path / 'dispatched.mp4')
-    lines = _dispatch(monkeypatch, capsys, {
+    lines, status = _dispatch(monkeypatch, capsys, {
         'inputPath': sample_video, 'outputPath': out,
         'roi': {'x': 10, 'y': 10, 'w': 60, 'h': 40},
         'method': 'blur', 'mode': 'full',
@@ -243,7 +251,7 @@ def test_dispatch_full_mode(monkeypatch, capsys, sample_video, tmp_path):
 
 @requires_ffmpeg
 def test_dispatch_preview_frame_mode(monkeypatch, capsys, sample_video):
-    lines = _dispatch(monkeypatch, capsys, {
+    lines, status = _dispatch(monkeypatch, capsys, {
         'inputPath': sample_video, 'outputPath': '/dev/null',
         'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
         'method': 'inpaint', 'mode': 'preview_frame',
@@ -257,7 +265,7 @@ def test_dispatch_preview_frame_mode(monkeypatch, capsys, sample_video):
 
 @requires_ffmpeg
 def test_dispatch_preview_mode(monkeypatch, capsys, sample_video):
-    lines = _dispatch(monkeypatch, capsys, {
+    lines, status = _dispatch(monkeypatch, capsys, {
         'inputPath': sample_video, 'outputPath': '/dev/null',
         'roi': {'x': 10, 'y': 10, 'w': 60, 'h': 40},
         'method': 'cloneStamp', 'mode': 'preview', 'dy': 60,
@@ -270,22 +278,83 @@ def test_dispatch_preview_mode(monkeypatch, capsys, sample_video):
 
 
 def test_dispatch_reports_a_bad_payload_without_raising(monkeypatch, capsys, tmp_path):
-    lines = _dispatch(monkeypatch, capsys, {
+    lines, status = _dispatch(monkeypatch, capsys, {
         'inputPath': str(tmp_path / 'missing.mp4'), 'outputPath': '/tmp/o.mp4',
         'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1}, 'method': 'inpaint',
     })
     assert any(l.startswith('ERROR:') for l in lines)
 
 
-def test_dispatch_translates_ffmpeg_failures_into_a_friendly_message(
+def test_dispatch_passes_the_failure_detail_through_untouched(
     monkeypatch, capsys, existing_file, tmp_path,
 ):
+    """
+    The renderer turns a raw failure into plain language and keeps the original
+    behind "Copy details". Flattening it here to one generic English sentence
+    would leave that button with nothing to show and the user with no clue.
+    """
     def boom(*_args, **_kwargs):
-        raise RuntimeError('ffmpeg exited with code 1')
+        raise RuntimeError('ffmpeg: No space left on device')
 
     monkeypatch.setattr(ff_utils, 'probe_video', boom)
-    lines = _dispatch(monkeypatch, capsys, {
+    lines, status = _dispatch(monkeypatch, capsys, {
         'inputPath': existing_file, 'outputPath': str(tmp_path / 'o.mp4'),
         'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1}, 'method': 'inpaint',
     })
-    assert lines[-1] == 'ERROR:FFmpeg failed. The video file may be corrupted or unsupported.'
+    assert lines[-1] == 'ERROR:ffmpeg: No space left on device'
+
+
+def test_dispatch_exits_non_zero_when_the_job_fails(
+    monkeypatch, capsys, existing_file, tmp_path,
+):
+    """
+    Electron reads a zero exit as success and follows it with job:done. A
+    failed export that exits 0 therefore reports itself as complete.
+    """
+    def boom(*_args, **_kwargs):
+        raise RuntimeError('something broke')
+
+    monkeypatch.setattr(ff_utils, 'probe_video', boom)
+    _lines, status = _dispatch(monkeypatch, capsys, {
+        'inputPath': existing_file, 'outputPath': str(tmp_path / 'o.mp4'),
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1}, 'method': 'inpaint',
+    })
+    assert status == 1
+
+
+@requires_ffmpeg
+def test_dispatch_still_exits_zero_on_success(monkeypatch, capsys, sample_video, tmp_path):
+    _lines, status = _dispatch(monkeypatch, capsys, {
+        'inputPath': sample_video, 'outputPath': str(tmp_path / 'ok.mp4'),
+        'roi': {'x': 10, 'y': 10, 'w': 60, 'h': 40}, 'method': 'blur',
+    })
+    assert status == 0
+
+
+def test_a_failed_run_exits_non_zero_as_a_real_process(tmp_path):
+    """The same contract, through the process boundary Electron actually sees."""
+    proc = subprocess.run(
+        [PYTHON, os.path.join(BACKEND_DIR, 'main.py')],
+        input=json.dumps({
+            'inputPath': str(tmp_path / 'missing.mp4'), 'outputPath': '/tmp/o.mp4',
+            'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1}, 'method': 'inpaint',
+        }).encode(),
+        capture_output=True, timeout=60,
+    )
+    assert proc.returncode != 0
+    assert 'ERROR:' in proc.stdout.decode()
+
+
+@requires_ffmpeg
+def test_a_run_that_extracts_no_frames_says_so(monkeypatch, sample_video, tmp_path):
+    """
+    Left alone, an empty frames directory fails several steps later inside the
+    encoder, with a message about a missing input pattern.
+    """
+    monkeypatch.setattr(ff_utils, 'extract_frames', lambda *_a, **_k: 0)
+    config = backend_main.JobConfig.model_validate({
+        'inputPath': sample_video, 'outputPath': str(tmp_path / 'out.mp4'),
+        'roi': {'x': 10, 'y': 10, 'w': 60, 'h': 40}, 'method': 'blur',
+    })
+    with pytest.raises(ValueError, match='No frames could be extracted'):
+        backend_main.run_pipeline(config, str(tmp_path / 'work'), sample_video)

@@ -45,6 +45,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the user's confirmation.
 
 ### Fixed
+- A failed export no longer reports itself as finished. The backend exited 0
+  after printing its error, and Electron reads a zero exit as success, so an
+  `ERROR:` line could be followed by `job:done` naming a file that was never
+  written.
+- Failures now say what actually went wrong. ffmpeg's own explanation — a full
+  disk, a refused path, an unreadable file — was captured and then dropped,
+  leaving only an exit status; and the rule that recognises an ffmpeg failure
+  ran before the ones for those specific causes, so every such failure was
+  reported to the user as a corrupt video.
+- The preview still is no longer deleted while the canvas is drawing it.
+  Asking for a preview clip purged it along with the previous job's temp
+  files, so closing the clip left an empty canvas with no selection box and no
+  way back short of reloading the video.
+- A video that yields no frames is reported as such, at the point extraction
+  produced nothing, instead of failing several steps later inside the encoder
+  with a message about a missing input pattern.
 - The release workflow packaged on Linux only. macOS failed in
   electron-builder because an unset `CSC_LINK` secret still arrives as an
   empty string and was read as a certificate path; Windows failed *after*

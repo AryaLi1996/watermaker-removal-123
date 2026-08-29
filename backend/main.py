@@ -155,11 +155,21 @@ def run_pipeline(
 
     # 2. Extract frames
     state('Extracting frames...')
-    frame_count = ff_utils.extract_frames(source_video, frames_dir)
+    ff_utils.extract_frames(source_video, frames_dir)
     progress(20)
 
     # Build ordered list of frame paths
     frame_paths = sorted(glob(os.path.join(frames_dir, 'frame_*.png')))
+
+    # ffmpeg can exit 0 having written nothing — a stream it decoded but could
+    # not render, or a clip window past the end of the file. Say so here, while
+    # the cause is still obvious, instead of letting the encode below fail on a
+    # missing input pattern and blaming the video.
+    if not frame_paths:
+        raise ValueError(
+            'No frames could be extracted from the video. '
+            'The file may be corrupted or use an unsupported codec.'
+        )
 
     # 3. Process frames in parallel
     state('Reconstructing pixels...')
@@ -256,14 +266,14 @@ def main() -> None:
             emit(f'STATE:done:{output}')
 
     except Exception as exc:
-        # Translate technical exceptions into user-friendly messages
-        msg = str(exc)
-        if 'ffprobe' in msg or 'ffmpeg' in msg:
-            emit('ERROR:FFmpeg failed. The video file may be corrupted or unsupported.')
-        elif 'not found' in msg.lower():
-            emit(f'ERROR:{msg}')
-        else:
-            emit(f'ERROR:{msg}')
+        # The raw text goes through as-is: the renderer classifies it into plain
+        # language and keeps the original for a bug report, so replacing it here
+        # with a generic sentence would discard the only diagnostic there is.
+        emit(f'ERROR:{exc}')
+        # Exit non-zero so a caller that cannot read the protocol still sees the
+        # failure. Electron treats a zero exit as success and would otherwise
+        # follow the ERROR line with job:done, on an export that never happened.
+        raise SystemExit(1)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

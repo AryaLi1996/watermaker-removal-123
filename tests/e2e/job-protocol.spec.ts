@@ -7,6 +7,9 @@
  */
 import { test, expect } from './fixtures/stub-backend-fixture';
 import type { Page } from '@playwright/test';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 test.use({ appTag: 'job-protocol' });
 
@@ -152,6 +155,56 @@ test.describe('job stdout protocol', () => {
     expect(await startJob(page, { scenario: 'hang', outputPath: '/tmp/hang.mp4' })).toBe(true);
     expect(await startJob(page, { scenario: 'success', outputPath: '/tmp/second.mp4' })).toBe(false);
     await page.evaluate(() => (window as any).electronAPI.cancelJob());
+  });
+
+  // ── Lifetime of the temp files the backend leaves behind ──────────────
+  //
+  // The still is what the canvas draws from, for as long as the video stays
+  // loaded. The clip is watched once and replaced. Deleting them on the same
+  // schedule cost the canvas its image the moment the user asked for a
+  // preview, leaving a blank stage after they closed the clip.
+
+  test('the preview still survives the next job', async ({ page }) => {
+    // Where fixtures/fake_backend.py writes its still.
+    const still = path.join(os.tmpdir(), 'fake_backend_frame.png');
+
+    await startCollecting(page);
+    await startJob(page, { mode: 'preview_frame', outputPath: '/dev/null' });
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'preview'),
+      { timeout: 10_000 },
+    );
+    expect(fs.existsSync(still)).toBe(true);
+
+    await startJob(page, { scenario: 'success', mode: 'full', outputPath: '/tmp/after-still.mp4' });
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'done'),
+      { timeout: 10_000 },
+    );
+
+    // The canvas re-reads this path whenever it remounts.
+    expect(fs.existsSync(still)).toBe(true);
+  });
+
+  test('a preview clip is cleaned up when the next job starts', async ({ page }) => {
+    const clip = path.join(os.tmpdir(), `stub-preview-clip-${Date.now()}.mp4`);
+    fs.writeFileSync(clip, 'not really a video');
+
+    await startCollecting(page);
+    // The stub reports outputPath as the clip it produced.
+    await startJob(page, { mode: 'preview', outputPath: clip });
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'preview'),
+      { timeout: 10_000 },
+    );
+
+    await startJob(page, { scenario: 'success', mode: 'full', outputPath: '/tmp/after-clip.mp4' });
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'done'),
+      { timeout: 10_000 },
+    );
+
+    expect(fs.existsSync(clip)).toBe(false);
   });
 
   test('an export supersedes a preview that is still running', async ({ page }) => {
