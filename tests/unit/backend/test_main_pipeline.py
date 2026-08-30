@@ -515,3 +515,122 @@ def test_a_run_that_extracts_no_frames_says_so(monkeypatch, sample_video, tmp_pa
     })
     with pytest.raises(ValueError, match='No frames could be extracted'):
         backend_main.run_pipeline(config, str(tmp_path / 'work'), sample_video)
+
+
+# ─── the frozen build's worker processes ─────────────────────────────────────
+#
+# The release freezes this dispatcher into one executable, and a worker pool
+# starts its children by re-running that executable. Anything this module does
+# at import time, or on being run again, therefore happens once per core —
+# which is how a preview came to report "No input received on stdin." while it
+# was otherwise working: each worker ran the dispatcher from the top, found
+# the stdin Electron had already closed, and said so on the shared stdout.
+
+def test_being_re_imported_by_a_worker_produces_no_output():
+    """
+    A spawned worker imports this module under a different name. Doing so must
+    be silent: a stray protocol line from a worker is one Electron parses as
+    the job's own.
+    """
+    proc = subprocess.run(
+        [PYTHON, '-c',
+         'import runpy, sys;'
+         f'sys.path.insert(0, {BACKEND_DIR!r});'
+         f'runpy.run_path({os.path.join(BACKEND_DIR, "main.py")!r}, run_name="__mp_main__")'],
+        input=b'', capture_output=True, timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr.decode()
+    assert proc.stdout.decode() == ''
+
+
+def test_the_entry_point_arms_freeze_support_before_running_a_job():
+    """
+    Pinned by reading the source, because the call is a no-op under a normal
+    interpreter: only PyInstaller's runtime hook makes it the thing that turns
+    a re-run executable into a worker instead of a second dispatcher. There is
+    no way to observe that without building the frozen binary, and no way to
+    notice its removal either — hence this test.
+    """
+    source = open(os.path.join(BACKEND_DIR, 'main.py'), encoding='utf-8').read()
+    entry = source[source.index("if __name__ == '__main__':"):]
+    assert entry.index('multiprocessing.freeze_support()') < entry.index('main()')
+
+
+def test_importing_the_dispatcher_does_not_load_opencv():
+    """
+    OpenCV costs the best part of a second to import and, frozen, unpacks a
+    large part of the bundle. Loading a video needs ffprobe and one ffmpeg
+    call — none of it — and that import was pure delay between the user
+    picking a file and seeing it.
+    """
+    proc = subprocess.run(
+        [PYTHON, '-c',
+         f'import sys; sys.path.insert(0, {BACKEND_DIR!r});'
+         'import main; print("cv2" in sys.modules)'],
+        capture_output=True, timeout=120,
+    )
+    assert proc.stdout.decode().strip() == 'False', proc.stderr.decode()
+
+
+# ─── stage reporting ─────────────────────────────────────────────────────────
+
+@requires_ffmpeg
+def test_loading_a_video_reports_the_stage_it_is_at(sample_video):
+    """Without this the canvas shows a bare spinner, and a slow file is
+    indistinguishable from a stuck backend."""
+    lines = _run_backend({
+        'inputPath': sample_video, 'outputPath': '/dev/null',
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
+        'method': 'inpaint', 'mode': 'preview_frame',
+    })
+
+    stages = [l.removeprefix('STATE:stage:') for l in lines if l.startswith('STATE:stage:')]
+    assert stages == ['probing', 'extractingStill']
+
+    still = lines[-1].removeprefix('STATE:preview_ready:')
+    os.path.exists(still) and os.unlink(still)
+
+
+@requires_ffmpeg
+def test_an_export_reports_its_stages_as_keys_not_prose(sample_video, tmp_path):
+    """The renderer translates these; a sentence from here would pin the
+    status line to English."""
+    out = str(tmp_path / 'staged.mp4')
+    lines = _run_backend({
+        'inputPath': sample_video, 'outputPath': out,
+        'roi': {'x': 10, 'y': 10, 'w': 60, 'h': 40}, 'method': 'blur',
+    })
+
+    stages = [l.removeprefix('STATE:stage:') for l in lines if l.startswith('STATE:stage:')]
+    assert stages == ['probing', 'extractingFrames', 'processing', 'encoding']
+    # No other STATE line carries prose for the UI to display untranslated.
+    other = [l for l in lines
+             if l.startswith('STATE:')
+             and not l.startswith(('STATE:stage:', 'STATE:meta:', 'STATE:done:'))]
+    assert other == []
+
+
+@requires_ffmpeg
+def test_a_preview_covers_the_requested_number_of_seconds(sample_video):
+    """The clip length is a job setting, so a longer look is possible without
+    a new backend."""
+    lines = _run_backend({
+        'inputPath': sample_video, 'outputPath': '/dev/null',
+        'roi': {'x': 10, 'y': 10, 'w': 60, 'h': 40},
+        'method': 'blur', 'mode': 'preview', 'previewSeconds': 0.5,
+    })
+
+    clip = lines[-1].removeprefix('STATE:preview_ready:')
+    try:
+        assert ff_utils.probe_video(clip)['duration'] == pytest.approx(0.5, abs=0.3)
+    finally:
+        os.path.exists(clip) and os.unlink(clip)
+
+
+def test_a_preview_length_outside_the_allowed_range_is_rejected(existing_file):
+    with pytest.raises(ValidationError, match='previewSeconds'):
+        backend_main.JobConfig.model_validate({
+            'inputPath': existing_file, 'outputPath': '/dev/null',
+            'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
+            'method': 'blur', 'mode': 'preview', 'previewSeconds': 0,
+        })

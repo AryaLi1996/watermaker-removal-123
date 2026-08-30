@@ -62,7 +62,17 @@ class FFmpegError(subprocess.CalledProcessError):
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     """Run a subprocess, capturing stdout/stderr, raising on failure."""
     global _active_proc
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(
+        cmd,
+        # ffmpeg reads stdin by default and would otherwise inherit this
+        # process's — the pipe Electron writes the job payload to. A child
+        # that drains or closes it corrupts the one channel the dispatcher
+        # has for its own input, which is how a run ends up reporting
+        # "No input received on stdin." for a payload that was sent.
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     _active_proc = proc
     try:
         stdout, stderr = proc.communicate()
@@ -130,14 +140,30 @@ def probe_video(filepath: str) -> dict:
     }
 
 
+# PNG deflate level for the frames on disk. They live for one job inside a
+# temp directory, so compressing them hard buys nothing and costs real time:
+# level 1 writes a 1080p frame several times faster than the default 6, and
+# PNG is lossless at every level, so no quality is traded for it.
+PNG_COMPRESSION = 1
+
+
 def extract_preview_frame(input_path: str, output_path: str, timestamp: float = 5.0) -> None:
-    """Extract a single frame at `timestamp` seconds as a PNG."""
+    """
+    Extract a single frame at `timestamp` seconds as a PNG.
+
+    This is the one thing standing between the user picking a file and seeing
+    it, so it does as little as possible: `-ss` before `-i` seeks the input
+    rather than decoding up to the timestamp, `-an` skips the audio track
+    entirely, and the still is written at the cheap PNG level.
+    """
     _run([
         ffmpeg_bin(), '-y',
         '-v', 'error',
         '-ss', str(timestamp),
         '-i', input_path,
+        '-an',
         '-frames:v', '1',
+        '-compression_level', str(PNG_COMPRESSION),
         output_path,
     ])
 
@@ -153,7 +179,7 @@ def extract_frames(input_path: str, output_dir: str) -> int:
         ffmpeg_bin(), '-y',
         '-v', 'error',
         '-i', input_path,
-        '-q:v', '1',
+        '-compression_level', str(PNG_COMPRESSION),
         '-f', 'image2',
         pattern,
     ])
@@ -189,6 +215,14 @@ def audio_args_for(audio_codec: Optional[str]) -> list[str]:
     return ['-c:a', 'aac', '-b:a', '192k']
 
 
+# x264 settings per purpose. An export is a file the user keeps, so it is
+# encoded for quality; a preview is watched once and thrown away, where the
+# minutes 'medium' spends chasing the last of the bitrate are the whole
+# complaint about how long a preview takes.
+EXPORT_ENCODE = {'preset': 'medium', 'crf': '18'}
+PREVIEW_ENCODE = {'preset': 'veryfast', 'crf': '23'}
+
+
 def reassemble_video(
     frames_dir: str,
     original_video: str,
@@ -196,17 +230,20 @@ def reassemble_video(
     fps: float,
     temp_video: Optional[str] = None,
     audio_codec: Optional[str] = None,
+    encode: Optional[dict] = None,
 ) -> None:
     """
-    Encode processed PNGs back to MP4 (libx264, CRF 18), then mux original
-    audio and metadata from `original_video` into the final output.
+    Encode processed PNGs back to MP4 (libx264), then mux original audio and
+    metadata from `original_video` into the final output.
 
     The `-map 1:a:0?` flag makes audio optional — silent sources are handled.
     `audio_codec` is the source's codec name from probe_video(); pass it to
     avoid a second probe. Audio is copied when MP4 accepts it, else re-encoded.
+    `encode` selects the x264 preset/CRF — EXPORT_ENCODE by default.
     """
     if temp_video is None:
         temp_video = output_path + '.temp.mp4'
+    settings = encode or EXPORT_ENCODE
 
     frame_pattern = os.path.join(frames_dir, 'frame_%06d.png')
 
@@ -217,7 +254,8 @@ def reassemble_video(
         '-framerate', str(fps),
         '-i', frame_pattern,
         '-c:v', 'libx264',
-        '-crf', '18',
+        '-preset', settings['preset'],
+        '-crf', settings['crf'],
         '-pix_fmt', 'yuv420p',
         temp_video,
     ])

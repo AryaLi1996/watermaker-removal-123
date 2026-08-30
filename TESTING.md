@@ -74,7 +74,7 @@ backend/.venv/bin/python -m pytest tests/unit/backend -v
 | `clamp_roi` | A box running off any edge is trimmed; a fully outside box raises |
 | `clamp_clone_offset` | The clone source is nudged back in-frame instead of failing |
 | `apply_removal` | Every engine survives an ROI hanging off the frame edge |
-| `preview_window` | The 3s window is centred, and shrinks for a shorter video |
+| `preview_window` | The preview window is centred, shrinks for a shorter video, and honours a requested length |
 | `audio_args_for` | MP4-native audio is copied; vorbis/opus/flac transcode to AAC |
 | `_run` / `terminate` | Child stdout and failures propagate; a cancel stops the child |
 
@@ -283,7 +283,7 @@ await electronApp.evaluate(({ BrowserWindow }) => {
 | `empty-state` | Full-screen idle drop zone |
 | `browse-output` | "Browse" button in Output row |
 | `btn-export` | "Export" button |
-| `btn-preview` | "Preview (3s)" button |
+| `btn-preview` | "Preview (1s)" button |
 | `btn-cancel` | "Cancel" button in ProgressPanel |
 | `progress-panel` | ProgressPanel wrapper |
 | `done-panel` | DonePanel wrapper |

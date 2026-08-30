@@ -50,7 +50,8 @@ test.describe('job stdout protocol', () => {
 
     expect(received.find((e) => e.type === 'meta')?.value).toMatchObject({ width: 640, height: 480 });
     expect(received.find((e) => e.type === 'progress')?.value).toBe(50);
-    expect(received.find((e) => e.type === 'state')?.value).toBe('Reconstructing pixels...');
+    // Stages cross the protocol as keys; the renderer owns the wording.
+    expect(received.find((e) => e.type === 'state')?.value).toBe('stage:processing');
     // job:done carries the path the backend reported, not just the requested one
     expect(received.find((e) => e.type === 'done')?.value).toBe('/tmp/protocol-out.mp4');
     expect(received.some((e) => e.type === 'error')).toBe(false);

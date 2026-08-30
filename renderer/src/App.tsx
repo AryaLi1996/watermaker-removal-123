@@ -18,6 +18,7 @@ import { useKeyboardShortcuts, SHORTCUT_HINTS } from './hooks/useKeyboardShortcu
 import { useTranslation } from './hooks/useTranslation';
 import { LOCALES, LOCALE_NAMES } from './i18n';
 import { estimateSecondsRemaining, recordSample } from './eta';
+import { stageLabel, stageState } from './stages';
 import type { ProgressSample } from './eta';
 
 const SIDEBAR_W = 280;
@@ -97,13 +98,19 @@ function App() {
     setPreviewFrameUrl(null);
     setPreviewClipUrl(null);
     setVideoMeta(null);
+    // Opening a file is two ffmpeg calls on a file that may be very large.
+    // Saying which one is running is the difference between a wait and a
+    // hang, so the loading canvas follows the backend's stages.
+    setStateLabel(stageState('probing'));
     setAppState('loaded');
     // Request preview frame extraction from the backend
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobMeta((meta) => { setVideoMeta(meta); });
+    window.electronAPI.onJobState(setStateLabel);
     window.electronAPI.onPreviewReady((previewPath: string) => {
       clearPreviewTimer();
       setPreviewFrameUrl(`file://${previewPath}`);
+      setStateLabel('');
       window.electronAPI.removeJobListeners();
     });
     window.electronAPI.onJobError((msg: string) => {
@@ -185,7 +192,7 @@ function App() {
     const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
     // outputPath is passed as placeholder; backend generates its own temp file for the preview clip
     const payload: JobConfig = { inputPath, outputPath: outputPath ?? '/dev/null', roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy };
-    setProgress(0); setStateLabel(t('status.generatingPreview')); setSamples([]); setAppState('processing');
+    setProgress(0); setStateLabel(stageState('preparingPreview')); setSamples([]); setAppState('processing');
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobProgress((value) => {
       setProgress(value);
@@ -202,7 +209,7 @@ function App() {
     if (!started) {
       failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, failWith, t]);
+  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, failWith]);
 
   const handleCancel = useCallback(async () => {
     await window.electronAPI.cancelJob();
@@ -461,7 +468,9 @@ function App() {
         {appState !== 'empty' && !previewFrameUrl && (
           <div style={{ color: '#52525b', fontSize: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 24, height: 24, border: '2px solid #52525b', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-            <span>{t('file.loadingPreview')}</span>
+            <span data-testid="loading-stage">
+              {stateLabel ? stageLabel(stateLabel, t) : t('file.loadingPreview')}
+            </span>
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           </div>
         )}

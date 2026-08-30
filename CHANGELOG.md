@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The pipeline reports which stage it is at in the interface language, not in
+  English. Stages now cross the stdout protocol as keys (`STATE:stage:encoding`)
+  that the renderer looks up alongside every other string, so the status line
+  follows the language picker — including for a job already running.
+- Loading a video says what it is doing. Reading the file's details and
+  preparing its first frame each report themselves, so a large file looks like
+  a wait rather than a hang.
+- A quick preview's length is a job setting (`previewSeconds`), defaulting to
+  the one second the button now offers.
 - Intel Macs get their own build. Releases now carry both
   `Watermark Remover-<version>-x64.dmg` and `-arm64.dmg`, each packaged on a
   runner of that architecture — the frozen backend and the bundled ffmpeg are
@@ -44,7 +53,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Opt-in auto-update: a downloaded update surfaces a banner and installs on
   the user's confirmation.
 
+### Changed
+- Previews are quicker to produce. They cover one second rather than three,
+  the frames go to disk at the cheapest lossless PNG level instead of the
+  slowest, inpainting is handed the neighbourhood of the selection rather than
+  the whole frame, and the clip is encoded with a preset chosen for speed — an
+  export still encodes for quality. Measured on a 784×1168 clip and four
+  cores, a preview went from 8.4s to 3.0s; comparing the same three seconds of
+  video, from 8.4s to 6.4s.
+- Loading a video no longer imports OpenCV. Reading a file's details and
+  pulling out its first frame need ffprobe and one ffmpeg call, and the import
+  was pure delay between picking a file and seeing it.
+- A batch of a handful of frames runs in the dispatcher process rather than
+  starting a pool that cannot repay its first worker, and a pool is never
+  larger than the work it has.
+
 ### Fixed
+- A preview no longer reports "No input received on stdin." halfway through.
+  The release freezes the backend into one executable, and the frame pool
+  starts its workers by re-running that executable — with nothing to tell them
+  they are workers, each ran the dispatcher again, found the stdin Electron had
+  already closed, and reported that on the same stdout the real job was
+  reporting on. The entry point now arms `multiprocessing.freeze_support()`
+  before anything reads stdin. ffmpeg children are also given
+  `stdin=DEVNULL` rather than inheriting the pipe the job payload arrives on.
 - A rejected job now says which field it rejected and why. The backend's
   stdout protocol is line-based, so only the first line of a pydantic failure
   survived the trip to the UI — and pydantic puts the count there

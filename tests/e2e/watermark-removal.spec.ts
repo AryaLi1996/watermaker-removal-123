@@ -72,9 +72,10 @@ test.describe('Watermark removal — real pipeline', () => {
     await expect(page.getByTestId('btn-export')).toBeVisible({ timeout: 10_000 });
 
     // ── 3. Wait for the Python preview_frame job to finish ───────────────────
-    // "Loading preview…" disappears once onPreviewReady fires
-    await expect(page.getByText('Loading preview…')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText('Loading preview…')).toBeHidden({ timeout: 60_000 });
+    // The canvas reports which stage the backend is at, and stops once
+    // onPreviewReady fires.
+    await expect(page.getByTestId('loading-stage')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('loading-stage')).toBeHidden({ timeout: 60_000 });
 
     // ── 4. Set the output path via Browse ────────────────────────────────────
     await page.getByTestId('browse-output').click();

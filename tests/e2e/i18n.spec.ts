@@ -66,8 +66,37 @@ test.describe('language', () => {
     await expect(page.getByText('去除方式')).toBeVisible();
     await expect(page.getByText('智能修复', { exact: true })).toBeVisible();
     await expect(page.getByTestId('btn-export')).toHaveText('导出');
-    await expect(page.getByTestId('btn-preview')).toHaveText('预览（3 秒）');
+    await expect(page.getByTestId('btn-preview')).toHaveText('预览（1 秒）');
     await expect(page.getByTestId('save-preset')).toHaveText('保存当前设置');
+  });
+
+  test('the status line follows the language while a job runs', async ({ page, electronApp }) => {
+    // The backend announces stages as keys for exactly this reason: it cannot
+    // know which language the person watching reads.
+    await mockDialogs(electronApp);
+    await electronApp.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('job:start');
+      ipcMain.handle('job:start', () => true);
+    });
+
+    await page.getByTestId('btn-load-video').click();
+    await expect(page.getByTestId('btn-export')).toBeVisible({ timeout: 10_000 });
+    await chooseLanguage(page, 'zh');
+
+    await page.getByTestId('btn-export').click();
+    const panel = page.getByTestId('progress-panel');
+    await expect(panel).toBeVisible({ timeout: 5_000 });
+
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('job:state', 'stage:encoding');
+    });
+    await expect(panel).toContainText('正在编码视频');
+
+    // The stage already on screen re-renders when the language changes
+    await chooseLanguage(page, 'en');
+    await expect(panel).toContainText('Encoding video');
+
+    await page.getByTestId('btn-cancel').click();
   });
 
   test('backend failures are reported in the chosen language', async ({ page, electronApp }) => {

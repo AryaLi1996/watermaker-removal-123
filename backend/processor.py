@@ -2,6 +2,14 @@
 Multi-core parallel frame processor.
 Passes file paths to workers — no large arrays go through IPC queues.
 Each worker reads from disk, processes, and writes back.
+
+A batch of a handful of frames is run in this process instead, where a pool
+could not pay for itself. The bar for that is low on purpose: measured on a
+4-core machine over the 30 frames of a one-second preview, a pool took 1.2s
+against 4.2s sequential — and 1.4s when its workers were started the slow
+way (spawn, a fresh interpreter and a fresh OpenCV import each), which is how
+the packaged mac and Windows builds start them. Short does not mean cheap:
+the frames are the same size either way.
 """
 import multiprocessing
 import os
@@ -40,6 +48,18 @@ def opencv_thread_count() -> int:
         return 1
 
 
+# PNG deflate level for a processed frame written back to the temp directory.
+# Matches ff_utils.PNG_COMPRESSION: level 1 writes several times faster than
+# OpenCV's default 3 and PNG is lossless either way.
+PNG_COMPRESSION = 1
+
+# Below this many frames a pool cannot pay for itself: a couple of frames are
+# done in the time the first worker takes to come up. Anything more goes to
+# the pool, including a short preview — see the module docstring for the
+# measurements behind that.
+SEQUENTIAL_FRAME_LIMIT = 4
+
+
 def _process_single_frame(args: tuple) -> None:
     """
     Worker function: read one PNG, apply removal, write back.
@@ -56,7 +76,7 @@ def _process_single_frame(args: tuple) -> None:
         raise IOError(f"Could not read frame: {frame_path}")
 
     result = apply_removal(frame, mask, config)
-    cv2.imwrite(frame_path, result)
+    cv2.imwrite(frame_path, result, [cv2.IMWRITE_PNG_COMPRESSION, PNG_COMPRESSION])
 
 
 def run_batch(
@@ -67,7 +87,8 @@ def run_batch(
     progress_callback=None,
 ) -> None:
     """
-    Process all frames in parallel using all available CPU cores.
+    Process every frame, on all available cores when there are enough frames
+    to be worth a worker pool and in this process when there are not.
 
     :param frame_paths: Ordered list of absolute PNG paths.
     :param config: Removal config dict (method, roi, radius, …).
@@ -80,11 +101,23 @@ def run_batch(
     jobs = [(fp, config, mask_params) for fp in frame_paths]
 
     total = len(jobs)
-    cpu_count = os.cpu_count() or 1
+    if total == 0:
+        return
+    # More workers than frames only pays start-up costs for processes that
+    # would get one frame or none.
+    workers = min(os.cpu_count() or 1, total)
 
-    # Use a pool of workers; submit in chunks so we can report progress
-    chunk_size = max(1, total // (cpu_count * 4))
-    completed = 0
+    def report(done: int) -> None:
+        if progress_callback:
+            progress_callback(done / total * 100)
+
+    if total <= SEQUENTIAL_FRAME_LIMIT or workers == 1:
+        # In-process, with OpenCV left on its own defaults: nothing else is
+        # competing for the machine, and there is no pool to wait for.
+        for done, job in enumerate(jobs, start=1):
+            _process_single_frame(job)
+            report(done)
+        return
 
     # Apply the thread setting *before* forking, never inside the workers:
     # calling into OpenCV's threading machinery after a fork deadlocks a child
@@ -95,14 +128,17 @@ def run_batch(
     if threads > 0:
         cv2.setNumThreads(threads)
 
+    # Submit in chunks so progress is reported as work completes.
+    chunk_size = max(1, total // (workers * 4))
+    completed = 0
+
     try:
-        with multiprocessing.Pool(processes=cpu_count) as pool:
+        with multiprocessing.Pool(processes=workers) as pool:
             global _current_pool
             _current_pool = pool
             for _ in pool.imap_unordered(_process_single_frame, jobs, chunksize=chunk_size):
                 completed += 1
-                if progress_callback:
-                    progress_callback(completed / total * 100)
+                report(completed)
             _current_pool = None
     finally:
         cv2.setNumThreads(previous_threads)
