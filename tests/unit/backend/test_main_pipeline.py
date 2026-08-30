@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import typing
 
 import pytest
 from pydantic import ValidationError
@@ -109,6 +110,65 @@ def test_job_config_rejects_an_unknown_method(existing_file):
             'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
             'method': 'magic',
         })
+
+
+def test_job_config_accepts_the_temporal_method_and_its_quality(existing_file):
+    config = backend_main.JobConfig.model_validate({
+        'inputPath': existing_file,
+        'outputPath': '/tmp/out.mp4',
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
+        'method': 'temporal',
+        'temporalQuality': 'quality',
+    })
+    assert config.method == 'temporal'
+    assert config.temporalQuality == 'quality'
+
+
+def test_job_config_defaults_the_temporal_quality(existing_file):
+    """An older renderer sends no quality at all; the middle setting is the one."""
+    config = backend_main.JobConfig.model_validate({
+        'inputPath': existing_file,
+        'outputPath': '/tmp/out.mp4',
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
+        'method': 'temporal',
+    })
+    assert config.temporalQuality == 'balanced'
+
+
+def test_job_config_rejects_a_temporal_quality_the_engine_has_no_settings_for(existing_file):
+    with pytest.raises(ValidationError, match='balanced'):
+        backend_main.JobConfig.model_validate({
+            'inputPath': existing_file,
+            'outputPath': '/tmp/out.mp4',
+            'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
+            'method': 'temporal',
+            'temporalQuality': 'cinematic',
+        })
+
+
+def test_the_quality_names_the_ui_offers_are_the_ones_the_engine_knows():
+    """
+    The schema and the engine keep separate lists of the same three names;
+    this is what stops one of them growing a fourth on its own.
+    """
+    import temporal_core
+
+    schema = set(typing.get_args(backend_main.TemporalQuality))
+    assert schema == set(temporal_core.QUALITY_PRESETS)
+    assert temporal_core.DEFAULT_QUALITY in schema
+
+
+def test_temporal_gets_more_of_the_bar_for_the_work_that_dominates_it():
+    """
+    A temporal export spends nearly all its time on the frames; splitting the
+    bar as if extraction and encoding were comparable makes it look stuck.
+    """
+    extract, process = backend_main.stage_bounds('temporal')
+    single_extract, single_process = backend_main.stage_bounds('inpaint')
+
+    assert extract < single_extract
+    assert process > single_process
+    assert extract < process < 100
 
 
 def test_job_config_rejects_an_unknown_mode(existing_file):

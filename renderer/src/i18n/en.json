@@ -24,14 +24,26 @@
     "solidFill": "Solid Color",
     "solidFillDescription": "Paint a solid color over the area",
     "cloneStamp": "Clone Stamp",
-    "cloneStampDescription": "Copy nearby pixels over the watermark"
+    "cloneStampDescription": "Copy nearby pixels over the watermark",
+    "temporal": "Temporal Fill",
+    "temporalDescription": "Rebuilds from nearby frames (moving backgrounds)",
+    "temporalBeta": "Beta",
+    "temporalNote": "Slower than the other methods, but the edges come out natural. Best where the background moves — a pan, a handheld shot, a moving subject.",
+    "temporalNeedsCpu": "Needs at least 4 processor cores",
+    "temporalNeedsMemory": "Needs at least 4 GB of memory"
   },
   "params": {
     "radius": "Smoothness (radius px)",
     "kernelSize": "Blur Strength",
     "color": "Fill Color",
     "dx": "Source Offset X (px)",
-    "dy": "Source Offset Y (px)"
+    "dy": "Source Offset Y (px)",
+    "temporalQuality": "Quality"
+  },
+  "quality": {
+    "fast": "Fast",
+    "balanced": "Balanced",
+    "quality": "High"
   },
   "actions": {
     "preview": "Preview (1s)",
@@ -57,6 +69,7 @@
     "extractingClip": "Trimming the preview clip…",
     "extractingFrames": "Extracting frames…",
     "processing": "Reconstructing pixels…",
+    "temporalProcessing": "Temporal fill in progress — this takes longer…",
     "encoding": "Encoding video…",
     "preparingPreview": "Preparing preview…"
   },
@@ -88,7 +101,11 @@
     "cloneAbove": "Clone from above",
     "cloneAboveDescription": "Marks over flat areas",
     "cloneLeft": "Clone from the left",
-    "cloneLeftDescription": "Marks near the top or bottom edge"
+    "cloneLeftDescription": "Marks near the top or bottom edge",
+    "temporalBalanced": "Temporal — balanced",
+    "temporalBalancedDescription": "Moving backgrounds, reasonable wait",
+    "temporalHigh": "Temporal — high quality",
+    "temporalHighDescription": "The cleanest edges, and the longest wait"
   },
   "shortcuts": {
     "heading": "Keyboard shortcuts",

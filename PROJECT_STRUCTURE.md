@@ -89,6 +89,7 @@ renderer/
 │   ├── main.tsx                    # React entry point (ReactDOM.createRoot)
 │   ├── App.tsx                     # Root component — layout, state machine, IPC wiring
 │   ├── types.ts                    # Shared TypeScript types
+│   ├── capabilities.ts             # Whether this machine can run the heavier methods
 │   ├── utils.ts                    # Pure utility functions
 │   ├── index.css                   # Global dark theme styles (Tailwind base)
 │   ├── App.css                     # App-shell layout styles
@@ -131,7 +132,7 @@ idle  →  loaded  →  processing  →  done
 
 ```typescript
 ROI           { x, y, w, h }            // Video-space pixel coordinates
-JobConfig     { inputPath, outputPath, roi, method, mode }
+JobConfig     { inputPath, outputPath, roi, method, mode, temporalQuality, … }
 VideoMeta     { width, height, fps, duration }
 window.electronAPI  // All IPC bindings exposed by preload.js
 ```
@@ -156,6 +157,7 @@ backend/
 ├── main.py           # Entry point — reads stdin, orchestrates pipeline
 ├── ff_utils.py       # All FFmpeg/FFprobe subprocess calls
 ├── image_core.py     # OpenCV removal algorithms + mask builder
+├── temporal_core.py  # Flow-guided temporal inpainting (the `temporal` method)
 ├── processor.py      # multiprocessing.Pool dispatcher; exposes terminate() for SIGTERM cancel
 ├── requirements.txt  # Python dependencies
 └── .venv/            # Virtual environment (not committed)
@@ -192,7 +194,28 @@ All calls use list-form `subprocess.run` (never `shell=True`).
 | `process_blur(frame, x, y, w, h, kernel)` | `cv2.GaussianBlur` on extracted ROI sub-matrix |
 | `process_solid_fill(frame, x, y, w, h, color)` | `cv2.rectangle` fill |
 | `process_clone_stamp(frame, x, y, w, h, dx, dy)` | Block pixel copy from offset; raises `ValueError` if source OOB |
-| `apply_removal(frame, config)` | Dispatcher — routes to the correct engine |
+| `apply_removal(frame, mask, config, neighbor_at)` | Dispatcher — routes to the correct engine. `neighbor_at` is how the temporal engine reaches other frames; the rest ignore it |
+
+### `temporal_core.py` — Temporal Inpainting
+
+The only engine that reads more than the frame it is given. A watermark is
+static and the picture behind it usually is not, so the background it hides is
+visible in another frame; this recovers it instead of reconstructing it.
+
+| Function | Purpose |
+|---|---|
+| `quality_settings(name)` | The `fast` / `balanced` / `quality` dial: reach, flow scale, fusion, feather |
+| `flow_estimator(settings)` | DIS optical flow where the build has it, Farneback where it does not |
+| `fit_affine_flow(flow, ring)` | Fits the motion on the clean ring around the selection, where the flow means something |
+| `compose(first, second)` | Chains two frame-to-frame models into one, which is how a large displacement is reached by small measurable steps |
+| `flow_residual(...)` | Checks a model against the ring before trusting it — a cut or a lost track fails here |
+| `feather_alpha(...)` | The soft edge, ramped per side so a mark on the frame edge is still fully covered |
+| `process_temporal(frame, mask, roi, neighbor_at, quality)` | The engine: walk outwards, sample, fuse, fall back to `process_inpaint` for anything uncovered |
+
+The walk stops as soon as every pixel has enough samples, so the reach is a
+limit rather than a cost. Neighbours are fetched through `neighbor_at`, which
+the processor backs with lazy decoding, so frames the walk never needs are
+never read.
 
 ### `processor.py` — Parallel Dispatcher
 
@@ -201,6 +224,15 @@ run_batch(frame_paths, config)
 ```
 
 Uses `multiprocessing.Pool(min(os.cpu_count(), frames))` with `imap_unordered` and `chunksize = workers * 4`. Each worker process loads an image, rebuilds the mask internally, applies removal, and saves back to disk. A batch of `SEQUENTIAL_FRAME_LIMIT` frames or fewer runs in the dispatcher process, where a pool could not repay starting its first worker.
+
+A `temporal` batch takes a different route through the same pool. Each job
+carries the paths of the neighbouring frames its quality setting can reach,
+and results are written to a sibling `temporal_out/` directory, moved over the
+originals only once every worker has finished: a frame is a neighbour of the
+frames around it, and painting over it while they still need to read it would
+feed each reconstruction the previous one's output. Neighbours are decoded on
+demand, with a small per-worker cache (`WATERMARK_TEMPORAL_CACHE`), because
+consecutive frames ask for nearly the same ones.
 
 ---
 
@@ -211,7 +243,8 @@ tests/
 ├── conftest.py                         # sys.path insert so pytest finds backend/
 ├── unit/
 │   ├── backend/
-│   │   └── test_image_core.py          # 11 pytest tests — mask + all 4 engines
+│   │   ├── test_image_core.py          # pytest — mask + the single-frame engines
+│   │   ├── test_temporal_core.py       # pytest — flow fitting, fusion, feathering, fallbacks
 │   └── renderer/
 │       └── utils.test.ts               # 15 vitest tests — all utility functions
 ├── integration/                        # reserved — not yet implemented

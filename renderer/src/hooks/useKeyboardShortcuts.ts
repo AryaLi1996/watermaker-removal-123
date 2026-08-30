@@ -18,7 +18,7 @@ export interface ShortcutHandlers {
 }
 
 /** Number keys pick a method, in the order the picker shows them. */
-const METHOD_ORDER: RemovalMethod[] = ['inpaint', 'blur', 'solidFill', 'cloneStamp'];
+const METHOD_ORDER: RemovalMethod[] = ['inpaint', 'blur', 'solidFill', 'cloneStamp', 'temporal'];
 
 /** Typing in a field must never trigger an export. */
 function isTyping(target: EventTarget | null): boolean {
@@ -85,7 +85,7 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers, enabled = true)
         return;
       }
 
-      if (!mod && key >= '1' && key <= '4') {
+      if (!mod && key >= '1' && key <= '5') {
         const method = METHOD_ORDER[Number(key) - 1];
         if (method) {
           event.preventDefault();
@@ -101,7 +101,7 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers, enabled = true)
 
 /** Rendered in the sidebar so the shortcuts are discoverable. */
 export const SHORTCUT_HINTS: { keys: string; labelKey: string }[] = [
-  { keys: '1–4', labelKey: 'shortcuts.method' },
+  { keys: '1–5', labelKey: 'shortcuts.method' },
   { keys: '⌘/Ctrl + P', labelKey: 'shortcuts.preview' },
   { keys: '⌘/Ctrl + E', labelKey: 'shortcuts.export' },
   { keys: '⌘/Ctrl + Z', labelKey: 'shortcuts.undo' },

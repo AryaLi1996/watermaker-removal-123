@@ -22,6 +22,7 @@ export const STAGES = [
   'extractingClip',
   'extractingFrames',
   'processing',
+  'temporalProcessing',
   'encoding',
   'preparingPreview',
 ] as const;

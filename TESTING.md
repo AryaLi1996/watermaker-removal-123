@@ -8,10 +8,10 @@ How to run, understand, and extend the automated test suite.
 
 | Suite | Command | Tests | Location |
 |---|---|---|---|
-| Backend (Python) | `npm run test:backend` | 151 pytest | `tests/unit/backend/` |
+| Backend (Python) | `npm run test:backend` | 192 pytest | `tests/unit/backend/` |
 | Backend coverage | `npm run test:coverage` | ≥ 80% required | `htmlcov/` |
-| Renderer (TypeScript) | `npm run test:frontend` | 86 vitest | `tests/unit/renderer/`, `renderer/src/` |
-| E2E (Electron) | `npm run test:e2e` | 48 Playwright | `tests/e2e/` |
+| Renderer (TypeScript) | `npm run test:frontend` | 105 vitest | `tests/unit/renderer/`, `renderer/src/` |
+| E2E (Electron) | `npm run test:e2e` | 49 Playwright | `tests/e2e/` |
 | Docs screenshots | `npm run screenshots` | 2 Playwright | `tests/e2e/capture-screenshots.spec.ts` |
 | Everything | `npm run test:all` | all of the above | root |
 | Environment check | `python scripts/validate_env.py` | manual | `scripts/` |
@@ -66,6 +66,24 @@ backend/.venv/bin/python -m pytest tests/unit/backend -v
 | `test_clone_stamp_copies_pixels` | `process_clone_stamp` copies source block correctly |
 | `test_clone_stamp_oob_raises` | Out-of-bounds source offset raises `ValueError` |
 | `test_apply_removal_routes_inpaint` | `apply_removal` dispatcher calls the right engine |
+
+**File:** `tests/unit/backend/test_temporal_core.py` — flow-guided temporal inpainting
+
+The scenes are synthetic but not arbitrary: a camera panning over a textured
+backdrop with a static mark burned into every frame is the case the engine
+exists for, and the frames it is *not* given are the cases it has to survive.
+
+| Test group | What it checks |
+|---|---|
+| quality settings | The three names the UI offers exist, get slower and more thorough in order, and an unknown one names the ones that do |
+| `flow_estimator` | The field follows OpenCV's direction convention, which the sampler assumes |
+| `fit_affine_flow` | Recovers a translation and a zoom; falls back to a median where there is too little ring to fit on |
+| `compose` / `sample_grid` | Two steps compose into their sum, and the sampler reads exactly the pixels a model points at |
+| `flow_residual` | Separates a right model from a wrong one, and refuses to judge on almost no ring |
+| `feather_alpha` | Solid over the selection, monotonic across the band, and solid on a side that has no band |
+| the engine | Beats single-frame inpainting on a pan by more than half; quality buys accuracy; the seam has no step |
+| the fallbacks | No neighbours, a still camera, a cut, and a neighbour of the wrong size all fall back rather than smear |
+| the walk | Stops once the mark is covered, and stops early when nothing is ever uncovered |
 
 **File:** `tests/unit/backend/test_backend_helpers.py` — clamping and the cancel path
 
@@ -156,6 +174,13 @@ cd renderer && npm run test:run
 ```
 
 ### What is tested
+
+**File:** `tests/unit/renderer/temporal.test.ts` — the temporal-fill surface
+
+Covers `temporalAvailability` (a small machine is told why the method is
+greyed out; an unknown or older main process keeps it), that everything the
+method puts on screen is translated in both languages, and that a change of
+quality counts as an edit worth undoing.
 
 **File:** `tests/unit/renderer/utils.test.ts`
 

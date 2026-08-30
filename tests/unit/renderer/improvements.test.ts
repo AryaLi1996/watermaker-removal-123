@@ -174,7 +174,7 @@ describe('presets', () => {
   });
 
   it('ships built-ins that name real backend methods', () => {
-    const methods = new Set(['inpaint', 'blur', 'solidFill', 'cloneStamp']);
+    const methods = new Set(['inpaint', 'blur', 'solidFill', 'cloneStamp', 'temporal']);
     expect(BUILT_IN_PRESETS.length).toBeGreaterThan(0);
     setLocale('en');
     for (const preset of BUILT_IN_PRESETS) {

@@ -4,7 +4,7 @@
  * Built-ins cover the common cases; anything the user saves is kept in
  * localStorage, which is per-machine and survives restarts.
  */
-import type { RemovalMethod } from './types';
+import type { RemovalMethod, TemporalQuality } from './types';
 
 export interface PresetParams {
   radius: number;
@@ -12,6 +12,7 @@ export interface PresetParams {
   color: [number, number, number];
   dx: number;
   dy: number;
+  temporalQuality: TemporalQuality;
 }
 
 export interface Preset {
@@ -33,6 +34,7 @@ export const DEFAULT_PARAMS: PresetParams = {
   color: [0, 0, 0],
   dx: 0,
   dy: -50,
+  temporalQuality: 'balanced',
 };
 
 function preset(
@@ -59,6 +61,8 @@ export const BUILT_IN_PRESETS: Preset[] = [
   preset('fill-white', 'fillWhite', 'solidFill', { color: [255, 255, 255] }),
   preset('clone-above', 'cloneAbove', 'cloneStamp', { dx: 0, dy: -50 }),
   preset('clone-left', 'cloneLeft', 'cloneStamp', { dx: -80, dy: 0 }),
+  preset('temporal-balanced', 'temporalBalanced', 'temporal', { temporalQuality: 'balanced' }),
+  preset('temporal-high', 'temporalHigh', 'temporal', { temporalQuality: 'quality' }),
 ];
 
 const STORAGE_KEY = 'watermark-remover:custom-presets';
@@ -75,7 +79,12 @@ export function loadCustomPresets(): Preset[] {
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isPreset).map((p) => ({ ...p, custom: true }));
+    // A preset saved by an older version is missing whatever parameters have
+    // been added since; the defaults fill those in rather than reaching the
+    // backend as undefined.
+    return parsed
+      .filter(isPreset)
+      .map((p) => ({ ...p, params: { ...DEFAULT_PARAMS, ...p.params }, custom: true }));
   } catch {
     return [];
   }

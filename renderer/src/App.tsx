@@ -6,7 +6,8 @@ import MethodPicker from './components/MethodPicker';
 import ProgressPanel from './components/ProgressPanel';
 import DonePanel from './components/DonePanel';
 import PresetPicker from './components/PresetPicker';
-import type { AppState, JobConfig, RemovalMethod, ROI, VideoMeta } from './types';
+import type { AppState, JobConfig, RemovalMethod, ROI, SystemInfo, TemporalQuality, VideoMeta } from './types';
+import { temporalAvailability } from './capabilities';
 import { normalizeCoordinates, defaultOutputName, formatDuration, mediaUrl } from './utils';
 import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX } from './errors';
 import type { FriendlyError } from './errors';
@@ -42,6 +43,8 @@ function App() {
   const [color, setColor] = useState<[number, number, number]>([0, 0, 0]);
   const [dx, setDx] = useState(0);
   const [dy, setDy] = useState(-50);
+  const [temporalQuality, setTemporalQuality] = useState<TemporalQuality>('balanced');
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [progress, setProgress] = useState(0);
   const [stateLabel, setStateLabel] = useState('');
   const [error, setError] = useState<FriendlyError>({ key: null, raw: '' });
@@ -81,6 +84,12 @@ function App() {
 
   // Drop any IPC listeners still attached when the app unmounts
   useEffect(() => () => window.electronAPI.removeJobListeners(), []);
+
+  // What the machine can take on. Asked once: it cannot change while the app
+  // is running, and until the answer arrives every method stays on offer.
+  useEffect(() => {
+    void window.electronAPI.systemInfo().then(setSystemInfo).catch(() => setSystemInfo(null));
+  }, []);
 
   // A downloaded update installs on the user's say-so, never mid-export.
   useEffect(() => {
@@ -158,7 +167,7 @@ function App() {
       setOutputPath(out);
     }
     const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
-    const payload: JobConfig = { inputPath, outputPath: out, roi: videoROI, method, mode: 'full', radius, kernelSize, color, dx, dy };
+    const payload: JobConfig = { inputPath, outputPath: out, roi: videoROI, method, mode: 'full', radius, kernelSize, color, dx, dy, temporalQuality };
     setProgress(0); setStateLabel(''); setSamples([]); setAppState('processing');
     registerJobListeners();
     const started = await window.electronAPI.startJob(payload);
@@ -167,13 +176,13 @@ function App() {
       // "processing" state that nothing will ever complete.
       failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, registerJobListeners, failWith]);
+  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, temporalQuality, registerJobListeners, failWith]);
 
   const handlePreview = useCallback(async () => {
     if (!inputPath) return;
     const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
     // outputPath is passed as placeholder; backend generates its own temp file for the preview clip
-    const payload: JobConfig = { inputPath, outputPath: outputPath ?? '/dev/null', roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy };
+    const payload: JobConfig = { inputPath, outputPath: outputPath ?? '/dev/null', roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy, temporalQuality };
     setProgress(0); setStateLabel(stageState('preparingPreview')); setSamples([]); setAppState('processing');
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobProgress((value) => {
@@ -191,7 +200,7 @@ function App() {
     if (!started) {
       failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, failWith]);
+  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, temporalQuality, failWith]);
 
   const handleCancel = useCallback(async () => {
     await window.electronAPI.cancelJob();
@@ -199,17 +208,18 @@ function App() {
     setAppState('loaded'); setProgress(0); setStateLabel('');
   }, []);
 
-  const handleMethodChange = useCallback((updates: Partial<{ method: RemovalMethod; radius: number; kernelSize: number; color: [number,number,number]; dx: number; dy: number }>) => {
+  const handleMethodChange = useCallback((updates: Partial<{ method: RemovalMethod; radius: number; kernelSize: number; color: [number,number,number]; dx: number; dy: number; temporalQuality: TemporalQuality }>) => {
     if (updates.method !== undefined) setMethod(updates.method);
     if (updates.radius !== undefined) setRadius(updates.radius);
     if (updates.kernelSize !== undefined) setKernelSize(updates.kernelSize);
     if (updates.color !== undefined) setColor(updates.color);
     if (updates.dx !== undefined) setDx(updates.dx);
     if (updates.dy !== undefined) setDy(updates.dy);
+    if (updates.temporalQuality !== undefined) setTemporalQuality(updates.temporalQuality);
   }, []);
 
   // ── Undo / redo over the settings that define a job ───────────────────
-  const params: PresetParams = { radius, kernelSize, color, dx, dy };
+  const params: PresetParams = { radius, kernelSize, color, dx, dy, temporalQuality };
   const settings: JobSettings = { roi: canvasROI, method, params };
   const history = useHistory(settings);
 
@@ -221,14 +231,15 @@ function App() {
     setColor(next.params.color);
     setDx(next.params.dx);
     setDy(next.params.dy);
+    setTemporalQuality(next.params.temporalQuality);
   }, []);
 
   // Settle before recording: a drag or a slider sweep is one edit, not fifty.
   const { push: pushHistory } = history;
   useEffect(() => {
-    const timer = setTimeout(() => pushHistory({ roi: canvasROI, method, params: { radius, kernelSize, color, dx, dy } }), 400);
+    const timer = setTimeout(() => pushHistory({ roi: canvasROI, method, params: { radius, kernelSize, color, dx, dy, temporalQuality } }), 400);
     return () => clearTimeout(timer);
-  }, [canvasROI, method, radius, kernelSize, color, dx, dy, pushHistory]);
+  }, [canvasROI, method, radius, kernelSize, color, dx, dy, temporalQuality, pushHistory]);
 
   const handleUndo = useCallback(() => {
     const previous = history.undo();
@@ -241,7 +252,11 @@ function App() {
   }, [history, applySettings]);
 
   // ── Presets ───────────────────────────────────────────────────────────
-  const presets = [...BUILT_IN_PRESETS, ...customPresets];
+  // What this machine can actually run: a preset for a method that is greyed
+  // out would apply a method the user cannot select or export with.
+  const temporal = temporalAvailability(systemInfo);
+  const presets = [...BUILT_IN_PRESETS, ...customPresets]
+    .filter((p) => p.method !== 'temporal' || temporal.available);
 
   const applyPreset = useCallback((preset: Preset) => {
     setMethod(preset.method);
@@ -250,15 +265,16 @@ function App() {
     setColor(preset.params.color);
     setDx(preset.params.dx);
     setDy(preset.params.dy);
+    setTemporalQuality(preset.params.temporalQuality);
   }, []);
 
   const saveCurrentPreset = useCallback((name: string) => {
     setCustomPresets((prev) => {
-      const next = [...prev, presetFromCurrent(name, method, { radius, kernelSize, color, dx, dy })];
+      const next = [...prev, presetFromCurrent(name, method, { radius, kernelSize, color, dx, dy, temporalQuality })];
       saveCustomPresets(next);
       return next;
     });
-  }, [method, radius, kernelSize, color, dx, dy]);
+  }, [method, radius, kernelSize, color, dx, dy, temporalQuality]);
 
   const deletePreset = useCallback((id: string) => {
     setCustomPresets((prev) => {
@@ -275,6 +291,7 @@ function App() {
     p.params.kernelSize === kernelSize &&
     p.params.dx === dx &&
     p.params.dy === dy &&
+    p.params.temporalQuality === temporalQuality &&
     p.params.color[0] === color[0] && p.params.color[1] === color[1] && p.params.color[2] === color[2]
   )?.id ?? null;
 
@@ -295,7 +312,11 @@ function App() {
     onUndo: handleUndo,
     onRedo: handleRedo,
     onSavePreset: () => { if (isLoaded) setNamingPreset(true); },
-    onSelectMethod: (next) => { if (isLoaded) setMethod(next); },
+    onSelectMethod: (next) => {
+      if (!isLoaded) return;
+      if (next === 'temporal' && !temporal.available) return;
+      setMethod(next);
+    },
   }, appState !== 'empty');
 
   const secondsRemaining = estimateSecondsRemaining(samples);
@@ -407,7 +428,7 @@ function App() {
               onSaveCurrent={saveCurrentPreset}
             />
 
-            <MethodPicker method={method} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} disabled={!isLoaded} onChange={handleMethodChange} />
+            <MethodPicker method={method} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} temporalQuality={temporalQuality} temporal={temporal} disabled={!isLoaded} onChange={handleMethodChange} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{t('file.output')}</p>
