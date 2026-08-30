@@ -112,16 +112,54 @@ jobs:
             echo "No notarization credentials — the macOS build will not be notarized."
           fi
 
+      # scripts/build.js is local and deterministic, so it runs once. Packaging
+      # is not: on a cold cache electron-builder fetches the ~117 MB Electron
+      # runtime from GitHub release assets, and app-builder abandons the whole
+      # download on the first network error rather than retrying. A single
+      # "connection reset by peer" 30 ms in has already failed a release. So
+      # retry the packaging step, and only when the failure looks like the
+      # network — a real build error should still fail once, quickly.
       - name: Build and package
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          node scripts/build.js
+
           case "$RUNNER_OS" in
-            macOS)   npm run dist:mac ;;
-            Windows) npm run dist:win ;;
-            *)       npm run dist:linux ;;
+            macOS)   platform=--mac ;;
+            Windows) platform=--win ;;
+            *)       platform=--linux ;;
           esac
+
+          log="$RUNNER_TEMP/electron-builder.log"
+
+          package() {
+            npx --no-install electron-builder "$platform" --publish never 2>&1 | tee "$log"
+            return "${PIPESTATUS[0]}"
+          }
+
+          # Transports, not exit codes: app-builder reports a failed download as
+          # a generic ERR_ELECTRON_BUILDER_CANNOT_EXECUTE, so the underlying
+          # message is the only thing that distinguishes it from a build error.
+          transient='connection reset|connection refused|broken pipe|unexpected EOF|socket hang up|i/o timeout|TLS handshake|context deadline exceeded|no such host|server misbehaving|ECONNRESET|ETIMEDOUT|ENETUNREACH|EAI_AGAIN|Client.Timeout|HTTP (502|503|504)'
+
+          for attempt in 1 2 3; do
+            if package; then exit 0; fi
+
+            if ! grep -Eqi "$transient" "$log"; then
+              echo "Packaging failed for a reason retrying will not fix."
+              exit 1
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "Packaging still hitting network errors after 3 attempts."
+              exit 1
+            fi
+
+            echo "::warning::Packaging hit a network error (attempt $attempt of 3); retrying."
+            sleep $((attempt * 15))
+          done
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
