@@ -408,3 +408,44 @@ def test_the_neighbour_cache_can_be_turned_off(tmp_path, monkeypatch):
 
     assert processor._read_cached(paths[0]) is not None
     assert not processor._neighbor_cache
+
+
+# ─── counting the frames that fell back ──────────────────────────────────────
+
+def test_a_clean_temporal_run_reports_no_fallbacks(tmp_path, monkeypatch):
+    monkeypatch.setattr(processor.os, 'cpu_count', lambda: 1)
+    paths = _write_pan(str(tmp_path / 'frames'), 6)
+    processor._neighbor_cache.clear()
+
+    assert processor.run_batch(paths, TEMPORAL_CONFIG, width=320, height=240) == 0
+
+
+def test_every_frame_that_falls_back_is_counted(tmp_path, monkeypatch):
+    """
+    The count is what the user is shown, so it has to be the number of frames
+    affected — not "something went wrong somewhere".
+    """
+    monkeypatch.setattr(processor.os, 'cpu_count', lambda: 1)
+    paths = _write_pan(str(tmp_path / 'frames'), 6)
+    processor._neighbor_cache.clear()
+
+    def broken(_settings):
+        def estimate(_previous, _following):
+            raise cv2.error('DIS: unsupported frame')
+        return estimate
+
+    monkeypatch.setattr(temporal_core, 'flow_estimator', broken)
+    degraded = processor.run_batch(paths, TEMPORAL_CONFIG, width=320, height=240)
+
+    # Every frame but the first and last has neighbours to fail on; those two
+    # have one side each, which fails just the same.
+    assert degraded == len(paths)
+
+
+def test_a_single_frame_engine_has_no_fallbacks_to_report(tmp_path):
+    paths = _write_pan(str(tmp_path / 'frames'), 3)
+    assert processor.run_batch(paths, BLUR_CONFIG, width=320, height=240) == 0
+
+
+def test_an_empty_batch_reports_nothing(tmp_path):
+    assert processor.run_batch([], TEMPORAL_CONFIG, width=320, height=240) == 0

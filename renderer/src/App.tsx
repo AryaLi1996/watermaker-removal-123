@@ -5,8 +5,9 @@ import VideoCanvas from './components/VideoCanvas';
 import MethodPicker from './components/MethodPicker';
 import ProgressPanel from './components/ProgressPanel';
 import DonePanel from './components/DonePanel';
+import TemporalFallbackNote from './components/TemporalFallbackNote';
 import PresetPicker from './components/PresetPicker';
-import type { AppState, JobConfig, RemovalMethod, ROI, SystemInfo, TemporalQuality, VideoMeta } from './types';
+import type { AppState, JobConfig, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
 import { temporalAvailability, qualityForJob } from './capabilities';
 import { normalizeCoordinates, defaultOutputName, formatDuration, mediaUrl, NULL_SINK } from './utils';
 import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX } from './errors';
@@ -56,6 +57,9 @@ function App() {
   const [stateLabel, setStateLabel] = useState('');
   const [error, setError] = useState<FriendlyError>({ key: null, raw: '' });
   const [doneOutputPath, setDoneOutputPath] = useState('');
+  // Frames the temporal engine could not rebuild, reported once at the end.
+  // Null for every job that had nothing to report, which is nearly all of them.
+  const [temporalFallback, setTemporalFallback] = useState<TemporalFallback | null>(null);
   const [updateReady, setUpdateReady] = useState<string | null>(null);
   const [copiedDetail, setCopiedDetail] = useState(false);
   const [customPresets, setCustomPresets] = useState<Preset[]>(() => loadCustomPresets());
@@ -116,6 +120,8 @@ function App() {
     setPreviewFrameUrl(null);
     setPreviewClipUrl(null);
     setVideoMeta(null);
+    // The note describes the last job's frames, not this video's.
+    setTemporalFallback(null);
     setAppState('loaded');
     loader.load(path);
   }, [loader]);
@@ -148,6 +154,7 @@ function App() {
       setSamples((prev) => recordSample(prev, value, Date.now()));
     });
     window.electronAPI.onJobState(setStateLabel);
+    window.electronAPI.onTemporalFallback(setTemporalFallback);
     window.electronAPI.onJobDone((finalPath) => {
       // Prefer the path the backend actually wrote; fall back to the requested one.
       const written = finalPath ?? outputPath ?? '';
@@ -179,7 +186,7 @@ function App() {
     }
     const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
     const payload: JobConfig = { inputPath, outputPath: out, roi: videoROI, method, mode: 'full', radius, kernelSize, color, dx, dy, temporalQuality };
-    setProgress(0); setStateLabel(''); setSamples([]); setAppState('processing');
+    setProgress(0); setStateLabel(''); setSamples([]); setTemporalFallback(null); setAppState('processing');
     registerJobListeners();
     const started = await window.electronAPI.startJob(payload);
     if (!started) {
@@ -196,13 +203,14 @@ function App() {
     // A preview runs temporal fill at its quickest setting whatever the dial
     // says: see `qualityForJob`. The export keeps the user's choice.
     const payload: JobConfig = { inputPath, outputPath: outputPath ?? NULL_SINK, roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy, temporalQuality: qualityForJob(method, temporalQuality, true), previewSeconds };
-    setProgress(0); setStateLabel(stageState('preparingPreview')); setSamples([]); setAppState('processing');
+    setProgress(0); setStateLabel(stageState('preparingPreview')); setSamples([]); setTemporalFallback(null); setAppState('processing');
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobProgress((value) => {
       setProgress(value);
       setSamples((prev) => recordSample(prev, value, Date.now()));
     });
     window.electronAPI.onJobState(setStateLabel);
+    window.electronAPI.onTemporalFallback(setTemporalFallback);
     window.electronAPI.onPreviewReady((clipPath: string) => {
       setPreviewClipUrl(mediaUrl(clipPath));
       setAppState('loaded');
@@ -218,10 +226,16 @@ function App() {
   const handleCancel = useCallback(async () => {
     await window.electronAPI.cancelJob();
     window.electronAPI.removeJobListeners();
-    setAppState('loaded'); setProgress(0); setStateLabel('');
+    setAppState('loaded'); setProgress(0); setStateLabel(''); setTemporalFallback(null);
   }, []);
 
   const handleMethodChange = useCallback((updates: Partial<{ method: RemovalMethod; radius: number; kernelSize: number; color: [number,number,number]; dx: number; dy: number; temporalQuality: TemporalQuality }>) => {
+    // The note reports on the settings that produced the last preview, so
+    // changing them makes it stale — and a stale one is worse than none,
+    // because it blames a run the user can no longer see.
+    if (updates.method !== undefined || updates.temporalQuality !== undefined) {
+      setTemporalFallback(null);
+    }
     if (updates.method !== undefined) setMethod(updates.method);
     if (updates.radius !== undefined) setRadius(updates.radius);
     if (updates.kernelSize !== undefined) setKernelSize(updates.kernelSize);
@@ -272,6 +286,8 @@ function App() {
     .filter((p) => p.method !== 'temporal' || temporal.available);
 
   const applyPreset = useCallback((preset: Preset) => {
+    // Same staleness as a manual change: a preset replaces method and quality.
+    setTemporalFallback(null);
     setMethod(preset.method);
     setRadius(preset.params.radius);
     setKernelSize(preset.params.kernelSize);
@@ -391,7 +407,7 @@ function App() {
         )}
 
         {appState === 'done' && (
-          <DonePanel outputPath={doneOutputPath} onReveal={() => window.electronAPI.openPath(doneOutputPath)} onReset={() => setAppState('loaded')} />
+          <DonePanel outputPath={doneOutputPath} temporalFallback={temporalFallback} onReveal={() => window.electronAPI.openPath(doneOutputPath)} onReset={() => { setTemporalFallback(null); setAppState('loaded'); }} />
         )}
 
         {appState === 'error' && (
@@ -491,6 +507,9 @@ function App() {
                 </div>
                 <p data-testid="preview-warning" style={{ color: '#71717a', fontSize: 10 }}>{t('actions.previewWarning')}</p>
               </div>
+              {/* A preview reports the same caveat, where it is cheapest to
+                  act on: the export has not been started yet. */}
+              <TemporalFallbackNote report={temporalFallback} />
               <button data-testid="btn-preview" onClick={handlePreview} disabled={!canExport} style={{ background: 'transparent', border: `1px solid ${canExport ? '#3f3f46' : '#27272a'}`, borderRadius: 6, padding: '7px 0', color: canExport ? '#d4d4d8' : '#52525b', fontSize: 12, cursor: canExport ? 'pointer' : 'not-allowed' }}>{t('actions.preview')}</button>
               <button data-testid="btn-export" onClick={() => { void handleExport(); }} disabled={!canExport} style={{ background: canExport ? '#6366f1' : '#312e81', border: 'none', borderRadius: 6, padding: '8px 0', color: canExport ? '#fff' : '#4338ca', fontSize: 13, fontWeight: 500, cursor: canExport ? 'pointer' : 'not-allowed' }}>{t('actions.export')}</button>
             </div>

@@ -68,7 +68,8 @@
     "exportComplete": "导出完成",
     "returningIn": "{seconds} 秒后返回编辑器…",
     "updateReady": "更新 {version} 已就绪，可安装",
-    "updateReadyNoVersion": "更新已就绪，可安装"
+    "updateReadyNoVersion": "更新已就绪，可安装",
+    "temporalFallback": "有 {degraded} 帧（共 {total} 帧）无法借助前后帧重建，这些帧改用「智能修复」的方式仅从本帧填充，画面可能比其余部分略显模糊。"
   },
   "stages": {
     "probing": "正在读取视频信息…",

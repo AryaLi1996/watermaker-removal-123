@@ -487,3 +487,57 @@ def test_a_sampling_failure_skips_the_neighbour_and_keeps_the_walk(pan, mask, mo
     assert 'skipping it' in capsys.readouterr().err
     assert result.shape == pan.frame(index).shape
     assert pan.error(index, result) < 12.0
+
+
+def test_a_frame_that_falls_back_after_a_failure_says_so(pan, mask, monkeypatch):
+    """
+    The caller needs to count these: one line per frame in a log nobody reads
+    is not the same as one number the user is shown at the end.
+    """
+    reasons = []
+    make, _ = _raising_estimator(cv2.error('DIS: unsupported frame'))
+    monkeypatch.setattr(temporal_core, 'flow_estimator', make)
+
+    temporal_core.process_temporal(
+        pan.frame(12), mask, ROI, pan.source(12), quality='balanced',
+        on_degraded=reasons.append)
+
+    assert len(reasons) == 1
+    assert 'single-frame fill' in reasons[0]
+
+
+def test_a_frame_that_reconstructs_normally_reports_nothing(pan, mask):
+    reasons = []
+    temporal_core.process_temporal(
+        pan.frame(12), mask, ROI, pan.source(12), quality='balanced',
+        on_degraded=reasons.append)
+    assert reasons == []
+
+
+def test_a_shot_with_nothing_to_rebuild_from_is_not_a_failure(pan, mask):
+    """
+    A locked-off camera over a still background never uncovers the mark, so
+    every frame falls back — and that is the engine working, not failing.
+    Counting it would tell the user something went wrong on footage where
+    nothing did.
+    """
+    reasons = []
+    result = temporal_core.process_temporal(
+        pan.frame(7), mask, ROI, lambda _offset: pan.frame(7), quality='balanced',
+        on_degraded=reasons.append)
+
+    # It did fall back — the result is the single-frame fill, give or take the
+    # few edge pixels a neighbour can legitimately reach (see
+    # test_a_still_camera_falls_back_rather_than_inventing_motion) …
+    assert np.allclose(
+        result, process_inpaint(pan.frame(7), mask, radius=3, roi=ROI), atol=8)
+    # … and it said nothing about it.
+    assert reasons == []
+
+
+def test_a_frame_with_no_neighbours_at_all_reports_nothing(pan, mask):
+    """The first frame of a clip has nothing either side; that is not a fault."""
+    reasons = []
+    temporal_core.process_temporal(
+        pan.frame(0), mask, ROI, lambda _offset: None, on_degraded=reasons.append)
+    assert reasons == []

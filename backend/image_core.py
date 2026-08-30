@@ -186,6 +186,7 @@ def apply_removal(
     mask: np.ndarray,
     config: dict,
     neighbor_at=None,
+    on_degraded=None,
 ) -> np.ndarray:
     """
     Dispatch to the correct removal engine based on config['method'].
@@ -195,6 +196,10 @@ def apply_removal(
     `neighbor_at` is how the temporal engine reaches the frames around this
     one: called with a signed frame offset, it returns that frame or None.
     Every other engine works from this frame alone and ignores it.
+
+    `on_degraded` is how it reports back that a failure forced this frame onto
+    the single-frame fill. Only the temporal engine can degrade this way; the
+    others either work or raise.
     """
     method = config.get('method', 'inpaint')
     roi = config['roi']
@@ -219,6 +224,7 @@ def apply_removal(
             neighbor_at if neighbor_at is not None else lambda _offset: None,
             quality=config.get('temporalQuality', DEFAULT_QUALITY),
             fallback_radius=config.get('radius', 3),
+            on_degraded=on_degraded,
         )
     elif method == 'cloneStamp':
         dx, dy = clamp_clone_offset(width, height, x, y, w, h,

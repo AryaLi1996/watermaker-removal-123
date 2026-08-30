@@ -169,6 +169,13 @@ VALID_THRESHOLD = 0.999
 #: It is called lazily and only as far along the ladder as the walk gets.
 NeighborSource = Callable[[int], 'np.ndarray | None']
 
+#: How `process_temporal` reports that a frame could not be rebuilt from its
+#: neighbours and was filled from itself instead. Called at most once per
+#: frame, with a short reason, and only when a *failure* caused it: a shot
+#: that simply never uncovers the mark is the engine working as designed and
+#: says nothing.
+DegradeReport = Callable[[str], None]
+
 #: The message an out-of-memory failure carries out of here. The renderer
 #: matches "out of memory" and shows its own translated sentence, so the
 #: wording that survives into a bug report is the useful half: which dial the
@@ -189,6 +196,19 @@ def warn_degraded(message: str) -> None:
     belongs: the frame still comes out, just filled the single-frame way.
     """
     print(f'WARNING: {message}', file=sys.stderr, flush=True)
+
+
+def report_degraded(on_degraded: 'DegradeReport | None', reason: str) -> None:
+    """
+    Log that this frame fell back, and tell the caller so it can be counted.
+
+    The log line is for whoever is debugging one frame; the callback is for
+    the user, who wants one number at the end rather than three thousand
+    lines they will never see.
+    """
+    warn_degraded(f'{reason} for this frame')
+    if on_degraded is not None:
+        on_degraded(reason)
 
 
 def quality_settings(name: str) -> TemporalSettings:
@@ -434,6 +454,7 @@ def process_temporal(
     neighbor_at: NeighborSource,
     quality: str = DEFAULT_QUALITY,
     fallback_radius: int = 3,
+    on_degraded: DegradeReport | None = None,
 ) -> np.ndarray:
     """
     Reconstruct the ROI of `frame` from the frames around it.
@@ -447,6 +468,10 @@ def process_temporal(
         as far out as the reconstruction needs to walk.
     :param quality: A key of `QUALITY_PRESETS`.
     :param fallback_radius: Inpaint radius for pixels no neighbour covered.
+    :param on_degraded: Called with a short reason if a failure forced this
+        frame back to the single-frame fill. Not called when the shot itself
+        offers nothing to rebuild from — that is the engine working, not
+        failing, and the caller counts these to tell the user.
     """
     settings = quality_settings(quality)
     x, y, w, h = roi
@@ -620,8 +645,9 @@ def process_temporal(
 
     if not candidates:
         if degraded:
-            warn_degraded('no neighbour survived; falling back to single-frame fill '
-                 'for this frame')
+            report_degraded(
+                on_degraded,
+                'no neighbour survived; falling back to single-frame fill')
         return baseline
 
     try:
@@ -630,8 +656,9 @@ def process_temporal(
         # The stack of candidates is the largest allocation here, and it is
         # proportional to the selection and to how far the walk went. The
         # baseline fill is already computed and costs nothing to return.
-        warn_degraded('out of memory fusing candidates; falling back to single-frame '
-             'fill for this frame')
+        report_degraded(
+            on_degraded,
+            'out of memory fusing candidates; falling back to single-frame fill')
         return baseline
 
     filled = np.where(np.isnan(fused),

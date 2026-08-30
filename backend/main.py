@@ -6,6 +6,8 @@ Stdout protocol:
   PROGRESS:<float>   — numeric progress (0–100)
   STATE:stage:<key>  — pipeline stage, as a key the renderer translates
   STATE:preview_ready:<path> — quick-preview output path
+  STATE:temporal_fallback:<n>/<total> — frames a failure pushed onto the
+                       single-frame fill; sent once, only when n > 0
   ERROR:<string>     — fatal error; Electron shows modal
   DEBUG:<string>     — ignored in production Electron build
 
@@ -184,6 +186,24 @@ def force_utf8_stdio() -> None:
 
 def emit(msg: str) -> None:
     print(msg, flush=True)
+
+
+def report_temporal_fallback(degraded: int, total: int) -> None:
+    """
+    Tell the UI how many frames a failure pushed onto the single-frame fill.
+
+    Said once, after the fact, rather than as a stage while it happens: a
+    frame falling back is not a phase of the pipeline, and flipping the status
+    line for one frame in three thousand would read as the whole export
+    failing, then vanish. The user still needs to know the output is not
+    entirely what they asked for, so the count goes to the panel that reports
+    the finished file.
+
+    Silent when nothing fell back, which is nearly every run: a notice reading
+    "0 frames could not be rebuilt" is worse than no notice.
+    """
+    if degraded > 0:
+        emit(f'STATE:temporal_fallback:{degraded}/{total}')
 
 
 def describe_exception(exc: BaseException) -> str:
@@ -411,7 +431,7 @@ def run_pipeline(
         # Maps 0–100 of the per-frame work onto its share of the total.
         progress(extract_end + pct / 100 * (process_end - extract_end))
 
-    load_processor().run_batch(
+    degraded = load_processor().run_batch(
         frame_paths,
         removal_config,
         meta['width'],
@@ -419,6 +439,8 @@ def run_pipeline(
         progress_callback=_progress_cb,
     )
     progress(process_end)
+
+    report_temporal_fallback(degraded, len(frame_paths))
 
     # 4. Reassemble
     stage('encoding')

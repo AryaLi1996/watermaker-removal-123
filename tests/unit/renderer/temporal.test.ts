@@ -245,3 +245,25 @@ describe('the before-you-start estimate', () => {
     }
   });
 });
+
+describe('reporting frames that could not be rebuilt', () => {
+  it('says how many of how many, in both languages', () => {
+    for (const locale of LOCALES) {
+      setLocale(locale);
+      const line = t('status.temporalFallback', { degraded: 3, total: 240 });
+      expect(line).not.toBe('status.temporalFallback');
+      expect(line).not.toContain('{degraded}');
+      expect(line).not.toContain('{total}');
+      expect(line).toContain('3');
+      expect(line).toContain('240');
+    }
+  });
+
+  it('names the fill those frames actually got, so the wording is checkable', () => {
+    // The fallback is the single-frame engine, which the UI calls Smart Fill;
+    // saying so is what makes the notice actionable rather than alarming.
+    setLocale('en');
+    expect(t('status.temporalFallback', { degraded: 1, total: 2 }))
+      .toContain(t('method.inpaint'));
+  });
+});

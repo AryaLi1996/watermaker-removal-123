@@ -73,6 +73,15 @@ elif scenario == 'frame':
     emit(f'STATE:preview_ready:{FRAME_PNG}')
 elif scenario == 'preview':
     emit(f"STATE:preview_ready:{payload.get('outputPath', '')}")
+elif scenario == 'temporal_fallback':
+    # A temporal export where some frames could not be rebuilt from their
+    # neighbours: the count is reported once, after the per-frame work and
+    # before the finished file is announced.
+    emit('STATE:meta:' + json.dumps({'width': 640, 'height': 480, 'fps': 30, 'duration': 3}))
+    emit('STATE:stage:temporalProcessing')
+    emit('PROGRESS:94.0')
+    emit('STATE:temporal_fallback:7/90')
+    emit(f"STATE:done:{payload.get('outputPath', '')}")
 elif scenario == 'error':
     emit('ERROR:Something went wrong in the backend')
     sys.exit(1)

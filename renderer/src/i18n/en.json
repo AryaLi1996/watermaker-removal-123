@@ -68,7 +68,8 @@
     "exportComplete": "Export complete",
     "returningIn": "Returning to editor in {seconds}s…",
     "updateReady": "Update {version} ready to install",
-    "updateReadyNoVersion": "Update ready to install"
+    "updateReadyNoVersion": "Update ready to install",
+    "temporalFallback": "{degraded} of {total} frames could not be rebuilt from nearby frames — those were filled from the frame itself, the way Smart Fill does it. They may look softer than the rest."
   },
   "stages": {
     "probing": "Reading video details…",

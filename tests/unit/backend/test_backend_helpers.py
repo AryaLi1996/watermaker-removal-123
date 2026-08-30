@@ -233,3 +233,25 @@ def test_a_silent_exception_is_named_by_its_class():
     the process ran out of memory.
     """
     assert backend_main.describe_exception(MemoryError()) == 'MemoryError'
+
+
+# ─── reporting frames that fell back ─────────────────────────────────────────
+
+def test_the_fallback_count_is_emitted_as_a_fraction(capsys):
+    """The UI shows both halves: "3 of 240" means something, "3" does not."""
+    backend_main.report_temporal_fallback(3, 240)
+    assert capsys.readouterr().out.strip() == 'STATE:temporal_fallback:3/240'
+
+
+def test_nothing_is_emitted_when_no_frame_fell_back(capsys):
+    """
+    Nearly every run takes this path. A notice reading "0 frames could not be
+    rebuilt" is worse than no notice at all.
+    """
+    backend_main.report_temporal_fallback(0, 240)
+    assert capsys.readouterr().out == ''
+
+
+def test_a_run_where_every_frame_fell_back_still_reports_honestly(capsys):
+    backend_main.report_temporal_fallback(240, 240)
+    assert capsys.readouterr().out.strip() == 'STATE:temporal_fallback:240/240'

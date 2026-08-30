@@ -694,3 +694,59 @@ def test_a_preview_length_outside_the_allowed_range_is_rejected(existing_file):
             'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
             'method': 'blur', 'mode': 'preview', 'previewSeconds': 0,
         })
+
+
+# ─── reporting frames that fell back ─────────────────────────────────────────
+
+def _pipeline_lines(monkeypatch, capsys, sample_video, tmp_path, degraded: int) -> list[str]:
+    """
+    Run the pipeline with the frame processor stubbed to report `degraded`
+    frames, and return what it wrote to stdout.
+
+    Stubbing run_batch keeps this about the protocol: the engine's own
+    behaviour is covered in test_temporal_core and test_processor, and running
+    real optical flow here would cost seconds to test one string.
+    """
+    processor = backend_main.load_processor()
+    monkeypatch.setattr(
+        processor, 'run_batch',
+        lambda *a, progress_callback=None, **k: degraded)
+
+    config = backend_main.JobConfig.model_validate({
+        'inputPath': sample_video,
+        'outputPath': str(tmp_path / 'out.mp4'),
+        'roi': {'x': 10, 'y': 10, 'w': 60, 'h': 40},
+        'method': 'temporal',
+    })
+    backend_main.run_pipeline(config, str(tmp_path / 'work'), sample_video)
+    return [line for line in capsys.readouterr().out.splitlines() if line]
+
+
+@requires_ffmpeg
+def test_frames_that_fell_back_are_reported_once_with_their_count(
+    monkeypatch, capsys, sample_video, tmp_path,
+):
+    lines = _pipeline_lines(monkeypatch, capsys, sample_video, tmp_path, degraded=3)
+
+    reported = [line for line in lines if line.startswith('STATE:temporal_fallback:')]
+    assert len(reported) == 1
+    count, _, total = reported[0].split(':')[2].partition('/')
+    assert count == '3'
+    assert int(total) > 0
+
+    # It arrives after the per-frame work and before the file is announced, so
+    # the UI has it in hand by the time it shows the result.
+    assert lines.index(reported[0]) < len(lines) - 1
+
+
+@requires_ffmpeg
+def test_a_run_with_nothing_to_report_stays_quiet(
+    monkeypatch, capsys, sample_video, tmp_path,
+):
+    """
+    Nearly every export takes this path, so an empty report must not reach the
+    UI at all — a notice reading "0 frames could not be rebuilt" is worse than
+    no notice.
+    """
+    lines = _pipeline_lines(monkeypatch, capsys, sample_video, tmp_path, degraded=0)
+    assert not any(line.startswith('STATE:temporal_fallback:') for line in lines)
