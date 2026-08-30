@@ -218,6 +218,8 @@ __marimo__/
 .streamlit/secrets.toml
 test-results/
 playwright-report/
+# JUnit XML from the CI test runs
+reports/
 
 # Packaging output (electron-builder, PyInstaller)
 release/

@@ -162,6 +162,7 @@ jobs:
           done
 
       - name: Upload installers
+        id: installers
         uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.os }}
@@ -173,6 +174,27 @@ jobs:
             release/*.deb
           if-no-files-found: error
           retention-days: 14
+
+      # A direct link beats hunting for the artifact at the foot of the run
+      # page — useful for a workflow_dispatch build, which publishes nothing.
+      - name: Link the installers in the job summary
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          OS_NAME: ${{ matrix.os }}
+          URL_INSTALLERS: ${{ steps.installers.outputs.artifact-url }}
+        run: |
+          if [ -n "$URL_INSTALLERS" ]; then
+            {
+              echo "### Installers — $OS_NAME"
+              echo
+              echo "[Download \`installers-$OS_NAME\`]($URL_INSTALLERS)"
+              echo
+              echo '```'
+              ls -lh release/ 2>/dev/null || true
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   publish:
     name: Publish release
