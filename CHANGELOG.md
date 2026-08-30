@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The progress bar moves during extraction and encoding. Both stages ask
+  ffmpeg where it is and report it as they go, so a long export climbs
+  continuously instead of standing still at 5% and 80% for minutes at a time.
+- A load that fails or times out offers to try the same file again, on the
+  canvas and in the sidebar, instead of leaving a spinner running behind an
+  error nobody can clear.
 - The pipeline reports which stage it is at in the interface language, not in
   English. Stages now cross the stdout protocol as keys (`STATE:stage:encoding`)
   that the renderer looks up alongside every other string, so the status line
@@ -40,7 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backend failures are explained in plain language, with the technical detail
   kept behind "Copy details" for a bug report.
 - A timeout on preview extraction, so a backend that never answers reports
-  that instead of spinning forever.
+  that instead of spinning forever. Reading a file's details and decoding its
+  first frame carry their own ceilings in the backend as well, so a stuck
+  ffmpeg is stopped and reported rather than waited out.
 - The layout stacks and the sidebar scrolls in a narrow or short window.
 - Frozen Python backend (PyInstaller) shipped inside the installer, so an
   installed app needs neither a Python environment nor ffmpeg of its own.

@@ -6,8 +6,9 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 from fractions import Fraction
-from typing import Optional
+from typing import Callable, Optional
 
 
 # The ffmpeg/ffprobe child currently running, so a cancel can stop it. Without
@@ -59,8 +60,35 @@ class FFmpegError(subprocess.CalledProcessError):
         return f'{super().__str__()} {detail}' if detail else super().__str__()
 
 
-def _run(cmd: list[str]) -> subprocess.CompletedProcess:
-    """Run a subprocess, capturing stdout/stderr, raising on failure."""
+class FFmpegTimeout(RuntimeError):
+    """
+    A call that never came back, and was killed rather than waited on.
+
+    The wording matters: the renderer classifies failures by matching on this
+    text, and "timed out" is what it turns into "the job took too long" rather
+    than into a generic ffmpeg failure.
+    """
+
+    def __init__(self, cmd: list[str], timeout: float):
+        self.cmd = cmd
+        self.timeout = timeout
+        tool = os.path.basename(cmd[0]) if cmd else 'ffmpeg'
+        super().__init__(f'{tool} timed out after {timeout:g}s and was stopped.')
+
+
+# Ceilings for the calls that run while the user waits on a spinner with
+# nothing else happening. None of them does work proportional to the length of
+# the video — a probe reads headers, a still decodes one frame — so a minute of
+# silence means stuck, not slow, and saying so beats an indefinite spinner.
+# The long stages of an export (extract, encode) are deliberately unbounded:
+# there a wait of many minutes is the job doing exactly what it was asked to.
+PROBE_TIMEOUT = 30.0
+STILL_TIMEOUT = 60.0
+CLIP_TIMEOUT = 120.0
+
+
+def _popen(cmd: list[str]) -> subprocess.Popen:
+    """Start a child, registering it so a cancel can stop it."""
     global _active_proc
     proc = subprocess.Popen(
         cmd,
@@ -74,14 +102,101 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
         stderr=subprocess.PIPE,
     )
     _active_proc = proc
+    return proc
+
+
+def _run(cmd: list[str], timeout: Optional[float] = None) -> subprocess.CompletedProcess:
+    """
+    Run a subprocess, capturing stdout/stderr, raising on failure.
+
+    `timeout` kills a child that outstays it; without the kill the process
+    would keep running as an orphan while the caller reports the failure.
+    """
+    global _active_proc
+    proc = _popen(cmd)
     try:
-        stdout, stderr = proc.communicate()
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            raise FFmpegTimeout(cmd, timeout) from None
     finally:
         _active_proc = None
 
     if proc.returncode != 0:
         raise FFmpegError(proc.returncode, cmd, stdout, stderr)
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+
+# Asking ffmpeg to report where it is, on a pipe of its own. Without it the
+# only thing the UI learns about a stage that runs for minutes is when it
+# started and when it ended, which is a progress bar that sits still.
+# `-nostats` drops the human-readable version, which would otherwise be
+# interleaved into stderr and reported as part of a failure.
+_PROGRESS_ARGS = ['-progress', 'pipe:1', '-nostats']
+
+# Don't report a move smaller than this fraction of the stage: ffmpeg writes a
+# block per stats period, and forwarding every one of them as a PROGRESS line
+# costs more than the pixel it would move.
+_PROGRESS_STEP = 0.004
+
+
+def _run_reporting(
+    cmd: list[str],
+    expected_frames: Optional[int],
+    on_progress: Optional[Callable[[float], None]],
+) -> subprocess.CompletedProcess:
+    """
+    Run ffmpeg with `_PROGRESS_ARGS`, calling `on_progress(fraction)` (0–1) as
+    frames go by.
+
+    Falls back to a plain run when there is no callback or no frame count to
+    measure against — a fraction needs a denominator.
+
+    stderr is drained by a thread rather than after the fact: this reads
+    stdout to the end, and a child whose stderr pipe fills up in the meantime
+    blocks forever waiting for someone to empty it.
+    """
+    if on_progress is None or not expected_frames:
+        return _run(cmd)
+
+    global _active_proc
+    proc = _popen([cmd[0], *_PROGRESS_ARGS, *cmd[1:]])
+    captured: list[bytes] = []
+
+    def drain() -> None:
+        assert proc.stderr is not None
+        captured.append(proc.stderr.read())
+
+    collector = threading.Thread(target=drain, daemon=True)
+    collector.start()
+
+    reported = 0.0
+    try:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.decode('utf-8', errors='replace').strip()
+            if not line.startswith('frame='):
+                continue
+            try:
+                done = int(line.split('=', 1)[1])
+            except ValueError:  # ffmpeg writes 'frame=N/A' before the first one
+                continue
+            fraction = min(1.0, done / expected_frames)
+            if fraction - reported >= _PROGRESS_STEP:
+                reported = fraction
+                on_progress(fraction)
+        proc.stdout.close()
+        proc.wait()
+        collector.join(timeout=5)
+    finally:
+        _active_proc = None
+
+    stderr = b''.join(chunk for chunk in captured if chunk)
+    if proc.returncode != 0:
+        raise FFmpegError(proc.returncode, cmd, b'', stderr)
+    return subprocess.CompletedProcess(cmd, proc.returncode, b'', stderr)
 
 
 def terminate() -> None:
@@ -109,7 +224,7 @@ def probe_video(filepath: str) -> dict:
         '-show_format',
         '-show_streams',
         filepath,
-    ])
+    ], timeout=PROBE_TIMEOUT)
     data = json.loads(result.stdout)
 
     video_stream = next(
@@ -165,24 +280,35 @@ def extract_preview_frame(input_path: str, output_path: str, timestamp: float = 
         '-frames:v', '1',
         '-compression_level', str(PNG_COMPRESSION),
         output_path,
-    ])
+    ], timeout=STILL_TIMEOUT)
 
 
-def extract_frames(input_path: str, output_dir: str) -> int:
+def extract_frames(
+    input_path: str,
+    output_dir: str,
+    expected_frames: Optional[int] = None,
+    on_progress: Optional[Callable[[float], None]] = None,
+) -> int:
     """
     Extract every frame of `input_path` as lossless PNGs into `output_dir`.
     Returns the count of extracted frames.
+
+    On a long video this is minutes of work, so it reports as it goes:
+    `on_progress` is called with the fraction done, measured against
+    `expected_frames` (the caller's frame count from the probe — ffmpeg does
+    not know the total either, and estimating it here would mean a second
+    pass over the file).
     """
     os.makedirs(output_dir, exist_ok=True)
     pattern = os.path.join(output_dir, 'frame_%06d.png')
-    _run([
+    _run_reporting([
         ffmpeg_bin(), '-y',
         '-v', 'error',
         '-i', input_path,
         '-compression_level', str(PNG_COMPRESSION),
         '-f', 'image2',
         pattern,
-    ])
+    ], expected_frames, on_progress)
     return len([f for f in os.listdir(output_dir) if f.endswith('.png')])
 
 
@@ -196,7 +322,7 @@ def extract_clip(input_path: str, output_path: str, start: float, duration: floa
         '-t', str(duration),
         '-c', 'copy',
         output_path,
-    ])
+    ], timeout=CLIP_TIMEOUT)
 
 
 # Audio codecs an MP4 container accepts without re-encoding. Anything else
@@ -231,6 +357,7 @@ def reassemble_video(
     temp_video: Optional[str] = None,
     audio_codec: Optional[str] = None,
     encode: Optional[dict] = None,
+    on_progress: Optional[Callable[[float], None]] = None,
 ) -> None:
     """
     Encode processed PNGs back to MP4 (libx264), then mux original audio and
@@ -240,15 +367,20 @@ def reassemble_video(
     `audio_codec` is the source's codec name from probe_video(); pass it to
     avoid a second probe. Audio is copied when MP4 accepts it, else re-encoded.
     `encode` selects the x264 preset/CRF — EXPORT_ENCODE by default.
+    `on_progress` is called with the fraction of the encode done; the mux that
+    follows it is a stream copy of seconds, not worth a share of the bar.
     """
     if temp_video is None:
         temp_video = output_path + '.temp.mp4'
     settings = encode or EXPORT_ENCODE
 
     frame_pattern = os.path.join(frames_dir, 'frame_%06d.png')
+    # The frames on disk are exactly what the encode will consume, so unlike
+    # the extraction this stage knows its own total without being told.
+    total_frames = len([f for f in os.listdir(frames_dir) if f.endswith('.png')])
 
     # Pass 1: encode video-only
-    _run([
+    _run_reporting([
         ffmpeg_bin(), '-y',
         '-v', 'error',
         '-framerate', str(fps),
@@ -258,7 +390,7 @@ def reassemble_video(
         '-crf', settings['crf'],
         '-pix_fmt', 'yuv420p',
         temp_video,
-    ])
+    ], total_frames, on_progress)
 
     # Pass 2: mux original audio + metadata
     _run([

@@ -12,6 +12,7 @@
     "emptyPrompt": "Click to browse for a video file",
     "emptyFormats": "MP4 · MKV · MOV · AVI",
     "loadingPreview": "Loading preview…",
+    "loadFailed": "Could not load this video.",
     "closePreview": "Close preview"
   },
   "method": {
@@ -36,6 +37,7 @@
     "preview": "Preview (1s)",
     "export": "Export",
     "cancel": "Cancel",
+    "retry": "Try again",
     "dismiss": "Dismiss",
     "copyDetails": "Copy details",
     "copied": "Copied",

@@ -12,6 +12,7 @@
     "emptyPrompt": "点击选择视频文件",
     "emptyFormats": "MP4 · MKV · MOV · AVI",
     "loadingPreview": "正在加载预览…",
+    "loadFailed": "无法加载该视频。",
     "closePreview": "关闭预览"
   },
   "method": {
@@ -36,6 +37,7 @@
     "preview": "预览（1 秒）",
     "export": "导出",
     "cancel": "取消",
+    "retry": "重试",
     "dismiss": "关闭",
     "copyDetails": "复制详情",
     "copied": "已复制",
