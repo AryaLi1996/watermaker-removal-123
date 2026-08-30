@@ -15,22 +15,30 @@ import pytest
 import ff_utils
 
 
-def _stub(tmp_path, body: str) -> str:
+@pytest.fixture(autouse=True)
+def interpreter_safe_progress_args(monkeypatch):
     """
-    A script that stands in for the ffmpeg binary.
+    Stand in for ffmpeg's `-progress` flags with options the interpreter
+    accepts and ignores.
 
-    Executable with a shebang rather than run through `python script.py`,
-    because ff_utils puts ffmpeg's own options straight after the binary —
-    and the interpreter would try to parse those as its own.
+    ff_utils puts those flags straight after the binary, and the binary in
+    these tests is the interpreter running the stub below — which would try
+    to parse `-progress` as one of its own options. Swapping them keeps the
+    stub an ordinary Python script, runnable on Windows as well as POSIX.
+    Where the real flags go is covered on its own, below.
     """
-    path = tmp_path / 'fake_ffmpeg'
-    path.write_text(f'#!{sys.executable}\n' + textwrap.dedent(body))
-    path.chmod(0o755)
+    monkeypatch.setattr(ff_utils, '_PROGRESS_ARGS', ['-X', 'utf8'])
+
+
+def _stub(tmp_path, body: str) -> str:
+    """A Python script that stands in for the ffmpeg binary."""
+    path = tmp_path / 'fake_ffmpeg.py'
+    path.write_text(textwrap.dedent(body))
     return str(path)
 
 
 def _cmd(script: str, *args: str) -> list[str]:
-    return [script, *args]
+    return [sys.executable, script, *args]
 
 
 # ─── progress reporting ──────────────────────────────────────────────────────
@@ -70,8 +78,33 @@ def test_it_asks_ffmpeg_for_progress_only_when_it_can_use_it(tmp_path):
 
     without = ff_utils._run_reporting(_cmd(script), None, lambda _: None)
     # The plain runner captures stdout, so the arguments the stub echoed back
-    # are readable here; the reporting one consumes stdout for progress.
-    assert '-progress' not in without.stdout.decode()
+    # are readable here; the reporting one consumes stdout for progress. The
+    # stub echoes what it was given, and a plain run adds nothing to it.
+    assert without.stdout.decode().splitlines()[0] == ''
+
+
+def test_the_progress_options_go_where_ffmpeg_expects_them(monkeypatch):
+    """
+    `-progress` is a global option: it belongs between the binary and the
+    first of the call's own arguments, not appended after the output file
+    where ffmpeg would read it as an option to the output.
+    """
+    monkeypatch.undo()  # this one wants the real flags
+
+    class Stopped(Exception):
+        pass
+
+    seen = []
+
+    def fake_popen(cmd):
+        seen.append(cmd)
+        raise Stopped
+
+    monkeypatch.setattr(ff_utils, '_popen', fake_popen)
+    with pytest.raises(Stopped):
+        ff_utils._run_reporting(['ffmpeg', '-i', 'in.mp4', 'out.mp4'], 10, lambda _: None)
+
+    assert seen == [['ffmpeg', '-progress', 'pipe:1', '-nostats', '-i', 'in.mp4', 'out.mp4']]
 
 
 def test_a_report_that_overruns_its_estimate_stops_at_the_end(tmp_path):
