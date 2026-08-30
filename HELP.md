@@ -69,9 +69,13 @@ your box.
 - On a **locked-off shot over a still background** nothing is ever uncovered,
   and it falls back to the same single-frame fill Inpaint would give you. That
   is the case to use Inpaint or Clone Stamp for instead.
+- **Previews are capped at 3 seconds** for this method. Each frame costs the
+  same as it does in the export, so a five-second preview would be a wait the
+  button does not look like it is asking for.
 - It is greyed out on machines with fewer than 4 cores or less than 4 GB of
   memory, where the wait would not be reasonable. The reason is shown under
-  the method name.
+  the method name, and a job that reaches the backend anyway is refused there
+  with the same explanation.
 
 ---
 

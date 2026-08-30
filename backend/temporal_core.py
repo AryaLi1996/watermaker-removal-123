@@ -114,8 +114,8 @@ QUALITY_PRESETS: dict[str, TemporalSettings] = {
         farneback_levels=3, farneback_winsize=21, farneback_iterations=3,
         fuse='median', feather=6,
     ),
-    'quality': TemporalSettings(
-        name='quality',
+    'high': TemporalSettings(
+        name='high',
         max_links=16,
         min_samples=3,
         flow_scale=1.0, dis_preset='DISOPTICAL_FLOW_PRESET_MEDIUM',

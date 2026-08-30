@@ -8,10 +8,10 @@ How to run, understand, and extend the automated test suite.
 
 | Suite | Command | Tests | Location |
 |---|---|---|---|
-| Backend (Python) | `npm run test:backend` | 192 pytest | `tests/unit/backend/` |
+| Backend (Python) | `npm run test:backend` | 206 pytest | `tests/unit/backend/` |
 | Backend coverage | `npm run test:coverage` | ≥ 80% required | `htmlcov/` |
-| Renderer (TypeScript) | `npm run test:frontend` | 105 vitest | `tests/unit/renderer/`, `renderer/src/` |
-| E2E (Electron) | `npm run test:e2e` | 55 Playwright | `tests/e2e/` |
+| Renderer (TypeScript) | `npm run test:frontend` | 107 vitest | `tests/unit/renderer/`, `renderer/src/` |
+| E2E (Electron) | `npm run test:e2e` | 57 Playwright | `tests/e2e/` |
 | Docs screenshots | `npm run screenshots` | 2 Playwright | `tests/e2e/capture-screenshots.spec.ts` |
 | Everything | `npm run test:all` | all of the above | root |
 | Environment check | `python scripts/validate_env.py` | manual | `scripts/` |
@@ -84,6 +84,27 @@ exists for, and the frames it is *not* given are the cases it has to survive.
 | the engine | Beats single-frame inpainting on a pan by more than half; quality buys accuracy; the seam has no step |
 | the fallbacks | No neighbours, a still camera, a cut, and a neighbour of the wrong size all fall back rather than smear |
 | the walk | Stops once the mark is covered, and stops early when nothing is ever uncovered |
+| what it is worth | Absolute error thresholds on a pan and on a rotation — balanced under 6, high under 1 (pan) where single-frame inpainting scores 17 |
+
+#### Why there is no timing assertion
+
+Temporal inpainting costs roughly 8x a single-frame method at `balanced` and
+14x at `high` — measured over 24 frames of 480x240 synthetic footage against
+`inpaint` on the same frames, on a 4-core machine:
+
+| | still camera | 6 px/frame pan | 20 px/frame pan |
+|---|---|---|---|
+| Inpaint | 6.4 (1x) | 21.3 | 17.4 |
+| Temporal — fast | 6.4 (5x) | 11.3 | 5.8 |
+| Temporal — balanced | 6.4 (8x) | 7.7 | 4.5 |
+| Temporal — high | 6.4 (14x) | 0.9 | 0.4 |
+
+(Figures are mean absolute error against the true background; the multiplier
+is wall-clock against inpaint.) Those ratios are worth knowing and worth
+re-measuring when the engine changes, but they are not worth asserting in CI:
+shared runners vary by more than the margin between the settings, and a suite
+that fails because a runner was busy teaches nobody anything. Re-measure by
+running the engine over a frame directory directly, as the tests above do.
 
 **File:** `tests/unit/backend/test_backend_helpers.py` — clamping and the cancel path
 

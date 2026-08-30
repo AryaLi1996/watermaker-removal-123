@@ -62,7 +62,7 @@ export const BUILT_IN_PRESETS: Preset[] = [
   preset('clone-above', 'cloneAbove', 'cloneStamp', { dx: 0, dy: -50 }),
   preset('clone-left', 'cloneLeft', 'cloneStamp', { dx: -80, dy: 0 }),
   preset('temporal-balanced', 'temporalBalanced', 'temporal', { temporalQuality: 'balanced' }),
-  preset('temporal-high', 'temporalHigh', 'temporal', { temporalQuality: 'quality' }),
+  preset('temporal-high', 'temporalHigh', 'temporal', { temporalQuality: 'high' }),
 ];
 
 const STORAGE_KEY = 'watermark-remover:custom-presets';

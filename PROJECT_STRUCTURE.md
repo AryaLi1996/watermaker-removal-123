@@ -196,6 +196,14 @@ All calls use list-form `subprocess.run` (never `shell=True`).
 | `process_clone_stamp(frame, x, y, w, h, dx, dy)` | Block pixel copy from offset; raises `ValueError` if source OOB |
 | `apply_removal(frame, mask, config, neighbor_at)` | Dispatcher — routes to the correct engine. `neighbor_at` is how the temporal engine reaches other frames; the rest ignore it |
 
+### `main.py` — the temporal guards
+
+| Function | Purpose |
+|---|---|
+| `check_temporal_supported()` | Refuses a temporal job below 4 cores or 4 GB, before any work, with the sentence the renderer turns into plain language. An unreadable machine is allowed, never refused |
+| `total_memory_mb()` | Physical memory via `sysconf`, or `GlobalMemoryStatusEx` on Windows; `None` where the platform will not say |
+| `preview_length_for(method, length)` | Caps a temporal preview at 3 seconds — the renderer caps it too, so the control shows the length that will run |
+
 ### `temporal_core.py` — Temporal Inpainting
 
 The only engine that reads more than the frame it is given. A watermark is

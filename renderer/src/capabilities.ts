@@ -9,7 +9,7 @@
  * The rule is deliberately generous: this greys out a method, and being
  * wrong in that direction takes a working feature away from someone.
  */
-import type { SystemInfo, TemporalQuality } from './types';
+import type { RemovalMethod, SystemInfo, TemporalQuality } from './types';
 
 /** Fewer cores than this and the export takes long enough to be a mistake. */
 export const TEMPORAL_MIN_CPUS = 4;
@@ -47,5 +47,20 @@ export function temporalAvailability(info: SystemInfo | null): Availability {
   return AVAILABLE;
 }
 
+/**
+ * The longest preview a temporal job may run.
+ *
+ * A preview costs the same per frame as the export, so the length that makes
+ * the other methods feel instant would make this one the slowest thing in the
+ * app. The backend caps it too — this is here so the control shows the length
+ * that will actually run.
+ */
+export const TEMPORAL_PREVIEW_MAX_SECONDS = 3;
+
+/** How much of the video a preview of this method covers. */
+export function previewSecondsFor(method: RemovalMethod, seconds: number): number {
+  return method === 'temporal' ? Math.min(seconds, TEMPORAL_PREVIEW_MAX_SECONDS) : seconds;
+}
+
 /** The quality steps, slowest last — the order the picker shows them in. */
-export const TEMPORAL_QUALITIES: TemporalQuality[] = ['fast', 'balanced', 'quality'];
+export const TEMPORAL_QUALITIES: TemporalQuality[] = ['fast', 'balanced', 'high'];
