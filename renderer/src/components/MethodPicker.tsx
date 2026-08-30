@@ -1,9 +1,10 @@
 /**
  * MethodPicker — sidebar control panel for removal algorithm and parameters.
  */
-import type { RemovalMethod, TemporalQuality } from '../types';
+import type { RemovalMethod, TemporalQuality, VideoMeta } from '../types';
 import type { Availability } from '../capabilities';
-import { TEMPORAL_QUALITIES } from '../capabilities';
+import { TEMPORAL_QUALITIES, PREVIEW_TEMPORAL_QUALITY, previewIsDowngraded } from '../capabilities';
+import { estimateTemporalSeconds, formatEstimate } from '../estimate';
 import { useTranslation } from '../hooks/useTranslation';
 
 interface MethodPickerProps {
@@ -16,6 +17,12 @@ interface MethodPickerProps {
   temporalQuality: TemporalQuality;
   /** Whether this machine can run temporal inpainting, and why not if it cannot. */
   temporal: Availability;
+  /** The loaded video, for the "how long will this take" forecast. Null before one is. */
+  videoMeta: VideoMeta | null;
+  /** Cores the frame pool will spread the work over, where the host said. */
+  cpuCount?: number;
+  /** Seconds of video a preview covers, for the same forecast. */
+  previewSeconds: number;
   disabled: boolean;
   onChange: (updates: Partial<{
     method: RemovalMethod;
@@ -78,6 +85,9 @@ export default function MethodPicker({
   dy,
   temporalQuality,
   temporal,
+  videoMeta,
+  cpuCount,
+  previewSeconds,
   disabled,
   onChange,
 }: MethodPickerProps) {
@@ -85,6 +95,28 @@ export default function MethodPicker({
 
   /** A method can be off the table on its own account, not just because a job is running. */
   const unavailable = (id: RemovalMethod) => id === 'temporal' && !temporal.available;
+
+  // Both forecasts come from the same model; they differ only in how much
+  // video they cover and — because a preview is always run at the quick
+  // setting — in which quality they price.
+  const exportEstimate = videoMeta && formatEstimate(
+    estimateTemporalSeconds({
+      fps: videoMeta.fps,
+      seconds: videoMeta.duration,
+      quality: temporalQuality,
+      cpuCount,
+    }),
+    t,
+  );
+  const previewEstimate = videoMeta && formatEstimate(
+    estimateTemporalSeconds({
+      fps: videoMeta.fps,
+      seconds: previewSeconds,
+      quality: PREVIEW_TEMPORAL_QUALITY,
+      cpuCount,
+    }),
+    t,
+  );
 
   return (
     <div data-testid="method-picker" className="flex flex-col gap-4" style={{ opacity: disabled ? 0.5 : 1 }}>
@@ -100,7 +132,11 @@ export default function MethodPicker({
               key={id}
               data-testid={`method-${id}`}
               disabled={disabled || off}
-              title={off && temporal.reasonKey ? t(temporal.reasonKey) : undefined}
+              title={
+                off && temporal.reasonKey ? t(temporal.reasonKey)
+                  : id === 'temporal' ? t('method.temporalTooltip')
+                  : undefined
+              }
               onClick={() => !disabled && !off && onChange({ method: id })}
               style={{
                 background: method === id ? '#312e81' : 'transparent',
@@ -116,9 +152,31 @@ export default function MethodPicker({
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ color: method === id ? '#e0e7ff' : '#d4d4d8', fontSize: 13 }}>{t(`method.${id}`)}</span>
                 {id === 'temporal' && (
-                  <span style={{ color: '#818cf8', background: '#312e81', borderRadius: 3, fontSize: 9, padding: '1px 4px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                    {t('method.temporalBeta')}
-                  </span>
+                  <>
+                    <span style={{ color: '#818cf8', background: '#312e81', borderRadius: 3, fontSize: 9, padding: '1px 4px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                      {t('method.temporalBeta')}
+                    </span>
+                    {/* "Beta" says the feature is new; it does not say what it
+                        does, and a method nobody understands is a method
+                        nobody picks.
+
+                        Marked aria-hidden and carrying no label of its own:
+                        it sits inside the method button, and an accessible
+                        name here would be concatenated into that button's,
+                        announcing a paragraph where a name belongs. The
+                        explanation reaches assistive tech as the button's own
+                        description instead — see its `title` below, which
+                        also makes the whole row hoverable, not just the
+                        glyph. */}
+                    <span
+                      data-testid="temporal-info"
+                      aria-hidden="true"
+                      title={t('method.temporalTooltip')}
+                      style={{ color: '#818cf8', fontSize: 11, cursor: 'help' }}
+                    >
+                      ⓘ
+                    </span>
+                  </>
                 )}
               </div>
               <div style={{ color: '#71717a', fontSize: 11, marginTop: 1 }}>
@@ -196,6 +254,28 @@ export default function MethodPicker({
                 ))}
               </div>
             </div>
+            {/* What the choice above actually costs, in the only unit that
+                helps someone decide whether to make it. Absent until a video
+                is loaded, because until then there is nothing to forecast. */}
+            {exportEstimate && (
+              <p data-testid="temporal-estimate" style={{ color: '#a1a1aa', fontSize: 11 }}>
+                {t('estimate.export', { time: exportEstimate })}
+                {previewEstimate && (
+                  <>
+                    {' · '}
+                    {t('estimate.preview', { time: previewEstimate })}
+                  </>
+                )}
+              </p>
+            )}
+            {/* The preview does not run at the setting above, and a preview
+                that is quietly rougher than the export is a preview that
+                misleads. Only shown when the two actually differ. */}
+            {previewIsDowngraded(method, temporalQuality) && (
+              <p data-testid="temporal-preview-fast" style={{ color: '#a1a1aa', fontSize: 11 }}>
+                {t('method.temporalPreviewFast', { quality: t(`quality.${PREVIEW_TEMPORAL_QUALITY}`) })}
+              </p>
+            )}
             {/* Slower by a lot, and worth it for the right footage: both
                 halves of that belong on screen before the user starts. */}
             <p data-testid="temporal-note" style={{ color: '#a1a1aa', fontSize: 11, lineHeight: 1.5, background: '#1e1b4b', border: '1px solid #312e81', borderRadius: 4, padding: '6px 8px' }}>

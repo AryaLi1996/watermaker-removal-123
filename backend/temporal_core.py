@@ -51,6 +51,7 @@ complicate.
 """
 from __future__ import annotations
 
+import sys
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -167,6 +168,27 @@ VALID_THRESHOLD = 0.999
 #: frame offset it returns that frame, or None where there is no such frame.
 #: It is called lazily and only as far along the ladder as the walk gets.
 NeighborSource = Callable[[int], 'np.ndarray | None']
+
+#: The message an out-of-memory failure carries out of here. The renderer
+#: matches "out of memory" and shows its own translated sentence, so the
+#: wording that survives into a bug report is the useful half: which dial the
+#: user can turn.
+OUT_OF_MEMORY_MESSAGE = (
+    'Out of memory during temporal reconstruction. Try a lower temporal '
+    'quality, a smaller selection, or a shorter clip.'
+)
+
+
+def warn_degraded(message: str) -> None:
+    """
+    Report a degraded reconstruction without failing the job.
+
+    This runs inside a pool worker, whose stdout is the job protocol Electron
+    parses line by line — a stray line there would be read as a stage or a
+    progress report. stderr is logged instead, which is where the diagnostic
+    belongs: the frame still comes out, just filled the single-frame way.
+    """
+    print(f'WARNING: {message}', file=sys.stderr, flush=True)
 
 
 def quality_settings(name: str) -> TemporalSettings:
@@ -494,6 +516,10 @@ def process_temporal(
     weights: list[float] = []
     counts = np.zeros((oy1 - oy0, ox1 - ox0), dtype=np.int16)
     barren = 0
+    # Whether anything was lost to a failure rather than to the shot itself.
+    # A walk that stops because the footage is locked off is the engine
+    # working; one that stops because a call raised is worth a line in the log.
+    degraded = False
 
     # One walk per direction, each remembering where it has got to: the last
     # frame it reached (at flow resolution, ready to be the next step's
@@ -509,6 +535,8 @@ def process_temporal(
     ladder = [step * side for step in range(1, settings.max_links + 1) for side in (1, -1)]
 
     for offset in ladder:  # 1, -1, 2, -2, …
+        if not any(w['alive'] for w in walks.values()):
+            break  # both directions are finished; the rest of the ladder is a no-op
         side = 1 if offset > 0 else -1
         walk = walks[side]
         if not walk['alive']:
@@ -522,9 +550,25 @@ def process_temporal(
             walk['alive'] = False
             continue
 
-        neighbor_gray = gray_crop(neighbor)
-        small_neighbor = scaled(neighbor_gray)
-        model = compose(walk['model'], step_displacement(walk['small'], small_neighbor))
+        try:
+            neighbor_gray = gray_crop(neighbor)
+            small_neighbor = scaled(neighbor_gray)
+            model = compose(
+                walk['model'], step_displacement(walk['small'], small_neighbor))
+        except MemoryError:
+            raise MemoryError(OUT_OF_MEMORY_MESSAGE) from None
+        except (cv2.error, np.linalg.LinAlgError) as exc:
+            # A frame the estimator would not take: a decode that came back
+            # the wrong depth, a crop OpenCV rejects, a solve that would not
+            # converge. One neighbour failing is not the job failing — but the
+            # next step in this direction starts from this one, so there is
+            # nowhere left to walk on this side.
+            warn_degraded(f'optical flow failed at offset {offset:+d} '
+                 f'({type(exc).__name__}), ending that direction: {exc}')
+            walk['alive'] = False
+            degraded = True
+            continue
+
         walk['small'] = small_neighbor
         walk['model'] = model
 
@@ -540,12 +584,22 @@ def process_temporal(
                 break
             continue
 
-        map_x, map_y = sample_grid(model, ox0, oy0, ox1, oy1, cx0, cy0)
+        try:
+            map_x, map_y = sample_grid(model, ox0, oy0, ox1, oy1, cx0, cy0)
 
-        sample = cv2.remap(neighbor, map_x, map_y, cv2.INTER_LINEAR,
-                           borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
-        coverage = cv2.remap(clean, map_x, map_y, cv2.INTER_LINEAR,
-                             borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+            sample = cv2.remap(neighbor, map_x, map_y, cv2.INTER_LINEAR,
+                               borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+            coverage = cv2.remap(clean, map_x, map_y, cv2.INTER_LINEAR,
+                                 borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        except MemoryError:
+            raise MemoryError(OUT_OF_MEMORY_MESSAGE) from None
+        except cv2.error as exc:
+            # The model verified, so the walk itself is sound and may carry on
+            # from here; only this neighbour's sample is lost.
+            warn_degraded(f'sampling neighbour {offset:+d} failed, skipping it: {exc}')
+            degraded = True
+            continue
+
         valid = coverage >= VALID_THRESHOLD
 
         patch = sample.astype(np.float32)
@@ -563,13 +617,23 @@ def process_temporal(
             break  # every pixel has all the samples it was going to get
         if barren >= NO_GAIN_PATIENCE:
             break  # nothing is moving; walking further would say so too
-        if not any(w['alive'] for w in walks.values()):
-            break
 
     if not candidates:
+        if degraded:
+            warn_degraded('no neighbour survived; falling back to single-frame fill '
+                 'for this frame')
         return baseline
 
-    fused = fuse_candidates(candidates, weights, settings.fuse)
+    try:
+        fused = fuse_candidates(candidates, weights, settings.fuse)
+    except MemoryError:
+        # The stack of candidates is the largest allocation here, and it is
+        # proportional to the selection and to how far the walk went. The
+        # baseline fill is already computed and costs nothing to return.
+        warn_degraded('out of memory fusing candidates; falling back to single-frame '
+             'fill for this frame')
+        return baseline
+
     filled = np.where(np.isnan(fused),
                       baseline[oy0:oy1, ox0:ox1].astype(np.float32), fused)
 

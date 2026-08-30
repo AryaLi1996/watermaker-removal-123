@@ -5,11 +5,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  PREVIEW_TEMPORAL_QUALITY,
   TEMPORAL_MIN_CPUS,
   TEMPORAL_MIN_MEMORY_MB,
   TEMPORAL_QUALITIES,
+  previewIsDowngraded,
+  qualityForJob,
   temporalAvailability,
 } from '../../../renderer/src/capabilities';
+import { estimateTemporalSeconds, formatEstimate } from '../../../renderer/src/estimate';
 import type { SystemInfo } from '../../../renderer/src/types';
 import { LOCALES, setLocale, t } from '../../../renderer/src/i18n';
 import { BUILT_IN_PRESETS, DEFAULT_PARAMS, presetLabel } from '../../../renderer/src/presets';
@@ -147,5 +151,97 @@ describe('the temporal surface', () => {
       ...base,
       params: { ...DEFAULT_PARAMS, temporalQuality: 'quality' },
     })).toBe(false);
+  });
+});
+
+describe('the quality a preview actually runs at', () => {
+  it('drops a temporal preview to the quick setting whatever the dial says', () => {
+    for (const chosen of TEMPORAL_QUALITIES) {
+      expect(qualityForJob('temporal', chosen, true)).toBe(PREVIEW_TEMPORAL_QUALITY);
+    }
+  });
+
+  it('leaves the export on the setting the user picked', () => {
+    for (const chosen of TEMPORAL_QUALITIES) {
+      expect(qualityForJob('temporal', chosen, false)).toBe(chosen);
+    }
+  });
+
+  it('does not touch the setting for a method that never reads it', () => {
+    expect(qualityForJob('inpaint', 'quality', true)).toBe('quality');
+  });
+
+  it('says so only when the preview and the export would differ', () => {
+    expect(previewIsDowngraded('temporal', 'quality')).toBe(true);
+    expect(previewIsDowngraded('temporal', 'balanced')).toBe(true);
+    // Already at the preview setting: there is nothing to warn about.
+    expect(previewIsDowngraded('temporal', PREVIEW_TEMPORAL_QUALITY)).toBe(false);
+    expect(previewIsDowngraded('inpaint', 'quality')).toBe(false);
+  });
+
+  it('explains itself in both languages, naming the setting it used', () => {
+    for (const locale of LOCALES) {
+      setLocale(locale);
+      const sentence = t('method.temporalPreviewFast', {
+        quality: t(`quality.${PREVIEW_TEMPORAL_QUALITY}`),
+      });
+      expect(sentence).not.toContain('{quality}');
+      expect(sentence).toContain(t(`quality.${PREVIEW_TEMPORAL_QUALITY}`));
+    }
+  });
+});
+
+describe('the before-you-start estimate', () => {
+  const clip = { fps: 30, seconds: 60, cpuCount: 8 };
+
+  it('costs a slower quality as more time', () => {
+    const fast = estimateTemporalSeconds({ ...clip, quality: 'fast' })!;
+    const balanced = estimateTemporalSeconds({ ...clip, quality: 'balanced' })!;
+    const best = estimateTemporalSeconds({ ...clip, quality: 'quality' })!;
+    expect(fast).toBeLessThan(balanced);
+    expect(balanced).toBeLessThan(best);
+  });
+
+  it('costs a longer video as more time, in proportion', () => {
+    const short = estimateTemporalSeconds({ ...clip, seconds: 30, quality: 'balanced' })!;
+    const long = estimateTemporalSeconds({ ...clip, seconds: 60, quality: 'balanced' })!;
+    expect(long).toBeCloseTo(short * 2, 5);
+  });
+
+  it('spreads the work across the cores the host reported', () => {
+    const few = estimateTemporalSeconds({ ...clip, cpuCount: 2, quality: 'balanced' })!;
+    const many = estimateTemporalSeconds({ ...clip, cpuCount: 8, quality: 'balanced' })!;
+    expect(many).toBeCloseTo(few / 4, 5);
+  });
+
+  it('still answers when the host did not say how many cores it has', () => {
+    expect(estimateTemporalSeconds({ fps: 30, seconds: 60, quality: 'fast' })).toBeGreaterThan(0);
+  });
+
+  it('says nothing rather than something wrong about unusable metadata', () => {
+    expect(estimateTemporalSeconds({ fps: 0, seconds: 60, quality: 'fast' })).toBeNull();
+    expect(estimateTemporalSeconds({ fps: 30, seconds: 0, quality: 'fast' })).toBeNull();
+    expect(estimateTemporalSeconds({ fps: NaN, seconds: 60, quality: 'fast' })).toBeNull();
+  });
+
+  it('is phrased vaguely, because it is a forecast', () => {
+    setLocale('en');
+    expect(formatEstimate(12, t)).toBe('about 10s');
+    expect(formatEstimate(300, t)).toBe('about 5 min');
+    // Never "about 0s": a job always takes some time to start.
+    expect(formatEstimate(1, t)).toBe('about 5s');
+    expect(formatEstimate(null, t)).toBeNull();
+  });
+
+  it('reads as a sentence in both languages', () => {
+    for (const locale of LOCALES) {
+      setLocale(locale);
+      for (const key of ['estimate.export', 'estimate.preview']) {
+        const line = t(key, { time: formatEstimate(120, t)! });
+        expect(line).not.toContain('{time}');
+        expect(line).not.toBe(key);
+      }
+      expect(t('method.temporalTooltip')).not.toBe('method.temporalTooltip');
+    }
   });
 });

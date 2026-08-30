@@ -29,6 +29,8 @@
     "temporalDescription": "借助前后帧重建画面，适合动态背景",
     "temporalBeta": "测试版",
     "temporalNote": "此模式处理较慢，但边缘更自然，适合动态背景——镜头移动、手持拍摄或画面中有运动的主体。",
+    "temporalTooltip": "读取每一帧前后的画面并追踪其间的运动，因此水印背后的区域是从真正拍到它的那一帧里还原出来的，而不是凭空推测。质量越高，搜索范围越大、融合越细致，耗时也越长。",
+    "temporalPreviewFast": "预览始终以「{quality}」运行，以便尽快出结果；导出仍使用上面选择的质量。",
     "temporalNeedsCpu": "需要至少 4 个处理器核心",
     "temporalNeedsMemory": "需要至少 4 GB 内存"
   },
@@ -77,6 +79,12 @@
     "temporalProcessing": "时间修复处理中，耗时较长…",
     "encoding": "正在编码视频…",
     "preparingPreview": "正在准备预览…"
+  },
+  "estimate": {
+    "export": "导出：{time}",
+    "preview": "预览：{time}",
+    "seconds": "约 {seconds} 秒",
+    "minutes": "约 {minutes} 分钟"
   },
   "progress": {
     "estimating": "正在估算…",

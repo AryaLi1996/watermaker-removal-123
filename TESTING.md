@@ -8,10 +8,10 @@ How to run, understand, and extend the automated test suite.
 
 | Suite | Command | Tests | Location |
 |---|---|---|---|
-| Backend (Python) | `npm run test:backend` | 192 pytest | `tests/unit/backend/` |
+| Backend (Python) | `npm run test:backend` | 204 pytest | `tests/unit/backend/` |
 | Backend coverage | `npm run test:coverage` | ≥ 80% required | `htmlcov/` |
-| Renderer (TypeScript) | `npm run test:frontend` | 105 vitest | `tests/unit/renderer/`, `renderer/src/` |
-| E2E (Electron) | `npm run test:e2e` | 55 Playwright | `tests/e2e/` |
+| Renderer (TypeScript) | `npm run test:frontend` | 117 vitest | `tests/unit/renderer/`, `renderer/src/` |
+| E2E (Electron) | `npm run test:e2e` | 57 Playwright | `tests/e2e/` |
 | Docs screenshots | `npm run screenshots` | 2 Playwright | `tests/e2e/capture-screenshots.spec.ts` |
 | Everything | `npm run test:all` | all of the above | root |
 | Environment check | `python scripts/validate_env.py` | manual | `scripts/` |
@@ -140,6 +140,34 @@ npm run test:coverage
 Prints a per-file table and writes a browsable report to `htmlcov/index.html`.
 Settings live in `backend/.coveragerc`, which fails the run below **80%**
 (currently ~96%).
+
+### Temporal benchmark (opt-in)
+
+`tests/unit/backend/test_temporal_benchmark.py` measures temporal fill —
+seconds per frame and mean absolute error against the background the mark was
+hiding — for each of the three qualities, and writes the numbers to
+`benchmarks.json`.
+
+It is **skipped unless asked for**, because a timing measured on a shared CI
+runner varies by more than most real regressions do; gating a merge on it
+would fail honest changes and pass slow ones by luck. Run it deliberately,
+before and after a change to the engine, on the same machine:
+
+```bash
+WATERMARK_BENCHMARK=1 backend/.venv/bin/python -m pytest \
+    tests/unit/backend/test_temporal_benchmark.py -s
+```
+
+```
+  fast       0.0318 s/frame   MAE   4.30  (single-frame 16.06)
+  balanced   0.0495 s/frame   MAE   3.18  (single-frame 16.06)
+  quality    0.0862 s/frame   MAE   0.42  (single-frame 16.06)
+```
+
+The accuracy half is asserted, since it does not depend on how fast the
+machine is: a change that makes the reconstruction visibly worse fails the run
+even where it made it faster. `WATERMARK_BENCHMARK_OUTPUT` moves the JSON
+somewhere a CI job can collect it.
 
 ---
 

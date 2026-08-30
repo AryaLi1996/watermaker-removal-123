@@ -373,3 +373,117 @@ def test_a_pan_stops_walking_as_soon_as_it_has_covered_the_mark(pan, mask):
 
     temporal_core.process_temporal(pan.frame(index), mask, ROI, counted, quality='quality')
     assert len(asked) < temporal_core.quality_settings('quality').reach
+
+
+# ─── failures that must not take the job with them ───────────────────────────
+
+def _raising_estimator(exception: BaseException, only_at: int | None = None):
+    """
+    A flow estimator that fails, standing in for the ones that do in the wild:
+    a build whose DIS asserts on a frame it will not take, or a machine that
+    has run out of room to hold the field.
+
+    `only_at` fails on the nth call and behaves for the rest, which is how a
+    single bad step in one direction gets tested apart from a total failure.
+    """
+    calls = {'n': 0}
+    real = temporal_core.flow_estimator
+
+    def make(settings):
+        genuine = real(settings)
+
+        def estimate(previous, following):
+            calls['n'] += 1
+            if only_at is None or calls['n'] == only_at:
+                raise exception
+            return genuine(previous, following)
+
+        return estimate
+
+    return make, calls
+
+
+def test_a_flow_failure_falls_back_to_the_single_frame_fill(pan, mask, monkeypatch, capsys):
+    """
+    Every direction failing is the worst case, and it is still a finished
+    frame: the same fill the single-frame engine would have produced, not a
+    crash halfway through an export.
+    """
+    index = 12
+    make, _ = _raising_estimator(cv2.error('DIS: unsupported frame'))
+    monkeypatch.setattr(temporal_core, 'flow_estimator', make)
+
+    result = temporal_core.process_temporal(
+        pan.frame(index), mask, ROI, pan.source(index), quality='balanced')
+
+    assert np.array_equal(
+        result, process_inpaint(pan.frame(index), mask, radius=3, roi=ROI))
+    # The frame came out; the log is where the reason lives.
+    warnings_out = capsys.readouterr().err
+    assert 'optical flow failed' in warnings_out
+    assert 'single-frame fill' in warnings_out
+
+
+def test_one_bad_step_costs_its_direction_and_not_the_frame(pan, mask, monkeypatch):
+    """The other side of the walk is untouched, and still recovers the mark."""
+    index = 12
+    make, _ = _raising_estimator(cv2.error('DIS: unsupported frame'), only_at=1)
+    monkeypatch.setattr(temporal_core, 'flow_estimator', make)
+
+    result = temporal_core.process_temporal(
+        pan.frame(index), mask, ROI, pan.source(index), quality='balanced')
+
+    # Reconstructed from the surviving direction, not fallen back on.
+    assert not np.array_equal(
+        result, process_inpaint(pan.frame(index), mask, radius=3, roi=ROI))
+    assert pan.error(index, result) < 12.0
+
+
+def test_running_out_of_memory_says_which_dial_to_turn(pan, mask, monkeypatch):
+    """
+    `str(MemoryError())` is empty, and an empty failure reaches the user as
+    "the backend gave no reason". The one thing worth saying here is what they
+    can change, so the message carries it.
+    """
+    make, _ = _raising_estimator(MemoryError())
+    monkeypatch.setattr(temporal_core, 'flow_estimator', make)
+
+    with pytest.raises(MemoryError, match='lower temporal quality'):
+        temporal_core.process_temporal(
+            pan.frame(12), mask, ROI, pan.source(12), quality='balanced')
+
+
+def test_a_degenerate_solve_ends_its_direction_rather_than_the_job(pan, mask, monkeypatch):
+    """numpy raising out of the fit is the same kind of event as cv2 raising."""
+    make, _ = _raising_estimator(np.linalg.LinAlgError('SVD did not converge'))
+    monkeypatch.setattr(temporal_core, 'flow_estimator', make)
+
+    result = temporal_core.process_temporal(
+        pan.frame(12), mask, ROI, pan.source(12), quality='balanced')
+    assert result.shape == pan.frame(12).shape
+
+
+def test_a_sampling_failure_skips_the_neighbour_and_keeps_the_walk(pan, mask, monkeypatch, capsys):
+    """
+    The model verified before the sample was taken, so the walk is sound and
+    only this one neighbour's pixels are lost.
+    """
+    index = 12
+    real_remap = cv2.remap
+    calls = {'n': 0}
+
+    def flaky_remap(*args, **kwargs):
+        calls['n'] += 1
+        # The residual check remaps too; fail a sampling call, which comes
+        # after it and asks for a three-channel image.
+        if calls['n'] == 2:
+            raise cv2.error('remap: unsupported map type')
+        return real_remap(*args, **kwargs)
+
+    monkeypatch.setattr(cv2, 'remap', flaky_remap)
+    result = temporal_core.process_temporal(
+        pan.frame(index), mask, ROI, pan.source(index), quality='balanced')
+
+    assert 'skipping it' in capsys.readouterr().err
+    assert result.shape == pan.frame(index).shape
+    assert pan.error(index, result) < 12.0

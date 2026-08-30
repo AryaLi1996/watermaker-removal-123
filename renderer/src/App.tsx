@@ -7,8 +7,8 @@ import ProgressPanel from './components/ProgressPanel';
 import DonePanel from './components/DonePanel';
 import PresetPicker from './components/PresetPicker';
 import type { AppState, JobConfig, RemovalMethod, ROI, SystemInfo, TemporalQuality, VideoMeta } from './types';
-import { temporalAvailability } from './capabilities';
-import { normalizeCoordinates, defaultOutputName, formatDuration, mediaUrl } from './utils';
+import { temporalAvailability, qualityForJob } from './capabilities';
+import { normalizeCoordinates, defaultOutputName, formatDuration, mediaUrl, NULL_SINK } from './utils';
 import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX } from './errors';
 import type { FriendlyError } from './errors';
 import { BUILT_IN_PRESETS, loadCustomPresets, saveCustomPresets, presetFromCurrent } from './presets';
@@ -193,7 +193,9 @@ function App() {
     if (!inputPath) return;
     const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
     // outputPath is passed as placeholder; backend generates its own temp file for the preview clip
-    const payload: JobConfig = { inputPath, outputPath: outputPath ?? '/dev/null', roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy, temporalQuality, previewSeconds };
+    // A preview runs temporal fill at its quickest setting whatever the dial
+    // says: see `qualityForJob`. The export keeps the user's choice.
+    const payload: JobConfig = { inputPath, outputPath: outputPath ?? NULL_SINK, roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy, temporalQuality: qualityForJob(method, temporalQuality, true), previewSeconds };
     setProgress(0); setStateLabel(stageState('preparingPreview')); setSamples([]); setAppState('processing');
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobProgress((value) => {
@@ -439,7 +441,7 @@ function App() {
               onSaveCurrent={saveCurrentPreset}
             />
 
-            <MethodPicker method={method} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} temporalQuality={temporalQuality} temporal={temporal} disabled={!isLoaded} onChange={handleMethodChange} />
+            <MethodPicker method={method} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} temporalQuality={temporalQuality} temporal={temporal} videoMeta={videoMeta} cpuCount={systemInfo?.cpuCount} previewSeconds={previewSeconds} disabled={!isLoaded} onChange={handleMethodChange} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{t('file.output')}</p>

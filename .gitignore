@@ -230,3 +230,8 @@ backend/build/
 # and must be tracked, despite the generic build/ ignore above.
 !/build/
 !/build/**
+
+# Written by the opt-in temporal benchmark (tests/unit/backend/test_temporal_benchmark.py).
+# Kept out of the tree by default: the numbers only mean anything against
+# numbers from the same machine.
+benchmarks.json
