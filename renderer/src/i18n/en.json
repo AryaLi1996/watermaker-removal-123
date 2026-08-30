@@ -34,7 +34,12 @@
     "dy": "Source Offset Y (px)"
   },
   "actions": {
-    "preview": "Preview (1s)",
+    "preview": "Preview",
+    "previewSeconds": "Preview duration",
+    "preview1s": "1s",
+    "preview3s": "3s",
+    "preview5s": "5s",
+    "previewWarning": "Longer preview takes more processing time",
     "export": "Export",
     "cancel": "Cancel",
     "retry": "Try again",

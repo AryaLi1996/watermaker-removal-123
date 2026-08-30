@@ -66,7 +66,8 @@ test.describe('language', () => {
     await expect(page.getByText('去除方式')).toBeVisible();
     await expect(page.getByText('智能修复', { exact: true })).toBeVisible();
     await expect(page.getByTestId('btn-export')).toHaveText('导出');
-    await expect(page.getByTestId('btn-preview')).toHaveText('预览（1 秒）');
+    await expect(page.getByTestId('btn-preview')).toHaveText('预览');
+    await expect(page.getByTestId('preview-warning')).toHaveText('预览时长越长，生成时间越长');
     await expect(page.getByTestId('save-preset')).toHaveText('保存当前设置');
   });
 
