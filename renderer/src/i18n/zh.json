@@ -24,14 +24,26 @@
     "solidFill": "纯色填充",
     "solidFillDescription": "用纯色覆盖该区域",
     "cloneStamp": "克隆图章",
-    "cloneStampDescription": "复制附近的像素覆盖水印"
+    "cloneStampDescription": "复制附近的像素覆盖水印",
+    "temporal": "时间修复",
+    "temporalDescription": "借助前后帧重建画面，适合动态背景",
+    "temporalBeta": "测试版",
+    "temporalNote": "此模式处理较慢，但边缘更自然，适合动态背景——镜头移动、手持拍摄或画面中有运动的主体。",
+    "temporalNeedsCpu": "需要至少 4 个处理器核心",
+    "temporalNeedsMemory": "需要至少 4 GB 内存"
   },
   "params": {
     "radius": "修复平滑度（半径 px）",
     "kernelSize": "模糊强度",
     "color": "填充颜色",
     "dx": "取样水平偏移（px）",
-    "dy": "取样垂直偏移（px）"
+    "dy": "取样垂直偏移（px）",
+    "temporalQuality": "质量"
+  },
+  "quality": {
+    "fast": "快速",
+    "balanced": "平衡",
+    "quality": "高质量"
   },
   "actions": {
     "preview": "预览",
@@ -62,6 +74,7 @@
     "extractingClip": "正在截取预览片段…",
     "extractingFrames": "正在提取帧…",
     "processing": "正在重建像素…",
+    "temporalProcessing": "时间修复处理中，耗时较长…",
     "encoding": "正在编码视频…",
     "preparingPreview": "正在准备预览…"
   },
@@ -93,7 +106,11 @@
     "cloneAbove": "从上方克隆",
     "cloneAboveDescription": "位于平坦区域的水印",
     "cloneLeft": "从左侧克隆",
-    "cloneLeftDescription": "靠近上下边缘的水印"
+    "cloneLeftDescription": "靠近上下边缘的水印",
+    "temporalBalanced": "时间修复 — 平衡",
+    "temporalBalancedDescription": "动态背景，等待时间适中",
+    "temporalHigh": "时间修复 — 高质量",
+    "temporalHighDescription": "边缘最干净，等待时间最长"
   },
   "shortcuts": {
     "heading": "键盘快捷键",

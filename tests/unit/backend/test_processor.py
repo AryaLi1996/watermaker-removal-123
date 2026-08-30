@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 import processor
+import temporal_core
 
 
 def _write_frames(directory: str, count: int, size=(240, 320)) -> list[str]:
@@ -243,3 +244,167 @@ def test_a_batch_run_in_process_reports_progress_the_same_way(tmp_path):
     assert len(seen) == len(paths)
     assert seen == sorted(seen)
     assert seen[-1] == pytest.approx(100.0)
+
+
+# ─── temporal batches ────────────────────────────────────────────────────────
+#
+# The temporal engine is the one that reads frames other than the one it is
+# writing, which is what these cover: that it gets the neighbours it asked
+# for, that it never reads one another worker has already painted over, and
+# that the frames it leaves behind are the ones the encoder picks up.
+
+TEMPORAL_CONFIG = {
+    'method': 'temporal',
+    'roi': {'x': 10, 'y': 10, 'w': 50, 'h': 30},
+    'radius': 3,
+    'temporalQuality': 'fast',
+}
+
+
+def _write_pan(directory: str, count: int, speed: int = 12, size=(240, 320)) -> list[str]:
+    """
+    Frames of a scene panning under a static white mark — the case temporal
+    inpainting exists for, and one where a frame is recognisably different
+    from its neighbours.
+    """
+    os.makedirs(directory, exist_ok=True)
+    height, width = size
+    rng = np.random.default_rng(7)
+    scene = np.zeros((height, width + speed * count, 3), dtype=np.uint8)
+    scene[..., 0] = np.linspace(0, 255, scene.shape[1], dtype=np.float32)[None, :]
+    for _ in range(120):
+        centre = (int(rng.integers(0, scene.shape[1])), int(rng.integers(0, height)))
+        colour = tuple(int(v) for v in rng.integers(0, 255, 3))
+        cv2.circle(scene, centre, int(rng.integers(5, 20)), colour, -1)
+
+    paths = []
+    for i in range(count):
+        frame = np.ascontiguousarray(scene[:, speed * i:speed * i + width])
+        frame[10:40, 10:60] = 250
+        path = os.path.join(directory, f'frame_{i:06d}.png')
+        cv2.imwrite(path, frame)
+        paths.append(path)
+    return paths
+
+
+def test_a_temporal_batch_rewrites_every_frame_in_place(tmp_path):
+    paths = _write_pan(str(tmp_path / 'frames'), 8)
+    before = [cv2.imread(p)[10:40, 10:60].copy() for p in paths]
+
+    processor.run_batch(paths, TEMPORAL_CONFIG, width=320, height=240)
+
+    for path, original in zip(paths, before):
+        after = cv2.imread(path)[10:40, 10:60]
+        assert not np.array_equal(after, original), f'{path} was not processed'
+
+
+def test_a_temporal_batch_leaves_no_working_directory_behind(tmp_path):
+    paths = _write_pan(str(tmp_path / 'frames'), 6)
+    processor.run_batch(paths, TEMPORAL_CONFIG, width=320, height=240)
+
+    assert not os.path.exists(str(tmp_path / processor.TEMPORAL_OUTPUT_DIR))
+    # And nothing beside the frames for ffmpeg's numbered pattern to trip on.
+    assert sorted(os.listdir(str(tmp_path / 'frames'))) == sorted(
+        os.path.basename(p) for p in paths)
+
+
+def test_a_temporal_worker_reads_the_extracted_frames_not_the_processed_ones(
+        tmp_path, monkeypatch):
+    """
+    Reconstructing frame N reads frames N±k. Painting over them as the batch
+    goes would feed each frame the previous frame's output, which drifts and
+    is invisible in the result — so the run is staged through a separate
+    directory and committed at the end.
+    """
+    # One worker, so the batch runs in this process where the reads can be seen.
+    monkeypatch.setattr(processor.os, 'cpu_count', lambda: 1)
+    paths = _write_pan(str(tmp_path / 'frames'), 6)
+    originals = {p: cv2.imread(p).copy() for p in paths}
+    stale: list[str] = []
+
+    real_imread = processor.cv2.imread
+
+    def recording_imread(path, *args, **kwargs):
+        frame = real_imread(path, *args, **kwargs)
+        if path in originals and not np.array_equal(frame, originals[path]):
+            stale.append(path)
+        return frame
+
+    monkeypatch.setattr(processor.cv2, 'imread', recording_imread)
+    processor._neighbor_cache.clear()
+    processor.run_batch(paths, TEMPORAL_CONFIG, width=320, height=240)
+
+    assert not stale, f'a worker read frames that had been painted over: {stale}'
+    # And the frames really were rewritten, so the check above meant something.
+    assert any(not np.array_equal(cv2.imread(p), originals[p]) for p in paths)
+
+
+def test_a_temporal_job_carries_the_neighbours_its_quality_can_reach(tmp_path):
+    paths = [f'/frames/frame_{i:06d}.png' for i in range(40)]
+    jobs = processor._temporal_jobs(paths, TEMPORAL_CONFIG, (320, 240, 10, 10, 50, 30), '/out')
+    reach = temporal_core.quality_settings('fast').reach
+
+    _, middle, _, _, _ = jobs[20]
+    assert set(middle) == {o for o in range(-reach, reach + 1) if o != 0}
+    assert middle[1] == paths[21]
+    assert middle[-1] == paths[19]
+
+    # The ends of the clip simply have fewer; a missing frame is not an error.
+    _, first, _, _, _ = jobs[0]
+    assert all(offset > 0 for offset in first)
+    _, last, _, _, _ = jobs[-1]
+    assert all(offset < 0 for offset in last)
+
+
+def test_a_temporal_batch_reports_progress_frame_by_frame(tmp_path):
+    paths = _write_pan(str(tmp_path / 'frames'), 6)
+    seen: list[float] = []
+
+    processor.run_batch(paths, TEMPORAL_CONFIG, width=320, height=240,
+                        progress_callback=seen.append)
+
+    assert len(seen) == len(paths)
+    assert seen == sorted(seen)
+    assert seen[-1] == pytest.approx(100.0)
+
+
+def test_a_temporal_batch_goes_parallel_sooner_than_a_single_frame_one(tmp_path, monkeypatch):
+    """One frame of temporal work costs more than starting the pool."""
+    monkeypatch.setattr(processor.os, 'cpu_count', lambda: 4)
+    started = _pool_spy(monkeypatch)
+    paths = _write_pan(str(tmp_path / 'frames'), 2)
+
+    processor.run_batch(paths, TEMPORAL_CONFIG, width=320, height=240)
+
+    assert started == [2]
+
+
+def test_the_neighbour_cache_serves_a_frame_without_reading_it_twice(tmp_path):
+    paths = _write_pan(str(tmp_path / 'frames'), 2)
+    processor._neighbor_cache.clear()
+
+    first = processor._read_cached(paths[0])
+    second = processor._read_cached(paths[0])
+
+    assert second is first  # the same decoded array, not a second decode
+    assert np.array_equal(first, cv2.imread(paths[0]))
+
+
+def test_the_neighbour_cache_forgets_the_oldest_frame_first(tmp_path, monkeypatch):
+    monkeypatch.setenv('WATERMARK_TEMPORAL_CACHE', '1')
+    paths = _write_pan(str(tmp_path / 'frames'), 2)
+    processor._neighbor_cache.clear()
+
+    processor._read_cached(paths[0])
+    processor._read_cached(paths[1])
+
+    assert list(processor._neighbor_cache) == [paths[1]]
+
+
+def test_the_neighbour_cache_can_be_turned_off(tmp_path, monkeypatch):
+    monkeypatch.setenv('WATERMARK_TEMPORAL_CACHE', '0')
+    paths = _write_pan(str(tmp_path / 'frames'), 1)
+    processor._neighbor_cache.clear()
+
+    assert processor._read_cached(paths[0]) is not None
+    assert not processor._neighbor_cache

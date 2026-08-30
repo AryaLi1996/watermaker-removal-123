@@ -8,7 +8,10 @@ export interface ROI {
   h: number;
 }
 
-export type RemovalMethod = 'inpaint' | 'blur' | 'solidFill' | 'cloneStamp';
+export type RemovalMethod = 'inpaint' | 'blur' | 'solidFill' | 'cloneStamp' | 'temporal';
+
+/** Speed against edge quality for the temporal engine. */
+export type TemporalQuality = 'fast' | 'balanced' | 'quality';
 
 export interface JobConfig {
   inputPath: string;
@@ -21,6 +24,7 @@ export interface JobConfig {
   color?: [number, number, number];
   dx?: number;
   dy?: number;
+  temporalQuality?: TemporalQuality;
   /** Seconds of video a preview job covers; ignored for a full export. */
   previewSeconds?: number;
 }
@@ -35,6 +39,21 @@ export interface VideoMeta {
 }
 
 export type AppState = 'empty' | 'loaded' | 'processing' | 'done' | 'error';
+
+/**
+ * What the main process can tell the renderer about the machine.
+ *
+ * The two hardware fields are optional on purpose: an older main process does
+ * not send them, and a feature must not be hidden because a number is missing.
+ */
+export interface SystemInfo {
+  platform: string;
+  arch: string;
+  packaged: boolean;
+  appVersion: string;
+  cpuCount?: number;
+  totalMemoryMB?: number;
+}
 
 declare global {
   interface Window {
@@ -53,7 +72,7 @@ declare global {
       onUpdateAvailable: (cb: (version: string | null) => void) => void;
       onUpdateDownloaded: (cb: (version: string | null) => void) => void;
       installUpdate: () => Promise<boolean>;
-      systemInfo: () => Promise<{ platform: string; arch: string; packaged: boolean; appVersion: string }>;
+      systemInfo: () => Promise<SystemInfo>;
       tempDir: () => Promise<string>;
       notify: (title: string, body: string) => Promise<boolean>;
       removeJobListeners: () => void;

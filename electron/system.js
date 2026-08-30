@@ -57,7 +57,14 @@ function notify(title, body) {
   }
 }
 
-/** What the renderer may need to know about the host. */
+/**
+ * What the renderer may need to know about the host.
+ *
+ * The core count and memory are here for the renderer's sake: temporal
+ * inpainting saturates every core for minutes, and a machine that cannot
+ * carry it is better told so than left to discover it halfway through an
+ * export.
+ */
 function platformInfo() {
   return {
     platform: process.platform,
@@ -65,6 +72,8 @@ function platformInfo() {
     // Packaged builds resolve resources differently from a dev run.
     packaged: app.isPackaged,
     appVersion: app.getVersion(),
+    cpuCount: os.cpus().length,
+    totalMemoryMB: Math.round(os.totalmem() / (1024 * 1024)),
   };
 }
 

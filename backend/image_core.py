@@ -185,10 +185,16 @@ def apply_removal(
     frame: np.ndarray,
     mask: np.ndarray,
     config: dict,
+    neighbor_at=None,
 ) -> np.ndarray:
     """
     Dispatch to the correct removal engine based on config['method'].
-    config keys: method, roi (x,y,w,h), radius, kernelSize, color, dx, dy
+    config keys: method, roi (x,y,w,h), radius, kernelSize, color, dx, dy,
+    temporalQuality.
+
+    `neighbor_at` is how the temporal engine reaches the frames around this
+    one: called with a signed frame offset, it returns that frame or None.
+    Every other engine works from this frame alone and ignores it.
     """
     method = config.get('method', 'inpaint')
     roi = config['roi']
@@ -203,6 +209,17 @@ def apply_removal(
     elif method == 'solidFill':
         color = tuple(config.get('color', [0, 0, 0]))
         return process_solid_fill(frame, x, y, w, h, color=color)
+    elif method == 'temporal':
+        # Imported on use, not at module scope: temporal_core imports this
+        # module for its fallback fill, and the engines above have no need of
+        # the optical-flow machinery it brings with it.
+        from temporal_core import DEFAULT_QUALITY, process_temporal  # noqa: PLC0415
+        return process_temporal(
+            frame, mask, (x, y, w, h),
+            neighbor_at if neighbor_at is not None else lambda _offset: None,
+            quality=config.get('temporalQuality', DEFAULT_QUALITY),
+            fallback_radius=config.get('radius', 3),
+        )
     elif method == 'cloneStamp':
         dx, dy = clamp_clone_offset(width, height, x, y, w, h,
                                     dx=config.get('dx', 0),

@@ -83,6 +83,44 @@ test.describe('Sidebar — method picker', () => {
     await expect(page.getByText('Blur', { exact: true })).toBeVisible();
     await expect(page.getByText('Solid Color', { exact: true })).toBeVisible();
     await expect(page.getByText('Clone Stamp', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('method-temporal')).toBeVisible();
+  });
+
+  // Temporal fill is slower than everything else in the list, so choosing it
+  // has to bring both halves of that bargain on screen: the quality dial and
+  // the warning about the wait.
+  test('choosing temporal fill reveals its quality dial and its warning', async ({ page, electronApp }) => {
+    const isIdle = await page.locator('[data-testid="empty-state"]').isVisible();
+    if (isIdle) {
+      await electronApp.evaluate(({ ipcMain }) => {
+        ipcMain.removeHandler('dialog:openFile');
+        ipcMain.handle('dialog:openFile', async () => '/fake/video.mp4');
+      });
+      await stubStartJob(electronApp);
+      await page.getByTestId('empty-state').click();
+      await expect(page.getByTestId('btn-export')).toBeVisible({ timeout: 5_000 });
+    }
+
+    const temporal = page.getByTestId('method-temporal');
+    // A machine too small for the method greys it out and says why; there is
+    // nothing to reveal there, and nothing broken either.
+    if (!(await temporal.isEnabled())) {
+      await expect(temporal).toContainText('Needs at least');
+      return;
+    }
+
+    await temporal.click();
+    await expect(page.getByTestId('quality-balanced')).toBeVisible();
+    await expect(page.getByTestId('quality-fast')).toBeVisible();
+    await expect(page.getByTestId('quality-quality')).toBeVisible();
+    await expect(page.getByTestId('temporal-note')).toContainText('Slower');
+
+    await page.getByTestId('quality-fast').click();
+    await expect(page.getByTestId('quality-fast')).toHaveAttribute('aria-pressed', 'true');
+
+    // Back to a single-frame method: the dial belongs to this one alone.
+    await page.getByTestId('method-inpaint').click();
+    await expect(page.getByTestId('temporal-note')).toBeHidden();
   });
 });
 

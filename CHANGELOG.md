@@ -6,6 +6,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Temporal Fill (beta)** — a fifth removal method that reconstructs the
+  watermark region from the frames around it rather than from the frame it is
+  in. Where the background moves, the pixels behind a static mark are usually
+  visible a few frames away: the engine tracks the motion with optical flow,
+  composing frame-to-frame estimates as it walks outwards, samples the real
+  background from the frames that verify, and fuses the samples per pixel. The
+  result is feathered into a band just outside the selection, so the seam falls
+  on reconstructed background instead of on the edge of the mark — which is
+  what the soft patches and hard edges of single-frame filling were.
+  - A **Quality** setting (Fast / Balanced / High) trades wait for accuracy,
+    and two presets ship with it.
+  - The walk stops as soon as the selection is covered, so footage that moves
+    costs a couple of neighbours per frame and only a hard shot pays the full
+    reach. A locked-off camera over a still background uncovers nothing and
+    falls back to single-frame inpainting rather than inventing motion.
+  - Expect 5–10x the processing time of the single-frame methods. The status
+    line and the share of the progress bar the per-frame work gets both say so.
+  - The method is greyed out, with the reason, on machines with fewer than four
+    cores or less than 4 GB of memory.
+
+### Changed
+- The method shortcuts now run 1–5, the fifth being temporal fill. On a
+  machine where the method is unavailable, the key does nothing rather than
+  selecting something that cannot be exported.
+- `system:info` reports the host's core count and total memory, so the
+  renderer can tell whether the heavier methods are worth offering.
+
 ## [1.1.0] - 2026-08-30
 
 ### Added

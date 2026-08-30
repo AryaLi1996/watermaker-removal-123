@@ -73,7 +73,8 @@ Pixels = Annotated[int, BeforeValidator(_round_pixels)]
 PREVIEW_SECONDS = 1.0
 
 
-RemovalMethod = Literal['inpaint', 'blur', 'solidFill', 'cloneStamp']
+RemovalMethod = Literal['inpaint', 'blur', 'solidFill', 'cloneStamp', 'temporal']
+TemporalQuality = Literal['fast', 'balanced', 'quality']
 JobMode = Literal['full', 'preview', 'preview_frame']
 
 
@@ -101,6 +102,8 @@ class JobConfig(BaseModel):
     color: list[int] = Field(default=[0, 0, 0], min_length=3, max_length=3)
     dx: Pixels = 0
     dy: Pixels = -50
+    # Speed against edge quality for the temporal engine; ignored by the rest.
+    temporalQuality: TemporalQuality = 'balanced'
     # How many seconds of video a quick preview covers.
     previewSeconds: float = Field(default=PREVIEW_SECONDS, gt=0, le=30)
 
@@ -273,9 +276,23 @@ PROBE_END = 5.0
 EXTRACT_START = PROBE_END
 EXTRACT_END = 20.0
 PROCESS_END = 80.0
+
+# The same splits for a temporal job, where the per-frame work is not merely
+# dominant but an order of magnitude larger than everything else put together.
+# Left at the single-frame numbers, the bar would crawl from 20 to 80 for
+# minutes and then finish the last fifth in a couple of seconds.
+TEMPORAL_EXTRACT_END = 10.0
+TEMPORAL_PROCESS_END = 94.0
 # Short of 100: the mux that follows the encode still has to run, and a bar
 # that reads 100% while the file is not yet written is a bar that lies.
 ENCODE_END = 98.0
+
+
+def stage_bounds(method: str) -> tuple[float, float]:
+    """Where extraction and the per-frame work end on the bar, for a method."""
+    if method == 'temporal':
+        return TEMPORAL_EXTRACT_END, TEMPORAL_PROCESS_END
+    return EXTRACT_END, PROCESS_END
 
 
 def run_pipeline(
@@ -297,6 +314,7 @@ def run_pipeline(
     _last_progress = ''  # a new job starts a new bar
     is_preview = config.mode == 'preview'
     frames_dir = os.path.join(temp_dir, 'frames')
+    extract_end, process_end = stage_bounds(config.method)
 
     # 1. Probe metadata
     stage('probing')
@@ -316,9 +334,9 @@ def run_pipeline(
         source_video,
         frames_dir,
         expected_frames=expected_frames,
-        on_progress=lambda done: progress(EXTRACT_START + done * (EXTRACT_END - EXTRACT_START)),
+        on_progress=lambda done: progress(EXTRACT_START + done * (extract_end - EXTRACT_START)),
     )
-    progress(EXTRACT_END)
+    progress(extract_end)
 
     # Build ordered list of frame paths
     frame_paths = sorted(glob(os.path.join(frames_dir, 'frame_*.png')))
@@ -334,7 +352,11 @@ def run_pipeline(
         )
 
     # 3. Process frames in parallel
-    stage('processing')
+    #
+    # Temporal inpainting says so: it is five to ten times slower than the
+    # single-frame engines, and a status line that reads the same for both
+    # makes a working export look like a stuck one.
+    stage('temporalProcessing' if config.method == 'temporal' else 'processing')
     roi_dict = config.roi.model_dump()
     removal_config = {
         'method': config.method,
@@ -345,11 +367,12 @@ def run_pipeline(
         'color': config.color,
         'dx': config.dx,
         'dy': config.dy,
+        'temporalQuality': config.temporalQuality,
     }
 
     def _progress_cb(pct: float):
         # Maps 0–100 of the per-frame work onto its share of the total.
-        progress(EXTRACT_END + pct / 100 * (PROCESS_END - EXTRACT_END))
+        progress(extract_end + pct / 100 * (process_end - extract_end))
 
     load_processor().run_batch(
         frame_paths,
@@ -358,7 +381,7 @@ def run_pipeline(
         meta['height'],
         progress_callback=_progress_cb,
     )
-    progress(PROCESS_END)
+    progress(process_end)
 
     # 4. Reassemble
     stage('encoding')
@@ -376,7 +399,7 @@ def run_pipeline(
         encode=ff_utils.PREVIEW_ENCODE if is_preview else ff_utils.EXPORT_ENCODE,
         # x264 at 'medium' is the slowest part of a long export after the
         # frame work; it reports frame by frame like the extraction does.
-        on_progress=lambda done: progress(PROCESS_END + done * (ENCODE_END - PROCESS_END)),
+        on_progress=lambda done: progress(process_end + done * (ENCODE_END - process_end)),
     )
     progress(100)
     return output_path

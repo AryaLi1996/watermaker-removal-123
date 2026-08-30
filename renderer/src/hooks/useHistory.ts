@@ -24,6 +24,7 @@ export function sameSettings(a: JobSettings, b: JobSettings): boolean {
     a.params.kernelSize === b.params.kernelSize &&
     a.params.dx === b.params.dx &&
     a.params.dy === b.params.dy &&
+    a.params.temporalQuality === b.params.temporalQuality &&
     a.params.color[0] === b.params.color[0] &&
     a.params.color[1] === b.params.color[1] &&
     a.params.color[2] === b.params.color[2]
