@@ -7,7 +7,7 @@ import ProgressPanel from './components/ProgressPanel';
 import DonePanel from './components/DonePanel';
 import PresetPicker from './components/PresetPicker';
 import type { AppState, JobConfig, RemovalMethod, ROI, VideoMeta } from './types';
-import { normalizeCoordinates, defaultOutputName, formatDuration } from './utils';
+import { normalizeCoordinates, defaultOutputName, formatDuration, mediaUrl } from './utils';
 import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX, PREVIEW_TIMEOUT_MS } from './errors';
 import type { FriendlyError } from './errors';
 import { BUILT_IN_PRESETS, loadCustomPresets, saveCustomPresets, presetFromCurrent } from './presets';
@@ -109,7 +109,7 @@ function App() {
     window.electronAPI.onJobState(setStateLabel);
     window.electronAPI.onPreviewReady((previewPath: string) => {
       clearPreviewTimer();
-      setPreviewFrameUrl(`file://${previewPath}`);
+      setPreviewFrameUrl(mediaUrl(previewPath));
       setStateLabel('');
       window.electronAPI.removeJobListeners();
     });
@@ -200,7 +200,7 @@ function App() {
     });
     window.electronAPI.onJobState(setStateLabel);
     window.electronAPI.onPreviewReady((clipPath: string) => {
-      setPreviewClipUrl(`file://${clipPath}`);
+      setPreviewClipUrl(mediaUrl(clipPath));
       setAppState('loaded');
       window.electronAPI.removeJobListeners();
     });

@@ -11,7 +11,7 @@ import useImage from 'use-image';
 import type Konva from 'konva';
 
 interface VideoCanvasProps {
-  /** file:// URL or absolute path to the preview PNG */
+  /** URL of the preview PNG, as built by `mediaUrl` */
   previewSrc: string;
   containerWidth: number;
   containerHeight: number;

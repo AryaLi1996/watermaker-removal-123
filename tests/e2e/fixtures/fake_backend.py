@@ -40,7 +40,7 @@ signal.signal(signal.SIGTERM, _sigterm)
 payload = json.loads(sys.stdin.read() or '{}')
 
 # The renderer sends real job payloads with no `scenario` key; derive one from
-# the job mode so the app's own flows (preview frame, 3s preview, export) work.
+# the job mode so the app's own flows (preview frame, preview clip, export) work.
 scenario = payload.get('scenario')
 if scenario is None:
     mode = payload.get('mode', 'full')

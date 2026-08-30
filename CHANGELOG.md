@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-30
+
 ### Added
 - The pipeline reports which stage it is at in the interface language, not in
   English. Stages now cross the stdout protocol as keys (`STATE:stage:encoding`)
@@ -127,6 +129,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Packaged builds could not run a job at all: they pointed at the excluded
   `backend/.venv` and at a script path inside `app.asar`, which no child
   process can execute.
+
+### Removed
+- `python:run`, the "does Python answer" IPC channel from the first
+  milestone's validation. Nothing had called it since.
+
+### Security
+- Preview stills and clips travel over the app's own `wm-media://` scheme
+  rather than `file://`. It serves only the files the main process published —
+  the still the canvas is showing, and the clips of the job in flight — so the
+  interface can no longer ask for an arbitrary path, and it answers range
+  requests, which is what lets a clip seek and loop. Development ran with
+  `webSecurity` switched off to allow the old `file://` URLs, which disabled
+  the same-origin policy for the whole page; it is on everywhere now.
+- The renderer runs in a sandboxed process. Its preload reaches only for
+  `contextBridge` and `ipcRenderer`, both of which survive the sandbox.
 
 ## [1.0.0] - 2026-03-26
 
