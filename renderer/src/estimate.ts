@@ -32,7 +32,7 @@ import type { TemporalQuality } from './types';
 const SECONDS_PER_FRAME_PER_CORE: Record<TemporalQuality, number> = {
   fast: 0.35,
   balanced: 0.7,
-  quality: 2.0,
+  high: 2.0,
 };
 
 /** Assumed when the main process has not said how many cores there are. */

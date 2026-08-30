@@ -21,7 +21,12 @@ interface MethodPickerProps {
   videoMeta: VideoMeta | null;
   /** Cores the frame pool will spread the work over, where the host said. */
   cpuCount?: number;
-  /** Seconds of video a preview covers, for the same forecast. */
+  /**
+   * Seconds of video a preview will actually cover — already capped for this
+   * method, since a temporal preview runs shorter than the dial offers. The
+   * forecast has to price the run that will happen, not the one that was
+   * asked for.
+   */
   previewSeconds: number;
   disabled: boolean;
   onChange: (updates: Partial<{

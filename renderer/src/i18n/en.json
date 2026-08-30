@@ -45,7 +45,7 @@
   "quality": {
     "fast": "Fast",
     "balanced": "Balanced",
-    "quality": "High"
+    "high": "High"
   },
   "actions": {
     "preview": "Preview",
@@ -143,6 +143,7 @@
     "outOfMemory": "Ran out of memory processing this video. A shorter clip, or a smaller selection, should get through.",
     "timeout": "The job took too long and was stopped. Try a shorter video, or a smaller selection.",
     "unknown": "Something went wrong, and the backend gave no reason.",
+    "temporalUnsupported": "Temporal fill needs at least 4 processor cores and 4 GB of memory. Choose another removal method for this machine.",
     "jobRunning": "Another job is already running. Wait for it to finish, or cancel it.",
     "previewTimeout": "Still waiting for a preview of this video after 90 seconds. It may be very large, or the backend may be stuck — try loading it again."
   },

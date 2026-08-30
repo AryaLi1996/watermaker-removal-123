@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import typing
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -118,10 +119,10 @@ def test_job_config_accepts_the_temporal_method_and_its_quality(existing_file):
         'outputPath': '/tmp/out.mp4',
         'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
         'method': 'temporal',
-        'temporalQuality': 'quality',
+        'temporalQuality': 'high',
     })
     assert config.method == 'temporal'
-    assert config.temporalQuality == 'quality'
+    assert config.temporalQuality == 'high'
 
 
 def test_job_config_defaults_the_temporal_quality(existing_file):
@@ -297,6 +298,117 @@ def test_run_pipeline_writes_a_playable_video_with_audio(sample_video, tmp_path)
     assert (meta['width'], meta['height']) == (320, 240)
 
 
+@requires_ffmpeg
+def test_run_pipeline_writes_a_playable_video_with_temporal_fill(sample_video, tmp_path):
+    """
+    The whole pipeline on the temporal engine: extract, reconstruct every
+    frame from its neighbours, re-encode. The clip is a few frames of moving
+    test pattern, which is enough to prove the staging and the reassembly —
+    the reconstruction itself is measured in test_temporal_core.py.
+    """
+    out = str(tmp_path / 'temporal.mp4')
+    config = backend_main.JobConfig.model_validate({
+        'inputPath': sample_video,
+        'outputPath': out,
+        'roi': {'x': 40, 'y': 40, 'w': 60, 'h': 40},
+        'method': 'temporal',
+        'temporalQuality': 'fast',
+    })
+
+    result = backend_main.run_pipeline(config, str(tmp_path / 'work'), sample_video)
+
+    assert result == out
+    meta = ff_utils.probe_video(out)
+    assert (meta['width'], meta['height']) == (320, 240)
+    assert meta['audio_codec'] == 'aac'
+
+
+@requires_ffmpeg
+def test_a_temporal_job_reports_its_own_stage_and_reaches_the_end(
+        sample_video, tmp_path, capsys):
+    """The status line has to say which engine is running, and the bar has to
+    arrive at 100 rather than stopping where the frame work ends."""
+    config = backend_main.JobConfig.model_validate({
+        'inputPath': sample_video,
+        'outputPath': str(tmp_path / 'temporal.mp4'),
+        'roi': {'x': 40, 'y': 40, 'w': 60, 'h': 40},
+        'method': 'temporal',
+        'temporalQuality': 'fast',
+    })
+
+    backend_main.run_pipeline(config, str(tmp_path / 'work'), sample_video)
+    lines = capsys.readouterr().out.splitlines()
+
+    assert 'STATE:stage:temporalProcessing' in lines
+    assert 'STATE:stage:processing' not in lines
+    values = [float(line.removeprefix('PROGRESS:')) for line in lines
+              if line.startswith('PROGRESS:')]
+    assert values == sorted(values)
+    assert values[-1] == 100.0
+
+
+# ─── refusing a machine that cannot carry it ─────────────────────────────────
+
+def test_temporal_is_refused_on_too_few_cores(monkeypatch):
+    monkeypatch.setattr(backend_main.os, 'cpu_count',
+                        lambda: backend_main.TEMPORAL_MIN_CORES - 1)
+    with pytest.raises(ValueError, match='temporal requires at least'):
+        backend_main.check_temporal_supported()
+
+
+def test_temporal_is_refused_on_too_little_memory(monkeypatch):
+    monkeypatch.setattr(backend_main, 'total_memory_mb',
+                        lambda: backend_main.TEMPORAL_MIN_MEMORY_MB - 1)
+    with pytest.raises(ValueError, match='temporal requires at least'):
+        backend_main.check_temporal_supported()
+
+
+def test_temporal_is_allowed_on_a_machine_that_will_not_say(monkeypatch):
+    """An unreadable machine gets the benefit of the doubt, as it does in the UI."""
+    monkeypatch.setattr(backend_main, 'total_memory_mb', lambda: None)
+    monkeypatch.setattr(backend_main.os, 'cpu_count', lambda: None)
+    backend_main.check_temporal_supported()
+
+
+def test_temporal_is_allowed_on_a_machine_that_meets_the_bar(monkeypatch):
+    monkeypatch.setattr(backend_main.os, 'cpu_count',
+                        lambda: backend_main.TEMPORAL_MIN_CORES)
+    monkeypatch.setattr(backend_main, 'total_memory_mb',
+                        lambda: backend_main.TEMPORAL_MIN_MEMORY_MB)
+    backend_main.check_temporal_supported()
+
+
+def test_the_backend_and_the_renderer_agree_on_the_bar():
+    """
+    The renderer greys the method out at the same numbers. They are separate
+    constants in separate languages; this is what keeps them the same.
+    """
+    capabilities = (Path(__file__).resolve().parents[3]
+                    / 'renderer' / 'src' / 'capabilities.ts').read_text()
+    assert f'TEMPORAL_MIN_CPUS = {backend_main.TEMPORAL_MIN_CORES}' in capabilities
+    assert f'TEMPORAL_MIN_MEMORY_MB = {backend_main.TEMPORAL_MIN_MEMORY_MB}' in capabilities
+    assert (f'TEMPORAL_PREVIEW_MAX_SECONDS = '
+            f'{int(backend_main.TEMPORAL_PREVIEW_MAX_SECONDS)}' in capabilities)
+
+
+def test_total_memory_reads_a_number_or_admits_it_cannot():
+    memory = backend_main.total_memory_mb()
+    assert memory is None or memory > 0
+
+
+# ─── a preview of a temporal job is capped shorter ───────────────────────────
+
+def test_a_temporal_preview_is_capped(monkeypatch):
+    capped = backend_main.TEMPORAL_PREVIEW_MAX_SECONDS
+    assert backend_main.preview_length_for('temporal', 5.0) == capped
+    assert backend_main.preview_length_for('temporal', 1.0) == 1.0
+
+
+def test_other_methods_keep_the_preview_length_they_were_given():
+    assert backend_main.preview_length_for('inpaint', 5.0) == 5.0
+    assert backend_main.preview_length_for('blur', 30.0) == 30.0
+
+
 # ─── the dispatcher, driven as Electron drives it ────────────────────────────
 
 def _run_backend(payload: dict, env: dict | None = None) -> list[str]:
@@ -464,6 +576,41 @@ def test_dispatch_full_mode(monkeypatch, capsys, sample_video, tmp_path):
     })
     assert lines[-1] == f'STATE:done:{out}'
     assert os.path.exists(out)
+
+
+def test_dispatch_refuses_a_temporal_job_a_machine_cannot_carry(
+        monkeypatch, capsys, existing_file):
+    """
+    Refused before any work: the renderer greys the method out, but a preset,
+    a stale setting or an older renderer can still ask for it, and finding out
+    by way of a twenty-minute export is not finding out.
+    """
+    monkeypatch.setattr(backend_main.os, 'cpu_count', lambda: 2)
+    lines, status = _dispatch(monkeypatch, capsys, {
+        'inputPath': existing_file, 'outputPath': '/tmp/out.mp4',
+        'roi': {'x': 10, 'y': 10, 'w': 60, 'h': 40},
+        'method': 'temporal', 'mode': 'full',
+    })
+
+    assert status == 1
+    assert len(lines) == 1  # nothing was started, so nothing else was said
+    assert lines[0] == 'ERROR:temporal requires at least 4 cores and 4GB RAM'
+
+
+def test_dispatch_lets_the_other_methods_through_on_the_same_machine(
+        monkeypatch, capsys, existing_file):
+    """The bar belongs to the one engine that needs it."""
+    monkeypatch.setattr(backend_main.os, 'cpu_count', lambda: 2)
+    lines, status = _dispatch(monkeypatch, capsys, {
+        'inputPath': existing_file, 'outputPath': '/tmp/out.mp4',
+        'roi': {'x': 10, 'y': 10, 'w': 60, 'h': 40},
+        'method': 'inpaint', 'mode': 'full',
+    })
+
+    # It fails — the fixture is not a real video — but on the video, not on
+    # the hardware.
+    assert status == 1
+    assert 'temporal requires' not in ' '.join(lines)
 
 
 @requires_ffmpeg

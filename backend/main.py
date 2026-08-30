@@ -76,7 +76,7 @@ PREVIEW_SECONDS = 1.0
 
 
 RemovalMethod = Literal['inpaint', 'blur', 'solidFill', 'cloneStamp', 'temporal']
-TemporalQuality = Literal['fast', 'balanced', 'quality']
+TemporalQuality = Literal['fast', 'balanced', 'high']
 JobMode = Literal['full', 'preview', 'preview_frame']
 
 # The outputPath a mode with no output file names. The renderer sends the
@@ -345,6 +345,93 @@ TEMPORAL_PROCESS_END = 94.0
 ENCODE_END = 98.0
 
 
+# What temporal inpainting needs to be worth starting. The renderer greys the
+# method out below this, but the check belongs here too: a preset saved on a
+# bigger machine, a stale setting, or an older renderer can all still ask for
+# it, and finding out by way of a twenty-minute export is not finding out.
+TEMPORAL_MIN_CORES = 4
+TEMPORAL_MIN_MEMORY_MB = 4096
+
+# A preview of a temporal job is capped shorter than the others. It is the
+# same work per frame as the export, so the length the user picked to see a
+# result quickly would instead be the slowest thing in the app.
+TEMPORAL_PREVIEW_MAX_SECONDS = 3.0
+
+
+def total_memory_mb() -> int | None:
+    """
+    Physical memory in MB, or None where this platform will not say.
+
+    None means "do not know", never "not enough": a machine whose memory
+    cannot be read is left to try rather than refused.
+    """
+    try:
+        pages = os.sysconf('SC_PHYS_PAGES')
+        page_size = os.sysconf('SC_PAGE_SIZE')
+        if pages > 0 and page_size > 0:
+            return pages * page_size // (1024 * 1024)
+    except (AttributeError, ValueError, OSError):
+        pass  # not a POSIX sysconf platform, or the name is missing
+
+    if sys.platform == 'win32':
+        try:
+            import ctypes  # noqa: PLC0415 — only needed on this branch
+
+            class _MemoryStatus(ctypes.Structure):
+                _fields_ = [
+                    ('dwLength', ctypes.c_ulong),
+                    ('dwMemoryLoad', ctypes.c_ulong),
+                    ('ullTotalPhys', ctypes.c_ulonglong),
+                    ('ullAvailPhys', ctypes.c_ulonglong),
+                    ('ullTotalPageFile', ctypes.c_ulonglong),
+                    ('ullAvailPageFile', ctypes.c_ulonglong),
+                    ('ullTotalVirtual', ctypes.c_ulonglong),
+                    ('ullAvailVirtual', ctypes.c_ulonglong),
+                    ('ullAvailExtendedVirtual', ctypes.c_ulonglong),
+                ]
+
+            status = _MemoryStatus()
+            status.dwLength = ctypes.sizeof(_MemoryStatus)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return int(status.ullTotalPhys) // (1024 * 1024)
+        except (OSError, AttributeError, ValueError):
+            pass
+    return None
+
+
+def check_temporal_supported() -> None:
+    """
+    Refuse a temporal job on a machine too small to finish it in reasonable
+    time. Raises with the sentence the renderer classifies into plain language.
+
+    Only a reading that is both available and below the bar refuses; an
+    unknown machine gets the benefit of the doubt, as it does in the UI.
+    """
+    cores = os.cpu_count() or 0
+    memory = total_memory_mb()
+    too_few_cores = 0 < cores < TEMPORAL_MIN_CORES
+    too_little_memory = memory is not None and 0 < memory < TEMPORAL_MIN_MEMORY_MB
+
+    if too_few_cores or too_little_memory:
+        raise ValueError(
+            f'temporal requires at least {TEMPORAL_MIN_CORES} cores and '
+            f'{TEMPORAL_MIN_MEMORY_MB // 1024}GB RAM'
+        )
+
+
+def preview_length_for(method: str, length: float) -> float:
+    """
+    How much of the video a preview of this method may cover.
+
+    A temporal preview is the export's per-frame cost on every frame of the
+    clip, so a five-second one is a wait the button does not look like it is
+    asking for.
+    """
+    if method == 'temporal':
+        return min(length, TEMPORAL_PREVIEW_MAX_SECONDS)
+    return length
+
+
 def stage_bounds(method: str) -> tuple[float, float]:
     """Where extraction and the per-frame work end on the bar, for a method."""
     if method == 'temporal':
@@ -482,6 +569,11 @@ def main() -> None:
             # carries the field and the reason, not just the error count.
             raise ValueError(describe_validation_error(exc)) from exc
 
+        # Before any work: a job this machine cannot carry is refused now,
+        # not after the frames have been extracted.
+        if config.method == 'temporal':
+            check_temporal_supported()
+
         if config.mode == 'preview_frame':
             # Loading a video is two ffmpeg calls and no UI of its own, so it
             # says where it is: without that the canvas shows a spinner and
@@ -513,7 +605,10 @@ def main() -> None:
             clip_path = os.path.join(temp_dir, 'preview_src.mp4')
             src_meta = ff_utils.probe_video(config.inputPath)
             emit_meta(src_meta)
-            start, length = preview_window(src_meta['duration'], config.previewSeconds)
+            start, length = preview_window(
+                src_meta['duration'],
+                preview_length_for(config.method, config.previewSeconds),
+            )
             ff_utils.extract_clip(config.inputPath, clip_path, start=start, duration=length)
             # Run pipeline on the clip, writing to the safe external path
             preview_config = config.model_copy(update={'outputPath': preview_out})

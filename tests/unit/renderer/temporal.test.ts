@@ -6,8 +6,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PREVIEW_TEMPORAL_QUALITY,
+  previewSecondsFor,
   TEMPORAL_MIN_CPUS,
   TEMPORAL_MIN_MEMORY_MB,
+  TEMPORAL_PREVIEW_MAX_SECONDS,
   TEMPORAL_QUALITIES,
   previewIsDowngraded,
   qualityForJob,
@@ -16,6 +18,7 @@ import {
 import { estimateTemporalSeconds, formatEstimate } from '../../../renderer/src/estimate';
 import type { SystemInfo } from '../../../renderer/src/types';
 import { LOCALES, setLocale, t } from '../../../renderer/src/i18n';
+import { classifyError, hasTechnicalDetail } from '../../../renderer/src/errors';
 import { BUILT_IN_PRESETS, DEFAULT_PARAMS, presetLabel } from '../../../renderer/src/presets';
 import { sameSettings } from '../../../renderer/src/hooks/useHistory';
 import { STAGES, stageLabel, stageState } from '../../../renderer/src/stages';
@@ -112,7 +115,30 @@ describe('the temporal surface', () => {
   });
 
   it('offers the quality steps slowest last', () => {
-    expect(TEMPORAL_QUALITIES).toEqual(['fast', 'balanced', 'quality']);
+    expect(TEMPORAL_QUALITIES).toEqual(['fast', 'balanced', 'high']);
+  });
+
+  it('caps a temporal preview and leaves the other methods alone', () => {
+    // A preview costs the same per frame as the export, so the length that
+    // makes the other methods feel instant is the slowest thing in the app
+    // for this one. The backend caps it too.
+    expect(previewSecondsFor('temporal', 5)).toBe(TEMPORAL_PREVIEW_MAX_SECONDS);
+    expect(previewSecondsFor('temporal', 1)).toBe(1);
+    expect(previewSecondsFor('inpaint', 5)).toBe(5);
+    expect(previewSecondsFor('blur', 5)).toBe(5);
+  });
+
+  it('explains the backend refusing the method, keeping the detail', () => {
+    // The UI greys the method out for the same reason; this is the path a
+    // preset or an older renderer takes to the same wall.
+    const refused = classifyError('temporal requires at least 4 cores and 4GB RAM');
+    expect(refused.key).toBe('errors.temporalUnsupported');
+    expect(hasTechnicalDetail(refused)).toBe(true);
+
+    setLocale('en');
+    expect(t(refused.key!)).toContain('4 processor cores');
+    setLocale('zh');
+    expect(t(refused.key!)).toContain('时间修复');
   });
 
   it('translates the stage the backend reports for a temporal job', () => {
@@ -149,7 +175,7 @@ describe('the temporal surface', () => {
     expect(sameSettings(base, base)).toBe(true);
     expect(sameSettings(base, {
       ...base,
-      params: { ...DEFAULT_PARAMS, temporalQuality: 'quality' },
+      params: { ...DEFAULT_PARAMS, temporalQuality: 'high' },
     })).toBe(false);
   });
 });
@@ -168,15 +194,15 @@ describe('the quality a preview actually runs at', () => {
   });
 
   it('does not touch the setting for a method that never reads it', () => {
-    expect(qualityForJob('inpaint', 'quality', true)).toBe('quality');
+    expect(qualityForJob('inpaint', 'high', true)).toBe('high');
   });
 
   it('says so only when the preview and the export would differ', () => {
-    expect(previewIsDowngraded('temporal', 'quality')).toBe(true);
+    expect(previewIsDowngraded('temporal', 'high')).toBe(true);
     expect(previewIsDowngraded('temporal', 'balanced')).toBe(true);
     // Already at the preview setting: there is nothing to warn about.
     expect(previewIsDowngraded('temporal', PREVIEW_TEMPORAL_QUALITY)).toBe(false);
-    expect(previewIsDowngraded('inpaint', 'quality')).toBe(false);
+    expect(previewIsDowngraded('inpaint', 'high')).toBe(false);
   });
 
   it('explains itself in both languages, naming the setting it used', () => {
@@ -197,7 +223,7 @@ describe('the before-you-start estimate', () => {
   it('costs a slower quality as more time', () => {
     const fast = estimateTemporalSeconds({ ...clip, quality: 'fast' })!;
     const balanced = estimateTemporalSeconds({ ...clip, quality: 'balanced' })!;
-    const best = estimateTemporalSeconds({ ...clip, quality: 'quality' })!;
+    const best = estimateTemporalSeconds({ ...clip, quality: 'high' })!;
     expect(fast).toBeLessThan(balanced);
     expect(balanced).toBeLessThan(best);
   });
@@ -212,6 +238,18 @@ describe('the before-you-start estimate', () => {
     const few = estimateTemporalSeconds({ ...clip, cpuCount: 2, quality: 'balanced' })!;
     const many = estimateTemporalSeconds({ ...clip, cpuCount: 8, quality: 'balanced' })!;
     expect(many).toBeCloseTo(few / 4, 5);
+  });
+
+  it('prices the preview that will actually run, not the one that was asked for', () => {
+    // A temporal preview is capped shorter than the dial offers, so a forecast
+    // built from the raw setting would promise a wait that never happens.
+    const asked = 5;
+    const actual = previewSecondsFor('temporal', asked);
+    expect(actual).toBe(TEMPORAL_PREVIEW_MAX_SECONDS);
+
+    const priced = estimateTemporalSeconds({ fps: 30, seconds: actual, quality: 'fast', cpuCount: 4 })!;
+    const naive = estimateTemporalSeconds({ fps: 30, seconds: asked, quality: 'fast', cpuCount: 4 })!;
+    expect(priced).toBeLessThan(naive);
   });
 
   it('still answers when the host did not say how many cores it has', () => {

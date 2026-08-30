@@ -60,7 +60,7 @@ OUTPUT_PATH = os.environ.get(
 #: stopped working rather than merely changed. The single-frame fill scores
 #: around 30 on this scene, so these are all "much better than not trying",
 #: not "pixel-exact".
-MAE_CEILING = {'fast': 20.0, 'balanced': 15.0, 'quality': 12.0}
+MAE_CEILING = {'fast': 20.0, 'balanced': 15.0, 'high': 12.0}
 
 
 def _measure(pan: Pan, mask: np.ndarray, quality: str) -> dict:
@@ -101,7 +101,7 @@ def test_record_speed_and_accuracy_per_quality():
         'has_dis': hasattr(__import__('cv2'), 'DISOpticalFlow_create'),
         'single_frame_mae': round(float(np.mean(baseline_errors)), 3),
         'qualities': [_measure(pan, mask, name)
-                      for name in ('fast', 'balanced', 'quality')],
+                      for name in ('fast', 'balanced', 'high')],
     }
 
     with open(OUTPUT_PATH, 'w', encoding='utf-8') as handle:

@@ -11,7 +11,7 @@ export interface ROI {
 export type RemovalMethod = 'inpaint' | 'blur' | 'solidFill' | 'cloneStamp' | 'temporal';
 
 /** Speed against edge quality for the temporal engine. */
-export type TemporalQuality = 'fast' | 'balanced' | 'quality';
+export type TemporalQuality = 'fast' | 'balanced' | 'high';
 
 export interface JobConfig {
   inputPath: string;

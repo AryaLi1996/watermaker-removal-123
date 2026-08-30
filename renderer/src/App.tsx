@@ -8,7 +8,7 @@ import DonePanel from './components/DonePanel';
 import TemporalFallbackNote from './components/TemporalFallbackNote';
 import PresetPicker from './components/PresetPicker';
 import type { AppState, JobConfig, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
-import { temporalAvailability, qualityForJob } from './capabilities';
+import { previewSecondsFor, qualityForJob, temporalAvailability, TEMPORAL_PREVIEW_MAX_SECONDS } from './capabilities';
 import { normalizeCoordinates, defaultOutputName, formatDuration, mediaUrl, NULL_SINK } from './utils';
 import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX } from './errors';
 import type { FriendlyError } from './errors';
@@ -200,9 +200,12 @@ function App() {
     if (!inputPath) return;
     const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
     // outputPath is passed as placeholder; backend generates its own temp file for the preview clip
-    // A preview runs temporal fill at its quickest setting whatever the dial
-    // says: see `qualityForJob`. The export keeps the user's choice.
-    const payload: JobConfig = { inputPath, outputPath: outputPath ?? NULL_SINK, roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy, temporalQuality: qualityForJob(method, temporalQuality, true), previewSeconds };
+    // A temporal preview is cut down twice over, because both dimensions cost
+    // the same per frame: shorter than the other methods run (`previewSecondsFor`,
+    // capped in the backend too, so the length sent is the length that runs),
+    // and at the quickest quality whatever the dial says (`qualityForJob`).
+    // The export keeps both of the user's choices.
+    const payload: JobConfig = { inputPath, outputPath: outputPath ?? NULL_SINK, roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy, temporalQuality: qualityForJob(method, temporalQuality, true), previewSeconds: previewSecondsFor(method, previewSeconds) };
     setProgress(0); setStateLabel(stageState('preparingPreview')); setSamples([]); setTemporalFallback(null); setAppState('processing');
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobProgress((value) => {
@@ -457,7 +460,7 @@ function App() {
               onSaveCurrent={saveCurrentPreset}
             />
 
-            <MethodPicker method={method} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} temporalQuality={temporalQuality} temporal={temporal} videoMeta={videoMeta} cpuCount={systemInfo?.cpuCount} previewSeconds={previewSeconds} disabled={!isLoaded} onChange={handleMethodChange} />
+            <MethodPicker method={method} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} temporalQuality={temporalQuality} temporal={temporal} videoMeta={videoMeta} cpuCount={systemInfo?.cpuCount} previewSeconds={previewSecondsFor(method, previewSeconds)} disabled={!isLoaded} onChange={handleMethodChange} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{t('file.output')}</p>
@@ -491,7 +494,7 @@ function App() {
                   <select
                     id="preview-seconds"
                     data-testid="preview-seconds"
-                    value={previewSeconds}
+                    value={previewSecondsFor(method, previewSeconds)}
                     disabled={!isLoaded}
                     onChange={(e) => setPreviewSeconds(Number(e.target.value))}
                     style={{
@@ -501,7 +504,15 @@ function App() {
                     }}
                   >
                     {PREVIEW_SECOND_OPTIONS.map(({ value, labelKey }) => (
-                      <option key={value} value={value}>{t(labelKey)}</option>
+                      <option
+                        key={value}
+                        value={value}
+                        // Offering a length this method will not run would be
+                        // a control that lies about what it does.
+                        disabled={method === 'temporal' && value > TEMPORAL_PREVIEW_MAX_SECONDS}
+                      >
+                        {t(labelKey)}
+                      </option>
                     ))}
                   </select>
                 </div>

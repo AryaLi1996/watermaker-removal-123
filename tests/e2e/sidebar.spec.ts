@@ -145,7 +145,7 @@ test.describe('Sidebar — method picker', () => {
     await temporal.click();
     await expect(page.getByTestId('quality-balanced')).toBeVisible();
     await expect(page.getByTestId('quality-fast')).toBeVisible();
-    await expect(page.getByTestId('quality-quality')).toBeVisible();
+    await expect(page.getByTestId('quality-high')).toBeVisible();
     await expect(page.getByTestId('temporal-note')).toContainText('Slower');
 
     await page.getByTestId('quality-fast').click();
@@ -191,7 +191,7 @@ test.describe('Sidebar — method picker', () => {
     }
     await temporal.click();
 
-    await page.getByTestId('quality-quality').click();
+    await page.getByTestId('quality-high').click();
     await expect(page.getByTestId('temporal-preview-fast')).toContainText('Fast');
 
     // Already at the quick setting: nothing differs, so nothing is claimed.
@@ -201,8 +201,8 @@ test.describe('Sidebar — method picker', () => {
     // And the swap is real, not only described. The dial is checked here,
     // before the button is pressed: starting a job replaces the whole sidebar
     // with the progress panel, so there is no dial left to read afterwards.
-    await page.getByTestId('quality-quality').click();
-    await expect(page.getByTestId('quality-quality')).toHaveAttribute('aria-pressed', 'true');
+    await page.getByTestId('quality-high').click();
+    await expect(page.getByTestId('quality-high')).toHaveAttribute('aria-pressed', 'true');
     await page.getByTestId('btn-preview').click();
 
     // Loading the video already sent a 'preview_frame' job of its own, so the

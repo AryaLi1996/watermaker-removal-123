@@ -72,9 +72,58 @@ class Pan:
         ).mean())
 
 
+class Rotation:
+    """
+    The same backdrop turning about a point outside the frame, so the mark is
+    uncovered by rotation rather than by a pan.
+
+    Worth its own scene: a translation-only motion model fits a pan perfectly
+    and a rotation not at all, so this is what shows the affine fit earning
+    its extra four coefficients.
+    """
+
+    def __init__(self, degrees_per_frame: float = 3.0, roi=ROI):
+        self.scene = _scene()
+        self.degrees = degrees_per_frame
+        self.roi = roi
+        self.width, self.height = SIZE
+
+    def truth(self, index: int) -> np.ndarray:
+        base = np.ascontiguousarray(
+            self.scene[30:30 + self.height, 500:500 + self.width])
+        matrix = cv2.getRotationMatrix2D((0.0, float(self.height)),
+                                         self.degrees * index, 1.0)
+        return cv2.warpAffine(base, matrix, (self.width, self.height),
+                              flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+
+    def frame(self, index: int) -> np.ndarray:
+        x, y, w, h = self.roi
+        frame = self.truth(index)
+        frame[y:y + h, x:x + w] = 250
+        return frame
+
+    def source(self, index: int, count: int = 40):
+        def at(offset: int):
+            wanted = index + offset
+            return self.frame(wanted) if 0 <= wanted < count else None
+        return at
+
+    def error(self, index: int, result: np.ndarray) -> float:
+        x, y, w, h = self.roi
+        return float(np.abs(
+            result[y:y + h, x:x + w].astype(int)
+            - self.truth(index)[y:y + h, x:x + w].astype(int)
+        ).mean())
+
+
 @pytest.fixture(scope='module')
 def pan() -> Pan:
     return Pan()
+
+
+@pytest.fixture(scope='module')
+def rotation() -> Rotation:
+    return Rotation()
 
 
 @pytest.fixture(scope='module')
@@ -85,7 +134,7 @@ def mask() -> np.ndarray:
 # ─── quality settings ────────────────────────────────────────────────────────
 
 def test_every_quality_the_ui_offers_has_settings():
-    for name in ('fast', 'balanced', 'quality'):
+    for name in ('fast', 'balanced', 'high'):
         assert temporal_core.quality_settings(name).name == name
 
 
@@ -96,7 +145,7 @@ def test_an_unknown_quality_names_the_ones_that_exist():
 
 def test_the_settings_get_slower_and_more_thorough_in_order():
     fast, balanced, best = (temporal_core.quality_settings(n)
-                            for n in ('fast', 'balanced', 'quality'))
+                            for n in ('fast', 'balanced', 'high'))
     assert fast.max_links < balanced.max_links < best.max_links
     assert fast.flow_scale <= balanced.flow_scale <= best.flow_scale
     assert fast.reach == fast.max_links
@@ -112,7 +161,7 @@ def test_flow_estimator_follows_opencvs_direction_convention():
     following = cv2.cvtColor(
         np.ascontiguousarray(scene[:, 100 + shift:500 + shift]), cv2.COLOR_BGR2GRAY)
 
-    flow = temporal_core.flow_estimator(temporal_core.quality_settings('quality'))(
+    flow = temporal_core.flow_estimator(temporal_core.quality_settings('high'))(
         previous, following)
     assert np.median(flow[..., 0]) == pytest.approx(-shift, abs=1.0)
     assert np.median(flow[..., 1]) == pytest.approx(0, abs=1.0)
@@ -231,7 +280,7 @@ def test_it_recovers_the_background_a_pan_uncovered(pan, mask):
     """The whole point: better than reconstructing from this frame alone."""
     index = 12
     temporal = temporal_core.process_temporal(
-        pan.frame(index), mask, ROI, pan.source(index), quality='quality')
+        pan.frame(index), mask, ROI, pan.source(index), quality='high')
     single_frame = process_inpaint(pan.frame(index), mask, radius=3, roi=ROI)
 
     assert pan.error(index, temporal) < pan.error(index, single_frame) / 2
@@ -242,9 +291,9 @@ def test_quality_buys_accuracy(pan, mask):
     errors = {
         name: pan.error(index, temporal_core.process_temporal(
             pan.frame(index), mask, ROI, pan.source(index), quality=name))
-        for name in ('fast', 'balanced', 'quality')
+        for name in ('fast', 'balanced', 'high')
     }
-    assert errors['quality'] <= errors['balanced'] <= errors['fast']
+    assert errors['high'] <= errors['balanced'] <= errors['fast']
 
 
 def test_it_leaves_everything_outside_the_selection_alone(pan, mask):
@@ -266,7 +315,7 @@ def test_the_seam_is_gradual_rather_than_a_step(pan, mask):
     """
     index = 12
     result = temporal_core.process_temporal(
-        pan.frame(index), mask, ROI, pan.source(index), quality='quality')
+        pan.frame(index), mask, ROI, pan.source(index), quality='high')
 
     x, y, w, h = ROI
     row = result[y + h // 2, x - 12:x + 12].astype(int)
@@ -310,7 +359,7 @@ def test_it_does_not_copy_the_mark_from_a_neighbouring_frame(pan, mask):
     """
     index = 12
     result = temporal_core.process_temporal(
-        pan.frame(index), mask, ROI, pan.source(index), quality='quality')
+        pan.frame(index), mask, ROI, pan.source(index), quality='high')
 
     x, y, w, h = ROI
     middle = result[y + 8:y + h - 8, x + 8:x + w - 8]
@@ -352,8 +401,8 @@ def test_a_walk_that_gets_nowhere_stops_early(pan, mask):
         asked.append(offset)
         return pan.frame(7)
 
-    settings = temporal_core.quality_settings('quality')
-    temporal_core.process_temporal(pan.frame(7), mask, ROI, source, quality='quality')
+    settings = temporal_core.quality_settings('high')
+    temporal_core.process_temporal(pan.frame(7), mask, ROI, source, quality='high')
 
     # A couple of steps to fill the feather band, then the patience rule ends
     # it — nothing like the sixteen frames either side the setting allows for.
@@ -371,8 +420,48 @@ def test_a_pan_stops_walking_as_soon_as_it_has_covered_the_mark(pan, mask):
         asked.append(offset)
         return source(offset)
 
-    temporal_core.process_temporal(pan.frame(index), mask, ROI, counted, quality='quality')
-    assert len(asked) < temporal_core.quality_settings('quality').reach
+    temporal_core.process_temporal(pan.frame(index), mask, ROI, counted, quality='high')
+    assert len(asked) < temporal_core.quality_settings('high').reach
+
+
+# ─── how good is good enough ─────────────────────────────────────────────────
+#
+# The thresholds below are absolute rather than relative, because "better than
+# inpainting" is not the promise the feature makes — recovering the background
+# is. They are set well above the measured figures (in brackets) so ordinary
+# variation between OpenCV builds does not fail the suite, and far below what
+# single-frame inpainting scores on the same scene.
+
+def test_a_pan_is_reconstructed_to_within_a_few_pixel_values(pan, mask):
+    index = 12
+    balanced = pan.error(index, temporal_core.process_temporal(
+        pan.frame(index), mask, ROI, pan.source(index), quality='balanced'))
+    high = pan.error(index, temporal_core.process_temporal(
+        pan.frame(index), mask, ROI, pan.source(index), quality='high'))
+    single_frame = pan.error(index, process_inpaint(pan.frame(index), mask, radius=3, roi=ROI))
+
+    assert balanced < 6.0    # measured 4.5
+    assert high < 1.0        # measured 0.4
+    assert single_frame > 15.0  # measured 17.4 — what the mark hides today
+
+
+def test_a_rotation_is_reconstructed_too(rotation):
+    """
+    The mark is uncovered by the picture turning, not sliding. A model that
+    could only measure translation would score no better than inpainting here.
+    """
+    mask = create_mask(*SIZE, *ROI)
+    index = 12
+    balanced = rotation.error(index, temporal_core.process_temporal(
+        rotation.frame(index), mask, ROI, rotation.source(index), quality='balanced'))
+    high = rotation.error(index, temporal_core.process_temporal(
+        rotation.frame(index), mask, ROI, rotation.source(index), quality='high'))
+    single_frame = rotation.error(
+        index, process_inpaint(rotation.frame(index), mask, radius=3, roi=ROI))
+
+    assert balanced < 6.0    # measured 2.5
+    assert high < 2.0        # measured 1.7
+    assert single_frame > 8.0   # measured 11.9
 
 
 # ─── failures that must not take the job with them ───────────────────────────
