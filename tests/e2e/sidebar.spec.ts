@@ -198,9 +198,11 @@ test.describe('Sidebar — method picker', () => {
     await page.getByTestId('quality-fast').click();
     await expect(page.getByTestId('temporal-preview-fast')).toBeHidden();
 
-    // And the swap is real, not only described: the preview job goes out at
-    // 'fast' while the dial still reads 'High'.
+    // And the swap is real, not only described. The dial is checked here,
+    // before the button is pressed: starting a job replaces the whole sidebar
+    // with the progress panel, so there is no dial left to read afterwards.
     await page.getByTestId('quality-quality').click();
+    await expect(page.getByTestId('quality-quality')).toHaveAttribute('aria-pressed', 'true');
     await page.getByTestId('btn-preview').click();
 
     // Loading the video already sent a 'preview_frame' job of its own, so the
@@ -212,11 +214,10 @@ test.describe('Sidebar — method picker', () => {
       )
       .toBe(1);
 
+    // The dial read 'High'; the job went out at 'fast'.
     const preview = (await recordedJobs(electronApp)).find((j) => j.mode === 'preview')!;
     expect(preview.method).toBe('temporal');
     expect(preview.temporalQuality).toBe('fast');
-    // The dial itself did not move: the export still gets what was chosen.
-    await expect(page.getByTestId('quality-quality')).toHaveAttribute('aria-pressed', 'true');
   });
 });
 
