@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onJobDone:     (cb) => ipcRenderer.on('job:done',     (_e, v) => cb(v)),
   onJobMeta:     (cb) => ipcRenderer.on('job:meta',     (_e, v) => cb(v)),
   onPreviewReady:(cb) => ipcRenderer.on('job:preview-ready', (_e, v) => cb(v)),
+  // {degraded, total} — frames the temporal engine could not rebuild
+  onTemporalFallback: (cb) => ipcRenderer.on('job:temporal-fallback', (_e, v) => cb(v)),
 
   // Auto-update
   onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (_e, v) => cb(v)),
@@ -33,7 +35,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Remove all listeners (call on component unmount)
   removeJobListeners: () => {
-    ['job:progress','job:state','job:error','job:done','job:meta','job:preview-ready']
+    ['job:progress','job:state','job:error','job:done','job:meta','job:preview-ready',
+     'job:temporal-fallback']
       .forEach((ch) => ipcRenderer.removeAllListeners(ch));
   },
 });

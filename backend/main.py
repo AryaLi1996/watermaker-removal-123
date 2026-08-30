@@ -6,6 +6,8 @@ Stdout protocol:
   PROGRESS:<float>   — numeric progress (0–100)
   STATE:stage:<key>  — pipeline stage, as a key the renderer translates
   STATE:preview_ready:<path> — quick-preview output path
+  STATE:temporal_fallback:<n>/<total> — frames a failure pushed onto the
+                       single-frame fill; sent once, only when n > 0
   ERROR:<string>     — fatal error; Electron shows modal
   DEBUG:<string>     — ignored in production Electron build
 
@@ -77,6 +79,27 @@ RemovalMethod = Literal['inpaint', 'blur', 'solidFill', 'cloneStamp', 'temporal'
 TemporalQuality = Literal['fast', 'balanced', 'high']
 JobMode = Literal['full', 'preview', 'preview_frame']
 
+# The outputPath a mode with no output file names. The renderer sends the
+# POSIX spelling on every platform — it is a protocol token there, not a path
+# it opens — and this process's own `os.devnull` is accepted alongside it so a
+# caller that built the value the platform's way (NUL on Windows) is understood
+# too. Nothing is ever written to it: `preview` and `preview_frame` both
+# replace outputPath with a temp file of their own before the encode.
+POSIX_NULL_SINK = '/dev/null'
+
+
+def is_null_sink(path: str) -> bool:
+    """Whether `path` is the "no output file" sentinel rather than a real one."""
+    if path == POSIX_NULL_SINK:
+        return True
+    # `os.devnull` is 'NUL' on Windows, where device names are case-insensitive
+    # ('nul' is the same device). Elsewhere it is the POSIX spelling already,
+    # and paths there are case-sensitive, so the comparison must be exact.
+    if os.name == 'nt':
+        return path.upper() == os.devnull.upper()
+    return path == os.devnull
+
+
 
 class ROI(BaseModel):
     x: Pixels
@@ -126,8 +149,9 @@ class JobConfig(BaseModel):
     @field_validator('outputPath')
     @classmethod
     def output_must_be_absolute(cls, v: str) -> str:
-        # Allow '/dev/null' as a valid sentinel for probe-only modes.
-        if v == '/dev/null':
+        # The probe-only modes have no output file to name, and say so with a
+        # sentinel rather than an empty string this check would reject.
+        if is_null_sink(v):
             return v
         if not os.path.isabs(v):
             raise ValueError(f"outputPath must be an absolute path: {v!r}")
@@ -162,6 +186,39 @@ def force_utf8_stdio() -> None:
 
 def emit(msg: str) -> None:
     print(msg, flush=True)
+
+
+def report_temporal_fallback(degraded: int, total: int) -> None:
+    """
+    Tell the UI how many frames a failure pushed onto the single-frame fill.
+
+    Said once, after the fact, rather than as a stage while it happens: a
+    frame falling back is not a phase of the pipeline, and flipping the status
+    line for one frame in three thousand would read as the whole export
+    failing, then vanish. The user still needs to know the output is not
+    entirely what they asked for, so the count goes to the panel that reports
+    the finished file.
+
+    Silent when nothing fell back, which is nearly every run: a notice reading
+    "0 frames could not be rebuilt" is worse than no notice.
+    """
+    if degraded > 0:
+        emit(f'STATE:temporal_fallback:{degraded}/{total}')
+
+
+def describe_exception(exc: BaseException) -> str:
+    """
+    One line naming what went wrong, for an exception that may not say.
+
+    Most failures here carry a sentence worth forwarding verbatim. A few carry
+    nothing at all: `str(MemoryError())` is the empty string, and an empty
+    `ERROR:` line reaches the renderer as "the backend gave no reason" — the
+    one message that is never true when the process died of memory pressure.
+    The class name is a poor sentence but an honest one, and it is what the
+    renderer matches on to offer the advice that fits.
+    """
+    text = str(exc).strip()
+    return text or type(exc).__name__
 
 
 def describe_validation_error(exc: ValidationError) -> str:
@@ -461,7 +518,7 @@ def run_pipeline(
         # Maps 0–100 of the per-frame work onto its share of the total.
         progress(extract_end + pct / 100 * (process_end - extract_end))
 
-    load_processor().run_batch(
+    degraded = load_processor().run_batch(
         frame_paths,
         removal_config,
         meta['width'],
@@ -469,6 +526,8 @@ def run_pipeline(
         progress_callback=_progress_cb,
     )
     progress(process_end)
+
+    report_temporal_fallback(degraded, len(frame_paths))
 
     # 4. Reassemble
     stage('encoding')
@@ -564,7 +623,7 @@ def main() -> None:
         # The raw text goes through as-is: the renderer classifies it into plain
         # language and keeps the original for a bug report, so replacing it here
         # with a generic sentence would discard the only diagnostic there is.
-        emit(f'ERROR:{exc}')
+        emit(f'ERROR:{describe_exception(exc)}')
         # Exit non-zero so a caller that cannot read the protocol still sees the
         # failure. Electron treats a zero exit as success and would otherwise
         # follow the ERROR line with job:done, on an export that never happened.

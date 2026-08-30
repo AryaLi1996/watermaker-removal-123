@@ -74,3 +74,14 @@ export function defaultOutputName(inputPath: string): string {
 export function mediaUrl(filePath: string): string {
   return `wm-media://file/${encodeURIComponent(filePath)}`;
 }
+
+/**
+ * The outputPath a job with no output file names.
+ *
+ * `preview` and `preview_frame` both write to a temp file the backend picks,
+ * so the field is a protocol token rather than a path anything opens. The
+ * backend recognises this spelling on every platform (`is_null_sink` in
+ * `backend/main.py`) alongside the host's own null device, so the renderer
+ * does not have to know what platform it is on.
+ */
+export const NULL_SINK = '/dev/null';

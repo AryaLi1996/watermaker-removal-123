@@ -194,3 +194,64 @@ def test_stage_keys_stay_on_one_line(capsys):
     lines = capsys.readouterr().out.strip().splitlines()
     assert all(line.startswith('STATE:stage:') for line in lines)
     assert len(lines) == 6
+
+
+# ─── the "no output file" sentinel ───────────────────────────────────────────
+
+def test_the_posix_sentinel_is_accepted_on_every_platform():
+    """It is a protocol token the renderer sends, not a path anything opens."""
+    assert backend_main.is_null_sink('/dev/null')
+
+
+def test_this_platforms_own_null_device_is_accepted():
+    assert backend_main.is_null_sink(os.devnull)
+
+
+def test_a_real_output_path_is_not_mistaken_for_the_sentinel(tmp_path):
+    assert not backend_main.is_null_sink(str(tmp_path / 'out.mp4'))
+    assert not backend_main.is_null_sink('/dev/nullish.mp4')
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows device names only')
+def test_windows_accepts_the_null_device_in_any_case():
+    assert backend_main.is_null_sink('nul')
+    assert backend_main.is_null_sink('NUL')
+
+
+# ─── describing a failure that does not describe itself ──────────────────────
+
+def test_an_exception_with_a_message_is_forwarded_verbatim():
+    """The renderer classifies the raw text; rewriting it here loses detail."""
+    assert backend_main.describe_exception(
+        ValueError('No video stream found')) == 'No video stream found'
+
+
+def test_a_silent_exception_is_named_by_its_class():
+    """
+    `str(MemoryError())` is empty, and an empty ERROR line reaches the user as
+    "the backend gave no reason" — the one thing that is certainly untrue when
+    the process ran out of memory.
+    """
+    assert backend_main.describe_exception(MemoryError()) == 'MemoryError'
+
+
+# ─── reporting frames that fell back ─────────────────────────────────────────
+
+def test_the_fallback_count_is_emitted_as_a_fraction(capsys):
+    """The UI shows both halves: "3 of 240" means something, "3" does not."""
+    backend_main.report_temporal_fallback(3, 240)
+    assert capsys.readouterr().out.strip() == 'STATE:temporal_fallback:3/240'
+
+
+def test_nothing_is_emitted_when_no_frame_fell_back(capsys):
+    """
+    Nearly every run takes this path. A notice reading "0 frames could not be
+    rebuilt" is worse than no notice at all.
+    """
+    backend_main.report_temporal_fallback(0, 240)
+    assert capsys.readouterr().out == ''
+
+
+def test_a_run_where_every_frame_fell_back_still_reports_honestly(capsys):
+    backend_main.report_temporal_fallback(240, 240)
+    assert capsys.readouterr().out.strip() == 'STATE:temporal_fallback:240/240'

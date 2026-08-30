@@ -26,6 +26,7 @@ async function startCollecting(page: Page) {
     api.onPreviewReady((v: string) => events.push({ type: 'preview', value: v }));
     api.onJobError((v: string) => events.push({ type: 'error', value: v }));
     api.onJobDone((v: string | null) => events.push({ type: 'done', value: v }));
+    api.onTemporalFallback((v: object) => events.push({ type: 'temporal-fallback', value: v }));
   });
 }
 
@@ -97,6 +98,26 @@ test.describe('job stdout protocol', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0].value).toBe('Something went wrong in the backend');
     expect(received.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  test('the count of frames that could not be rebuilt arrives on its own channel', async ({ page }) => {
+    // It must not come through job:state: that channel is the status line,
+    // and the raw protocol text would be shown to the user as prose.
+    await startCollecting(page);
+    await startJob(page, { scenario: 'temporal_fallback', outputPath: '/tmp/temporal-out.mp4' });
+
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'done'),
+      { timeout: 10_000 },
+    );
+    const received = await events(page);
+
+    expect(received.find((e) => e.type === 'temporal-fallback')?.value)
+      .toEqual({ degraded: 7, total: 90 });
+    // Parsed into numbers on its own channel, and never leaked to the status line.
+    expect(received.some(
+      (e) => e.type === 'state' && String(e.value).includes('temporal_fallback'),
+    )).toBe(false);
   });
 
   test('a finished preview job does not report itself as a completed export', async ({ page }) => {

@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { VideoMeta } from '../types';
 import { OWN_MESSAGE_PREFIX, PREVIEW_TIMEOUT_MS } from '../errors';
 import { stageState } from '../stages';
+import { NULL_SINK } from '../utils';
 
 export interface VideoLoaderCallbacks {
   /** The probe results, as soon as they arrive — before the still is ready. */
@@ -108,7 +109,7 @@ export function useVideoLoader({ onMeta, onFrame, onError }: VideoLoaderCallback
     void Promise.resolve(
       api.startJob({
         inputPath: next,
-        outputPath: '/dev/null',
+        outputPath: NULL_SINK,
         roi: { x: 0, y: 0, w: 1, h: 1 },
         method: 'inpaint',
         mode: 'preview_frame',

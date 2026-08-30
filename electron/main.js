@@ -318,6 +318,16 @@ function handleBackendLine(line, ctx) {
     ctx.outputPath = doneMatch[1].trim();
     return;
   }
+  // Must precede the generic STATE match below, which would otherwise show
+  // the raw line to the user as a status label.
+  const fallbackMatch = line.match(/^STATE:temporal_fallback:(\d+)\/(\d+)$/);
+  if (fallbackMatch) {
+    send('job:temporal-fallback', {
+      degraded: Number(fallbackMatch[1]),
+      total: Number(fallbackMatch[2]),
+    });
+    return;
+  }
   const progressMatch = line.match(/^PROGRESS:([\d.]+)$/);
   if (progressMatch) {
     send('job:progress', parseFloat(progressMatch[1]));

@@ -5,7 +5,7 @@
  * transitions and button enable/disable logic without a real video.
  */
 import { test, expect } from './fixtures/electron-fixture';
-import type { ElectronApplication } from '@playwright/test';
+import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
 
 test.use({ appTag: 'sidebar' });
@@ -19,6 +19,39 @@ async function stubStartJob(electronApp: ElectronApplication) {
     ipcMain.removeHandler('job:start');
     ipcMain.handle('job:start', () => true);
   });
+}
+
+/**
+ * Same stub, but keeping every payload so a test can assert on what the
+ * renderer actually asked the backend for — which is the only place the
+ * preview's quality downgrade is observable.
+ */
+async function recordStartJob(electronApp: ElectronApplication) {
+  await electronApp.evaluate(({ ipcMain, app }) => {
+    (app as unknown as { __jobs: unknown[] }).__jobs = [];
+    ipcMain.removeHandler('job:start');
+    ipcMain.handle('job:start', (_event, payload) => {
+      (app as unknown as { __jobs: unknown[] }).__jobs.push(payload);
+      return true;
+    });
+  });
+}
+
+function recordedJobs(electronApp: ElectronApplication) {
+  return electronApp.evaluate(
+    ({ app }) => (app as unknown as { __jobs: Record<string, unknown>[] }).__jobs,
+  );
+}
+
+/** Get the app out of the empty state and into the editor, with jobs stubbed. */
+async function loadVideo(page: Page, electronApp: ElectronApplication) {
+  if (!(await page.locator('[data-testid="empty-state"]').isVisible())) return;
+  await electronApp.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('dialog:openFile');
+    ipcMain.handle('dialog:openFile', async () => '/fake/video.mp4');
+  });
+  await page.getByTestId('empty-state').click();
+  await expect(page.getByTestId('btn-export')).toBeVisible({ timeout: 5_000 });
 }
 
 test.describe('Sidebar — output path', () => {
@@ -121,6 +154,70 @@ test.describe('Sidebar — method picker', () => {
     // Back to a single-frame method: the dial belongs to this one alone.
     await page.getByTestId('method-inpaint').click();
     await expect(page.getByTestId('temporal-note')).toBeHidden();
+  });
+
+  // The method is new enough that "Beta" is the only thing the list says
+  // about it, and that is a label, not an explanation.
+  test('temporal fill explains what it does on hover', async ({ page, electronApp }) => {
+    await stubStartJob(electronApp);
+    await loadVideo(page, electronApp);
+
+    const info = page.getByTestId('temporal-info');
+    await expect(info).toBeVisible();
+    const explanation = await info.getAttribute('title');
+    expect(explanation).toBeTruthy();
+    expect(explanation).toContain('motion');
+
+    // The glyph is the affordance; the whole row carries the explanation, so
+    // it is reachable without hitting an 11px target — and so a screen reader
+    // gets it as the button's description rather than as part of its name.
+    const temporal = page.getByTestId('method-temporal');
+    if (await temporal.isEnabled()) {
+      expect(await temporal.getAttribute('title')).toBe(explanation);
+    }
+    expect(await info.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  // A preview that is quietly rougher than the export it stands in for is a
+  // preview that misleads, so the swap is stated wherever it applies.
+  test('a temporal preview says it runs at the quick setting', async ({ page, electronApp }) => {
+    await recordStartJob(electronApp);
+    await loadVideo(page, electronApp);
+
+    const temporal = page.getByTestId('method-temporal');
+    if (!(await temporal.isEnabled())) {
+      await expect(temporal).toContainText('Needs at least');
+      return;
+    }
+    await temporal.click();
+
+    await page.getByTestId('quality-high').click();
+    await expect(page.getByTestId('temporal-preview-fast')).toContainText('Fast');
+
+    // Already at the quick setting: nothing differs, so nothing is claimed.
+    await page.getByTestId('quality-fast').click();
+    await expect(page.getByTestId('temporal-preview-fast')).toBeHidden();
+
+    // And the swap is real, not only described. The dial is checked here,
+    // before the button is pressed: starting a job replaces the whole sidebar
+    // with the progress panel, so there is no dial left to read afterwards.
+    await page.getByTestId('quality-high').click();
+    await expect(page.getByTestId('quality-high')).toHaveAttribute('aria-pressed', 'true');
+    await page.getByTestId('btn-preview').click();
+
+    // Loading the video already sent a 'preview_frame' job of its own, so the
+    // clip preview has to be picked out by mode rather than taken as the first.
+    await expect
+      .poll(
+        async () => (await recordedJobs(electronApp)).filter((j) => j.mode === 'preview').length,
+        { timeout: 5_000 },
+      )
+      .toBe(1);
+
+    // The dial read 'High'; the job went out at 'fast'.
+    const preview = (await recordedJobs(electronApp)).find((j) => j.mode === 'preview')!;
+    expect(preview.method).toBe('temporal');
+    expect(preview.temporalQuality).toBe('fast');
   });
 });
 

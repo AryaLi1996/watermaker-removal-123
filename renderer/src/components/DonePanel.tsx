@@ -3,19 +3,35 @@
  * Auto-transitions back to loaded state after 5 seconds.
  */
 import { useEffect, useState } from 'react';
+import type { TemporalFallback } from '../types';
+import TemporalFallbackNote from './TemporalFallbackNote';
 import { useTranslation } from '../hooks/useTranslation';
 
 interface DonePanelProps {
   outputPath: string;
+  /** Frames the temporal engine could not rebuild, or null if none were. */
+  temporalFallback?: TemporalFallback | null;
   onReveal: () => void;
   onReset: () => void;
 }
 
-export default function DonePanel({ outputPath, onReveal, onReset }: DonePanelProps) {
+export default function DonePanel({
+  outputPath,
+  temporalFallback = null,
+  onReveal,
+  onReset,
+}: DonePanelProps) {
   const { t } = useTranslation();
   const [countdown, setCountdown] = useState(5);
 
+  // An export with a caveat stays on screen. Five seconds is enough to read
+  // "done" and nothing else, and the one panel that carries the news about a
+  // degraded result is the wrong thing to snatch away — there is nowhere else
+  // the user could go to find it again.
+  const hasNotice = !!temporalFallback && temporalFallback.degraded > 0;
+
   useEffect(() => {
+    if (hasNotice) return;
     const interval = setInterval(() => {
       setCountdown((c) => {
         if (c <= 1) { clearInterval(interval); onReset(); return 0; }
@@ -23,7 +39,7 @@ export default function DonePanel({ outputPath, onReveal, onReset }: DonePanelPr
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [onReset]);
+  }, [onReset, hasNotice]);
 
   const filename = outputPath.split(/[\\/]/).pop() ?? outputPath;
 
@@ -43,6 +59,8 @@ export default function DonePanel({ outputPath, onReveal, onReset }: DonePanelPr
 
       <p style={{ color: '#a1a1aa', fontSize: 11, wordBreak: 'break-all' }}>{filename}</p>
 
+      <TemporalFallbackNote report={temporalFallback} />
+
       <button
         data-testid="btn-reveal"
         onClick={onReveal}
@@ -59,9 +77,22 @@ export default function DonePanel({ outputPath, onReveal, onReset }: DonePanelPr
         {t('actions.reveal')}
       </button>
 
-      <p style={{ color: '#52525b', fontSize: 11 }}>
-        {t('status.returningIn', { seconds: countdown })}
-      </p>
+      {hasNotice ? (
+        <button
+          data-testid="btn-done-dismiss"
+          onClick={onReset}
+          style={{
+            background: 'transparent', border: 'none', padding: 0,
+            color: '#52525b', fontSize: 11, cursor: 'pointer', textAlign: 'left',
+          }}
+        >
+          {t('actions.dismiss')}
+        </button>
+      ) : (
+        <p style={{ color: '#52525b', fontSize: 11 }}>
+          {t('status.returningIn', { seconds: countdown })}
+        </p>
+      )}
     </div>
   );
 }

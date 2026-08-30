@@ -118,7 +118,7 @@ def _read_cached(path: str):
     return frame
 
 
-def _process_temporal_frame(args: tuple) -> None:
+def _process_temporal_frame(args: tuple) -> 'str | None':
     """
     Worker function for temporal inpainting: read one frame, reconstruct it
     from the neighbours the dispatcher listed, and write it to `out_path`.
@@ -126,6 +126,12 @@ def _process_temporal_frame(args: tuple) -> None:
     Neighbours are decoded on demand. The engine walks outwards only as far as
     it needs to, so on footage that moves, most of the listed frames are never
     read at all.
+
+    Returns the reason this frame fell back to the single-frame fill, or None
+    where it was rebuilt as intended. That answer travels back through the
+    pool — one short string per frame, against the whole frame this worker
+    already wrote to disk rather than returned — so the dispatcher can count
+    them and the user can be told once at the end.
     """
     frame_path, neighbor_paths, out_path, config, mask_params = args
 
@@ -140,11 +146,17 @@ def _process_temporal_frame(args: tuple) -> None:
         path = neighbor_paths.get(offset)
         return _read_cached(path) if path else None
 
-    result = apply_removal(frame, mask, config, neighbor_at=neighbor_at)
+    # A list rather than a nonlocal: the engine reports at most once per
+    # frame, and the first reason is the one worth keeping.
+    degraded: list[str] = []
+
+    result = apply_removal(frame, mask, config, neighbor_at=neighbor_at,
+                           on_degraded=degraded.append)
     cv2.imwrite(out_path, result, [cv2.IMWRITE_PNG_COMPRESSION, PNG_COMPRESSION])
+    return degraded[0] if degraded else None
 
 
-def _process_single_frame(args: tuple) -> None:
+def _process_single_frame(args: tuple) -> 'str | None':
     """
     Worker function: read one PNG, apply removal, write back.
     Designed for starmap — receives a pre-built tuple for pickle compatibility.
@@ -161,6 +173,8 @@ def _process_single_frame(args: tuple) -> None:
 
     result = apply_removal(frame, mask, config)
     cv2.imwrite(frame_path, result, [cv2.IMWRITE_PNG_COMPRESSION, PNG_COMPRESSION])
+    # Nothing to report: the single-frame engines either work or raise.
+    return None
 
 
 def _temporal_jobs(
@@ -204,10 +218,16 @@ def _commit_temporal(frame_paths: list[str], out_dir: str) -> None:
     shutil.rmtree(out_dir, ignore_errors=True)
 
 
-def _dispatch(worker, jobs: list[tuple], sequential_limit: int, progress_callback=None) -> None:
+def _dispatch(
+    worker, jobs: list[tuple], sequential_limit: int, progress_callback=None,
+) -> list:
     """
     Run `worker` over `jobs`, on all available cores when there is enough work
     to be worth a pool and in this process when there is not.
+
+    Returns whatever the workers returned, in no particular order — the pool
+    is unordered and the callers only count. A worker that has nothing to say
+    returns None, which is most of them.
     """
     total = len(jobs)
     # More workers than frames only pays start-up costs for processes that
@@ -218,13 +238,15 @@ def _dispatch(worker, jobs: list[tuple], sequential_limit: int, progress_callbac
         if progress_callback:
             progress_callback(done / total * 100)
 
+    results = []
+
     if total <= sequential_limit or workers == 1:
         # In-process, with OpenCV left on its own defaults: nothing else is
         # competing for the machine, and there is no pool to wait for.
         for done, job in enumerate(jobs, start=1):
-            worker(job)
+            results.append(worker(job))
             report(done)
-        return
+        return results
 
     # Apply the thread setting *before* forking, never inside the workers:
     # calling into OpenCV's threading machinery after a fork deadlocks a child
@@ -243,12 +265,15 @@ def _dispatch(worker, jobs: list[tuple], sequential_limit: int, progress_callbac
         with multiprocessing.Pool(processes=workers) as pool:
             global _current_pool
             _current_pool = pool
-            for _ in pool.imap_unordered(worker, jobs, chunksize=chunk_size):
+            for result in pool.imap_unordered(worker, jobs, chunksize=chunk_size):
+                results.append(result)
                 completed += 1
                 report(completed)
             _current_pool = None
     finally:
         cv2.setNumThreads(previous_threads)
+
+    return results
 
 
 def run_batch(
@@ -257,7 +282,7 @@ def run_batch(
     width: int,
     height: int,
     progress_callback=None,
-) -> None:
+) -> int:
     """
     Process every frame with the engine the config names.
 
@@ -267,12 +292,15 @@ def run_batch(
     :param width: Native video width (pixels).
     :param height: Native video height (pixels).
     :param progress_callback: Optional callable(float 0–100) for progress.
+    :returns: How many frames a failure pushed onto the single-frame fill.
+        Zero for every engine but the temporal one, and for a temporal run
+        where nothing went wrong.
     """
     roi = config['roi']
     mask_params = (width, height, roi['x'], roi['y'], roi['w'], roi['h'])
 
     if len(frame_paths) == 0:
-        return
+        return 0
 
     if config.get('method') == 'temporal':
         # Written beside the frames, not among them: ffmpeg reassembles the
@@ -281,10 +309,11 @@ def run_batch(
             os.path.dirname(os.path.dirname(frame_paths[0])), TEMPORAL_OUTPUT_DIR)
         os.makedirs(out_dir, exist_ok=True)
         jobs = _temporal_jobs(frame_paths, config, mask_params, out_dir)
-        _dispatch(_process_temporal_frame, jobs,
-                  TEMPORAL_SEQUENTIAL_FRAME_LIMIT, progress_callback)
+        reasons = _dispatch(_process_temporal_frame, jobs,
+                            TEMPORAL_SEQUENTIAL_FRAME_LIMIT, progress_callback)
         _commit_temporal(frame_paths, out_dir)
-        return
+        return sum(1 for reason in reasons if reason)
 
     jobs = [(fp, config, mask_params) for fp in frame_paths]
     _dispatch(_process_single_frame, jobs, SEQUENTIAL_FRAME_LIMIT, progress_callback)
+    return 0

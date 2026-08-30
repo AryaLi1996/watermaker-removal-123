@@ -64,3 +64,35 @@ export function previewSecondsFor(method: RemovalMethod, seconds: number): numbe
 
 /** The quality steps, slowest last — the order the picker shows them in. */
 export const TEMPORAL_QUALITIES: TemporalQuality[] = ['fast', 'balanced', 'high'];
+
+/**
+ * The quality a preview runs at, whatever the dial says.
+ *
+ * A preview exists to answer one question — is the box in the right place,
+ * and is the mark gone — and it has to answer it while the user is still
+ * looking. At the top setting temporal fill takes long enough that the honest
+ * description of the wait is "minutes", which is not a preview; it is an
+ * export with a smaller output. The dial still decides the export, and the UI
+ * says so beside it, because the preview is now a slightly rougher picture
+ * than the export will be and hiding that would be the worse trade.
+ */
+export const PREVIEW_TEMPORAL_QUALITY: TemporalQuality = 'fast';
+
+/**
+ * The quality to send for a job, given what the user picked.
+ *
+ * Only temporal fill reads the setting at all, so a preview of any other
+ * method passes through untouched.
+ */
+export function qualityForJob(
+  method: RemovalMethod,
+  chosen: TemporalQuality,
+  isPreview: boolean,
+): TemporalQuality {
+  return isPreview && method === 'temporal' ? PREVIEW_TEMPORAL_QUALITY : chosen;
+}
+
+/** Whether the preview will run at something other than the chosen setting. */
+export function previewIsDowngraded(method: RemovalMethod, chosen: TemporalQuality): boolean {
+  return method === 'temporal' && chosen !== PREVIEW_TEMPORAL_QUALITY;
+}

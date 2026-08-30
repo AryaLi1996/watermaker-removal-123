@@ -5,13 +5,17 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  PREVIEW_TEMPORAL_QUALITY,
   previewSecondsFor,
   TEMPORAL_MIN_CPUS,
   TEMPORAL_MIN_MEMORY_MB,
   TEMPORAL_PREVIEW_MAX_SECONDS,
   TEMPORAL_QUALITIES,
+  previewIsDowngraded,
+  qualityForJob,
   temporalAvailability,
 } from '../../../renderer/src/capabilities';
+import { estimateTemporalSeconds, formatEstimate } from '../../../renderer/src/estimate';
 import type { SystemInfo } from '../../../renderer/src/types';
 import { LOCALES, setLocale, t } from '../../../renderer/src/i18n';
 import { classifyError, hasTechnicalDetail } from '../../../renderer/src/errors';
@@ -173,5 +177,131 @@ describe('the temporal surface', () => {
       ...base,
       params: { ...DEFAULT_PARAMS, temporalQuality: 'high' },
     })).toBe(false);
+  });
+});
+
+describe('the quality a preview actually runs at', () => {
+  it('drops a temporal preview to the quick setting whatever the dial says', () => {
+    for (const chosen of TEMPORAL_QUALITIES) {
+      expect(qualityForJob('temporal', chosen, true)).toBe(PREVIEW_TEMPORAL_QUALITY);
+    }
+  });
+
+  it('leaves the export on the setting the user picked', () => {
+    for (const chosen of TEMPORAL_QUALITIES) {
+      expect(qualityForJob('temporal', chosen, false)).toBe(chosen);
+    }
+  });
+
+  it('does not touch the setting for a method that never reads it', () => {
+    expect(qualityForJob('inpaint', 'high', true)).toBe('high');
+  });
+
+  it('says so only when the preview and the export would differ', () => {
+    expect(previewIsDowngraded('temporal', 'high')).toBe(true);
+    expect(previewIsDowngraded('temporal', 'balanced')).toBe(true);
+    // Already at the preview setting: there is nothing to warn about.
+    expect(previewIsDowngraded('temporal', PREVIEW_TEMPORAL_QUALITY)).toBe(false);
+    expect(previewIsDowngraded('inpaint', 'high')).toBe(false);
+  });
+
+  it('explains itself in both languages, naming the setting it used', () => {
+    for (const locale of LOCALES) {
+      setLocale(locale);
+      const sentence = t('method.temporalPreviewFast', {
+        quality: t(`quality.${PREVIEW_TEMPORAL_QUALITY}`),
+      });
+      expect(sentence).not.toContain('{quality}');
+      expect(sentence).toContain(t(`quality.${PREVIEW_TEMPORAL_QUALITY}`));
+    }
+  });
+});
+
+describe('the before-you-start estimate', () => {
+  const clip = { fps: 30, seconds: 60, cpuCount: 8 };
+
+  it('costs a slower quality as more time', () => {
+    const fast = estimateTemporalSeconds({ ...clip, quality: 'fast' })!;
+    const balanced = estimateTemporalSeconds({ ...clip, quality: 'balanced' })!;
+    const best = estimateTemporalSeconds({ ...clip, quality: 'high' })!;
+    expect(fast).toBeLessThan(balanced);
+    expect(balanced).toBeLessThan(best);
+  });
+
+  it('costs a longer video as more time, in proportion', () => {
+    const short = estimateTemporalSeconds({ ...clip, seconds: 30, quality: 'balanced' })!;
+    const long = estimateTemporalSeconds({ ...clip, seconds: 60, quality: 'balanced' })!;
+    expect(long).toBeCloseTo(short * 2, 5);
+  });
+
+  it('spreads the work across the cores the host reported', () => {
+    const few = estimateTemporalSeconds({ ...clip, cpuCount: 2, quality: 'balanced' })!;
+    const many = estimateTemporalSeconds({ ...clip, cpuCount: 8, quality: 'balanced' })!;
+    expect(many).toBeCloseTo(few / 4, 5);
+  });
+
+  it('prices the preview that will actually run, not the one that was asked for', () => {
+    // A temporal preview is capped shorter than the dial offers, so a forecast
+    // built from the raw setting would promise a wait that never happens.
+    const asked = 5;
+    const actual = previewSecondsFor('temporal', asked);
+    expect(actual).toBe(TEMPORAL_PREVIEW_MAX_SECONDS);
+
+    const priced = estimateTemporalSeconds({ fps: 30, seconds: actual, quality: 'fast', cpuCount: 4 })!;
+    const naive = estimateTemporalSeconds({ fps: 30, seconds: asked, quality: 'fast', cpuCount: 4 })!;
+    expect(priced).toBeLessThan(naive);
+  });
+
+  it('still answers when the host did not say how many cores it has', () => {
+    expect(estimateTemporalSeconds({ fps: 30, seconds: 60, quality: 'fast' })).toBeGreaterThan(0);
+  });
+
+  it('says nothing rather than something wrong about unusable metadata', () => {
+    expect(estimateTemporalSeconds({ fps: 0, seconds: 60, quality: 'fast' })).toBeNull();
+    expect(estimateTemporalSeconds({ fps: 30, seconds: 0, quality: 'fast' })).toBeNull();
+    expect(estimateTemporalSeconds({ fps: NaN, seconds: 60, quality: 'fast' })).toBeNull();
+  });
+
+  it('is phrased vaguely, because it is a forecast', () => {
+    setLocale('en');
+    expect(formatEstimate(12, t)).toBe('about 10s');
+    expect(formatEstimate(300, t)).toBe('about 5 min');
+    // Never "about 0s": a job always takes some time to start.
+    expect(formatEstimate(1, t)).toBe('about 5s');
+    expect(formatEstimate(null, t)).toBeNull();
+  });
+
+  it('reads as a sentence in both languages', () => {
+    for (const locale of LOCALES) {
+      setLocale(locale);
+      for (const key of ['estimate.export', 'estimate.preview']) {
+        const line = t(key, { time: formatEstimate(120, t)! });
+        expect(line).not.toContain('{time}');
+        expect(line).not.toBe(key);
+      }
+      expect(t('method.temporalTooltip')).not.toBe('method.temporalTooltip');
+    }
+  });
+});
+
+describe('reporting frames that could not be rebuilt', () => {
+  it('says how many of how many, in both languages', () => {
+    for (const locale of LOCALES) {
+      setLocale(locale);
+      const line = t('status.temporalFallback', { degraded: 3, total: 240 });
+      expect(line).not.toBe('status.temporalFallback');
+      expect(line).not.toContain('{degraded}');
+      expect(line).not.toContain('{total}');
+      expect(line).toContain('3');
+      expect(line).toContain('240');
+    }
+  });
+
+  it('names the fill those frames actually got, so the wording is checkable', () => {
+    // The fallback is the single-frame engine, which the UI calls Smart Fill;
+    // saying so is what makes the notice actionable rather than alarming.
+    setLocale('en');
+    expect(t('status.temporalFallback', { degraded: 1, total: 2 }))
+      .toContain(t('method.inpaint'));
   });
 });

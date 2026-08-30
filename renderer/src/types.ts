@@ -38,6 +38,16 @@ export interface VideoMeta {
   audioCodec: string | null;
 }
 
+/**
+ * How many frames the temporal engine could not rebuild from their
+ * neighbours, out of how many it processed. Reported once, when the job is
+ * over — a frame falling back is not a stage of the pipeline.
+ */
+export interface TemporalFallback {
+  degraded: number;
+  total: number;
+}
+
 export type AppState = 'empty' | 'loaded' | 'processing' | 'done' | 'error';
 
 /**
@@ -69,6 +79,7 @@ declare global {
       onJobDone: (cb: (outputPath: string | null) => void) => void;
       onJobMeta: (cb: (meta: VideoMeta) => void) => void;
       onPreviewReady: (cb: (path: string) => void) => void;
+      onTemporalFallback: (cb: (report: TemporalFallback) => void) => void;
       onUpdateAvailable: (cb: (version: string | null) => void) => void;
       onUpdateDownloaded: (cb: (version: string | null) => void) => void;
       installUpdate: () => Promise<boolean>;
