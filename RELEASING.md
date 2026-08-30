@@ -297,6 +297,10 @@ The workflow lives at [`.github/workflows/release.yml`](.github/workflows/releas
 
 Tags containing `-` (e.g. `v1.0.0-beta`) are published as **pre-releases**.
 
+Each `build` job's summary carries a direct download link for its
+`installers-<os>` artifact — the way to get a build out of a manual
+`workflow_dispatch` run, which packages the installers but publishes nothing.
+
 Tests are not re-run here — `.github/workflows/ci.yml` covers every push to
 `main` and every PR. Run `npm run test:all` before tagging.
 

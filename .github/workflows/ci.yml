@@ -57,15 +57,23 @@ jobs:
           "$PY" -m pip install --upgrade pip
           "$PY" -m pip install -r backend/requirements.txt
 
+      # Every report is written under a path the upload steps below collect:
+      # reports/ (JUnit XML), htmlcov/ and coverage.xml (backend coverage),
+      # playwright-report/ and test-results/ (E2E), docs/screenshots/.
       - name: Backend tests with coverage
         shell: bash
         working-directory: backend
         run: |
           if [ -f .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
-          "$PY" -m pytest ../tests/unit/backend --cov --cov-report=term-missing
+          "$PY" -m pytest ../tests/unit/backend \
+            --cov \
+            --cov-report=term-missing \
+            --cov-report=html:../htmlcov \
+            --cov-report=xml:../coverage.xml \
+            --junitxml=../reports/backend-junit.xml
 
       - name: Renderer tests
-        run: npm run test:frontend
+        run: npm run test:frontend:ci
 
       - name: Lint
         run: npm run lint --prefix renderer
@@ -82,10 +90,160 @@ jobs:
         if: runner.os != 'Linux'
         run: npm run test:e2e
 
-      - name: Upload Playwright report on failure
-        if: failure()
+      # ─── Artifacts ──────────────────────────────────────────────────────
+      # Everything the run produced is uploaded whether the job passed or
+      # failed — a red build is then diagnosable from the run page alone,
+      # and a green one still hands over the coverage and E2E reports.
+      # Steps after a failure never run, so the artifacts of a suite that
+      # never started are simply absent; `if-no-files-found` keeps that from
+      # failing the upload.
+
+      - name: Upload test reports
+        id: art-reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ matrix.os }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload backend coverage
+        id: art-coverage
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-${{ matrix.os }}
+          path: |
+            htmlcov/
+            coverage.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Playwright report
+        id: art-playwright
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ matrix.os }}
           path: playwright-report/
-          retention-days: 7
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Traces, videos and screenshots are only retained for failing tests,
+      # so this artifact is usually empty and simply skipped.
+      - name: Upload Playwright traces and videos
+        id: art-traces
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces-${{ matrix.os }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload docs screenshots
+        id: art-screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-screenshots-${{ matrix.os }}
+          path: docs/screenshots/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # The bundle is the same on every runner, so one copy is enough.
+      - name: Upload renderer build
+        id: art-renderer
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: renderer-dist
+          path: renderer/dist/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # upload-artifact hands back a direct link per artifact; putting them in
+      # the job summary saves scrolling to the bottom of the run page.
+      - name: Link the artifacts in the job summary
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          OS_NAME: ${{ matrix.os }}
+          URL_REPORTS: ${{ steps.art-reports.outputs.artifact-url }}
+          URL_COVERAGE: ${{ steps.art-coverage.outputs.artifact-url }}
+          URL_PLAYWRIGHT: ${{ steps.art-playwright.outputs.artifact-url }}
+          URL_TRACES: ${{ steps.art-traces.outputs.artifact-url }}
+          URL_SCREENSHOTS: ${{ steps.art-screenshots.outputs.artifact-url }}
+          URL_RENDERER: ${{ steps.art-renderer.outputs.artifact-url }}
+        run: |
+          # An artifact that was skipped for want of files has no URL.
+          row() {
+            if [ -n "$2" ]; then
+              printf '| [%s](%s) | %s |\n' "$1" "$2" "$3"
+            fi
+          }
+          {
+            echo "### Artifacts — $OS_NAME"
+            echo
+            echo "| Download | Contents |"
+            echo "|---|---|"
+            row "test-reports-$OS_NAME"       "$URL_REPORTS"     "JUnit XML from the backend and renderer suites"
+            row "backend-coverage-$OS_NAME"   "$URL_COVERAGE"    "Browsable \`htmlcov/index.html\` plus \`coverage.xml\`"
+            row "playwright-report-$OS_NAME"  "$URL_PLAYWRIGHT"  "Playwright HTML report for the E2E run"
+            row "playwright-traces-$OS_NAME"  "$URL_TRACES"      "Traces, videos and screenshots of failing E2E tests"
+            row "docs-screenshots-$OS_NAME"   "$URL_SCREENSHOTS" "App screenshots captured during the E2E run"
+            row "renderer-dist"               "$URL_RENDERER"    "Built renderer bundle"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  artifacts:
+    name: Bundle artifacts
+    needs: test
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Listing the run's artifacts through the API needs this.
+      actions: read
+    steps:
+      # No `name` filter: this takes every artifact the matrix produced.
+      - name: Collect every artifact from this run
+        uses: actions/download-artifact@v4
+        with:
+          path: ci-artifacts
+
+      # One zip with all three runners' reports in it, so reviewing a run is a
+      # single download instead of one per platform per report.
+      - name: Bundle them into a single download
+        id: bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-artifacts
+          path: ci-artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Index the artifacts in the run summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          BUNDLE_URL: ${{ steps.bundle.outputs.artifact-url }}
+        run: |
+          {
+            echo "## CI artifacts"
+            echo
+            if [ -n "$BUNDLE_URL" ]; then
+              echo "**[Download everything in one zip]($BUNDLE_URL)** — every report from every runner."
+              echo
+            fi
+            echo "| Artifact | Size | Download |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
+            | jq -r --arg repo "$REPO" --arg run "$RUN_ID" '
+                def human: if . >= 1048576 then "\((. / 104857.6 | round) / 10) MB" else "\((. / 102.4 | round) / 10) KB" end;
+                .artifacts[]
+                | "| \(.name) | \(.size_in_bytes | human) | [download](https://github.com/\($repo)/actions/runs/\($run)/artifacts/\(.id)) |"
+              ' >> "$GITHUB_STEP_SUMMARY"

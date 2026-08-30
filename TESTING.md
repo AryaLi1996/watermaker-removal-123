@@ -408,26 +408,48 @@ Vitest picks up test files from both `renderer/src/` and `tests/unit/renderer/` 
 
 ## 8. CI/CD (GitHub Actions)
 
-All tests run automatically in the [`.github/workflows/release.yml`](.github/workflows/release.yml) pipeline, which triggers on every version tag push (`v*`).
+Two workflows: [`ci.yml`](.github/workflows/ci.yml) runs the whole suite on
+every push to `main` and every pull request, and
+[`release.yml`](.github/workflows/release.yml) packages and publishes on a
+version tag (`v*`).
 
-The `test` job (runs first, blocks all builds on failure):
+`ci.yml` runs one `test` job per platform — `ubuntu-latest`, `macos-latest`,
+`windows-latest` — each of which installs ffmpeg, then runs the backend suite
+with coverage, the renderer suite, ESLint, the renderer build and the
+Playwright E2E suite (under `xvfb-run` on Linux). A `Bundle artifacts` job
+follows.
 
-```yaml
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/setup-python@v5
-      - run: pip install -r backend/requirements.txt
-      - run: python -m pytest tests/unit/backend -v
-      - uses: actions/setup-node@v4
-      - run: npm ci && npm ci --prefix renderer
-      - run: npm run test:run --prefix renderer
-```
+### Downloading what a run produced
 
-After `test` passes, three platform builds run in parallel (`build-mac`, `build-win`, `build-linux`), and the `publish` job assembles the GitHub Release.
+Every report is uploaded whether the job passed or failed, so a red build can
+be diagnosed without re-running anything locally. Each job's summary links its
+own artifacts directly, and the `Bundle artifacts` job adds a table of every
+artifact in the run plus a single `all-artifacts` zip holding all of them.
 
-To trigger the pipeline:
+| Artifact | What is in it | Written by |
+|---|---|---|
+| `test-reports-<os>` | JUnit XML for the backend and renderer suites | `reports/` |
+| `backend-coverage-<os>` | `htmlcov/index.html` and `coverage.xml` | `pytest --cov` |
+| `playwright-report-<os>` | The browsable Playwright HTML report | `playwright-report/` |
+| `playwright-traces-<os>` | Traces, videos and screenshots of failing E2E tests | `test-results/` |
+| `docs-screenshots-<os>` | App screenshots from `capture-screenshots.spec.ts` | `docs/screenshots/` |
+| `renderer-dist` | The built renderer bundle (Linux job only) | `renderer/dist/` |
+| `all-artifacts` | Every artifact above, from all three runners, in one zip | `Bundle artifacts` |
+
+A step that never ran leaves no files behind — if the backend suite fails, the
+E2E steps are skipped and their artifacts are simply absent from the run.
+
+`npm run test:frontend:ci` is the CI variant of the renderer run: same tests,
+plus a JUnit report at `reports/renderer-junit.xml`.
+
+### Releases
+
+`release.yml` packages on `ubuntu-latest`, `macos-latest`, `macos-15-intel`
+and `windows-latest`, uploads an `installers-<os>` artifact from each (linked
+from that job's summary), and the `publish` job attaches them all to the
+GitHub Release.
+
+To trigger the release pipeline:
 
 ```bash
 npm version patch          # bumps version, creates tag
