@@ -213,23 +213,31 @@ test.describe('progress estimate', () => {
   });
 });
 
-test.describe('preview duration', () => {
-  /** Replace job:start with a handler that records what the renderer sent. */
-  async function captureStartJob(electronApp: ElectronApplication) {
-    await electronApp.evaluate(({ ipcMain }) => {
-      (globalThis as Record<string, unknown>).__lastJobPayload = null;
-      ipcMain.removeHandler('job:start');
-      ipcMain.handle('job:start', (_event, payload) => {
-        (globalThis as Record<string, unknown>).__lastJobPayload = payload;
-        return true;
-      });
+/** Replace job:start with a handler that records what the renderer sent. */
+async function captureStartJob(electronApp: ElectronApplication) {
+  await electronApp.evaluate(({ ipcMain }) => {
+    (globalThis as Record<string, unknown>).__lastJobPayload = null;
+    ipcMain.removeHandler('job:start');
+    ipcMain.handle('job:start', (_event, payload) => {
+      (globalThis as Record<string, unknown>).__lastJobPayload = payload;
+      return true;
     });
-  }
+  });
+}
 
-  async function lastJobPayload(electronApp: ElectronApplication) {
-    return electronApp.evaluate(() =>
-      (globalThis as Record<string, unknown>).__lastJobPayload as { mode?: string; previewSeconds?: number } | null);
-  }
+interface CapturedJob {
+  mode?: string;
+  method?: string;
+  previewSeconds?: number;
+  temporalQuality?: string;
+}
+
+async function lastJobPayload(electronApp: ElectronApplication) {
+  return electronApp.evaluate(() =>
+    (globalThis as Record<string, unknown>).__lastJobPayload as CapturedJob | null);
+}
+
+test.describe('preview duration', () => {
 
   test('defaults to one second and sends the chosen length instead', async ({ page, electronApp }) => {
     await mockDialogs(electronApp);
@@ -262,6 +270,60 @@ test.describe('preview duration', () => {
     const payload = await lastJobPayload(electronApp);
     expect(payload?.previewSeconds).toBeUndefined();
 
+    await page.getByTestId('btn-cancel').click();
+  });
+});
+
+test.describe('temporal fill', () => {
+  /**
+   * The method is greyed out on a machine below the bar, and CI runners are
+   * not all above it. Where it is unavailable there is nothing to drive, and
+   * the greying-out is covered in sidebar.spec.ts.
+   */
+  async function selectTemporal(page: import('@playwright/test').Page): Promise<boolean> {
+    const temporal = page.getByTestId('method-temporal');
+    if (!(await temporal.isEnabled())) return false;
+    await temporal.click();
+    await expect(page.getByTestId('temporal-note')).toBeVisible();
+    return true;
+  }
+
+  test('an export carries the method and the quality that were chosen', async ({ page, electronApp }) => {
+    await mockDialogs(electronApp);
+    await captureStartJob(electronApp);
+    await loadVideo(page);
+    if (!(await selectTemporal(page))) test.skip();
+
+    await page.getByTestId('quality-high').click();
+    await page.getByTestId('btn-export').click();
+
+    await expect.poll(() => lastJobPayload(electronApp)).toMatchObject({
+      mode: 'full',
+      method: 'temporal',
+      temporalQuality: 'high',
+    });
+    await page.getByTestId('btn-cancel').click();
+  });
+
+  test('a preview is capped at three seconds', async ({ page, electronApp }) => {
+    await mockDialogs(electronApp);
+    await captureStartJob(electronApp);
+    await loadVideo(page);
+
+    // Pick the longest preview first, then switch method: the length has to
+    // follow, because the backend will cap it whatever the control says.
+    await page.getByTestId('preview-seconds').selectOption('5');
+    if (!(await selectTemporal(page))) test.skip();
+
+    await expect(page.getByTestId('preview-seconds')).toHaveValue('3');
+    await expect(page.getByTestId('preview-seconds').locator('option[value="5"]')).toBeDisabled();
+
+    await page.getByTestId('btn-preview').click();
+    await expect.poll(() => lastJobPayload(electronApp)).toMatchObject({
+      mode: 'preview',
+      method: 'temporal',
+      previewSeconds: 3,
+    });
     await page.getByTestId('btn-cancel').click();
   });
 });

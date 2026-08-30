@@ -112,7 +112,7 @@ test.describe('Sidebar — method picker', () => {
     await temporal.click();
     await expect(page.getByTestId('quality-balanced')).toBeVisible();
     await expect(page.getByTestId('quality-fast')).toBeVisible();
-    await expect(page.getByTestId('quality-quality')).toBeVisible();
+    await expect(page.getByTestId('quality-high')).toBeVisible();
     await expect(page.getByTestId('temporal-note')).toContainText('Slower');
 
     await page.getByTestId('quality-fast').click();

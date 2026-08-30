@@ -24,6 +24,10 @@ interface ErrorRule {
 // raised and tell the user their file was corrupt.
 const RULES: ErrorRule[] = [
   { match: /python environment not found/i, key: 'errors.pythonMissing' },
+  // The backend refuses a temporal job on a machine too small to finish it.
+  // The UI greys the method out for the same reason, so this is the case
+  // where a preset or an older renderer asked for it anyway.
+  { match: /temporal requires at least/i, key: 'errors.temporalUnsupported' },
   { match: /bundled backend not found/i, key: 'errors.backendMissing' },
   { match: /permission denied|EACCES|read-only file system/i, key: 'errors.permission' },
   { match: /no space left|ENOSPC/i, key: 'errors.diskFull' },

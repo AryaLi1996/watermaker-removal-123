@@ -25,7 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Expect 5–10x the processing time of the single-frame methods. The status
     line and the share of the progress bar the per-frame work gets both say so.
   - The method is greyed out, with the reason, on machines with fewer than four
-    cores or less than 4 GB of memory.
+    cores or less than 4 GB of memory. The backend refuses such a job too, in
+    plain language: the UI is not the only way one can be sent.
+  - A temporal preview is capped at three seconds, in the control and in the
+    backend. A preview costs the same per frame as the export, so the length
+    that makes the other methods feel instant would make this one the slowest
+    thing in the app.
 
 ### Changed
 - The method shortcuts now run 1–5, the fifth being temporal fill. On a
