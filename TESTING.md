@@ -284,6 +284,7 @@ await electronApp.evaluate(({ BrowserWindow }) => {
 | `browse-output` | "Browse" button in Output row |
 | `btn-export` | "Export" button |
 | `btn-preview` | "Preview (1s)" button |
+| `method-picker` | MethodPicker wrapper — up once the sidebar can take a shortcut |
 | `btn-cancel` | "Cancel" button in ProgressPanel |
 | `progress-panel` | ProgressPanel wrapper |
 | `done-panel` | DonePanel wrapper |
