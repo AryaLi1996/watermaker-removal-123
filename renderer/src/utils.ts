@@ -62,3 +62,15 @@ export function defaultOutputName(inputPath: string): string {
   const base = dot > 0 ? filename.slice(0, dot) : filename;
   return `${base}_processed.mp4`;
 }
+
+/**
+ * The URL for a preview file the main process published.
+ *
+ * Preview stills and clips are served over the app's own scheme rather than
+ * file://, so the renderer keeps the same-origin policy in development and the
+ * page can only reach the files the main process chose to publish. The scheme
+ * and the shape of this URL are defined in `electron/main.js`.
+ */
+export function mediaUrl(filePath: string): string {
+  return `wm-media://file/${encodeURIComponent(filePath)}`;
+}

@@ -4,6 +4,7 @@ import {
   calcScaleFactor,
   formatDuration,
   defaultOutputName,
+  mediaUrl,
 } from '../../../renderer/src/utils';
 
 // ─── normalizeCoordinates ─────────────────────────────────────────────────────
@@ -106,5 +107,27 @@ describe('defaultOutputName', () => {
 
   it('handles file with no extension', () => {
     expect(defaultOutputName('/path/noext')).toBe('noext_processed.mp4');
+  });
+});
+
+// ─── mediaUrl ─────────────────────────────────────────────────────────────────
+
+describe('mediaUrl', () => {
+  it('serves a path over the app scheme rather than file://', () => {
+    expect(mediaUrl('/tmp/abc_wm_preview.png')).toBe('wm-media://file/%2Ftmp%2Fabc_wm_preview.png');
+  });
+
+  it('encodes a path the main process would otherwise have to parse', () => {
+    // A '?' or '#' in a temp filename would truncate an unencoded URL, and the
+    // handler resolves exactly one path segment.
+    expect(mediaUrl('/tmp/a b#c?d.mp4')).toBe('wm-media://file/%2Ftmp%2Fa%20b%23c%3Fd.mp4');
+  });
+
+  it('encodes a Windows path', () => {
+    expect(mediaUrl('C:\\Temp\\clip.mp4')).toBe('wm-media://file/C%3A%5CTemp%5Cclip.mp4');
+  });
+
+  it('survives non-ASCII, which temp names carry on a localised machine', () => {
+    expect(mediaUrl('/tmp/视频.png')).toBe('wm-media://file/%2Ftmp%2F%E8%A7%86%E9%A2%91.png');
   });
 });

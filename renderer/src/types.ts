@@ -40,7 +40,6 @@ declare global {
       openFile: () => Promise<string | null>;
       saveFile: (defaultName?: string) => Promise<string | null>;
       openPath: (filePath: string) => Promise<void>;
-      runPython: (payload: object) => Promise<string>;
       startJob: (payload: JobConfig) => Promise<boolean>;
       cancelJob: () => Promise<boolean>;
       onJobProgress: (cb: (value: number) => void) => void;

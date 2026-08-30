@@ -7,7 +7,7 @@ import ProgressPanel from './components/ProgressPanel';
 import DonePanel from './components/DonePanel';
 import PresetPicker from './components/PresetPicker';
 import type { AppState, JobConfig, RemovalMethod, ROI, VideoMeta } from './types';
-import { normalizeCoordinates, defaultOutputName, formatDuration } from './utils';
+import { normalizeCoordinates, defaultOutputName, formatDuration, mediaUrl } from './utils';
 import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX } from './errors';
 import type { FriendlyError } from './errors';
 import { BUILT_IN_PRESETS, loadCustomPresets, saveCustomPresets, presetFromCurrent } from './presets';
@@ -63,7 +63,7 @@ function App() {
   // the wait reports where it is and can be retried rather than only failed.
   const loader = useVideoLoader({
     onMeta: setVideoMeta,
-    onFrame: useCallback((framePath: string) => setPreviewFrameUrl(`file://${framePath}`), []),
+    onFrame: useCallback((framePath: string) => setPreviewFrameUrl(mediaUrl(framePath)), []),
     onError: failWith,
   });
 
@@ -182,7 +182,7 @@ function App() {
     });
     window.electronAPI.onJobState(setStateLabel);
     window.electronAPI.onPreviewReady((clipPath: string) => {
-      setPreviewClipUrl(`file://${clipPath}`);
+      setPreviewClipUrl(mediaUrl(clipPath));
       setAppState('loaded');
       window.electronAPI.removeJobListeners();
     });

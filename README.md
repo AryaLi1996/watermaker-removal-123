@@ -49,8 +49,8 @@ A cross-platform desktop application for removing static watermarks from video f
 ### 1. Clone
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/watermark-remover.git
-cd watermark-remover
+git clone https://github.com/AryaLi1996/watermaker-removal-123.git
+cd watermaker-removal-123
 ```
 
 ### 2. Install Node dependencies

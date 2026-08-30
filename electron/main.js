@@ -1,12 +1,39 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const { Readable } = require('stream');
 const system = require('./system');
 
 const isDev = process.env.NODE_ENV === 'development';
+
+// ─── Preview media protocol ───────────────────────────────────────
+/**
+ * Preview stills and clips are files the backend writes to a temp directory
+ * and the renderer then displays. Handing them over as file:// URLs meant
+ * turning webSecurity off in development, because a page served from
+ * http://localhost:5173 may not read file:// — and that switch disables the
+ * same-origin policy for everything else on the page too.
+ *
+ * They travel over the app's own scheme instead. It serves exactly the files
+ * this process published — the still the canvas is showing and the clips of
+ * the job in flight — so the renderer can no longer ask for an arbitrary path
+ * the way file:// allowed, in development or in the packaged app.
+ *
+ * The renderer builds these URLs with `mediaUrl` in renderer/src/utils.ts;
+ * this side only ever parses them.
+ *
+ * Must be registered before the app is ready, hence the placement here.
+ */
+const MEDIA_SCHEME = 'wm-media';
+
+protocol.registerSchemesAsPrivileged([{
+  scheme: MEDIA_SCHEME,
+  // `stream` is what lets <video> range-request the preview clip.
+  privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+}]);
 
 /**
  * Resolve the Python binary path cross-platform.
@@ -118,6 +145,92 @@ function retainPreviewStill(filePath) {
 }
 
 /**
+ * Is this one of the files we published? Everything else is a 404 — the whole
+ * point of the scheme is that it is not a general-purpose file reader.
+ */
+function isPublishedMedia(filePath) {
+  return (previewStill !== null && filePath === previewStill) || previewClips.has(filePath);
+}
+
+const MEDIA_TYPES = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+};
+
+/**
+ * Serve a file, honouring a Range request.
+ *
+ * <video> asks for ranges, and answering every one of them with the whole file
+ * leaves the element unable to seek — which a looping preview clip does on
+ * every pass.
+ */
+function fileResponse(filePath, size, type, rangeHeader) {
+  const headers = { 'content-type': type, 'accept-ranges': 'bytes', 'cache-control': 'no-store' };
+  const match = /^bytes=(\d*)-(\d*)$/.exec((rangeHeader ?? '').trim());
+
+  if (match) {
+    const [, rawStart, rawEnd] = match;
+    let start;
+    let end;
+    if (rawStart === '') {
+      // A suffix range — the last N bytes.
+      const n = Number(rawEnd);
+      start = n > 0 ? Math.max(0, size - n) : size;
+      end = size - 1;
+    } else {
+      start = Number(rawStart);
+      end = rawEnd === '' ? size - 1 : Math.min(Number(rawEnd), size - 1);
+    }
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start > end) {
+      return new Response(null, {
+        status: 416,
+        headers: { ...headers, 'content-range': `bytes */${size}` },
+      });
+    }
+    return new Response(Readable.toWeb(fs.createReadStream(filePath, { start, end })), {
+      status: 206,
+      headers: {
+        ...headers,
+        'content-range': `bytes ${start}-${end}/${size}`,
+        'content-length': String(end - start + 1),
+      },
+    });
+  }
+
+  return new Response(Readable.toWeb(fs.createReadStream(filePath)), {
+    status: 200,
+    headers: { ...headers, 'content-length': String(size) },
+  });
+}
+
+/** Answer one wm-media:// request. */
+function handleMediaRequest(request) {
+  let filePath;
+  try {
+    filePath = decodeURIComponent(new URL(request.url).pathname.replace(/^\//, ''));
+  } catch {
+    return new Response(null, { status: 400 });
+  }
+
+  if (!filePath || !isPublishedMedia(filePath)) return new Response(null, { status: 404 });
+
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    // Published but already gone: a clip purged by the next job start.
+    return new Response(null, { status: 404 });
+  }
+  if (!stat.isFile()) return new Response(null, { status: 404 });
+
+  const type = MEDIA_TYPES[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
+  return fileResponse(filePath, stat.size, type, request.headers.get('range'));
+}
+
+/**
  * The live window to deliver job events to. Resolved on every send so the
  * handlers keep working after the window is closed and re-created (macOS
  * 'activate'), instead of holding a destroyed reference.
@@ -144,10 +257,9 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
-      // In dev mode the renderer is served from http://localhost:5173.
-      // Without this, Electron blocks file:// URLs (preview frames) as cross-origin.
-      webSecurity: !isDev,
+      // The preload only reaches for contextBridge and ipcRenderer, both of
+      // which a sandboxed preload keeps. Nothing here needs a full Node.
+      sandbox: true,
     },
   });
 
@@ -254,37 +366,13 @@ ipcMain.handle('system:info', () => system.platformInfo());
 ipcMain.handle('system:tempDir', () => system.tempDir());
 ipcMain.handle('system:notify', (_event, title, body) => system.notify(title, body));
 
-// ─── Python quick hello (used during Epic 1 validation) ──────────
-ipcMain.handle('python:run', async (_event, payload) => {
-  return new Promise((resolve, reject) => {
-    const { command, args } = backendCommand();
-    const child = spawn(command, args, { env: backendEnv() });
-
-    let output = '';
-    child.stdout.on('data', (chunk) => { output += chunk.toString(); });
-    child.stderr.on('data', (chunk) => { console.error('[python stderr]', chunk.toString()); });
-
-    // Without this, a missing venv makes the unhandled 'error' event crash main.
-    child.on('error', (err) => reject(new Error(`Failed to start Python: ${err.message}`)));
-
-    child.stdin.on('error', () => { /* process died before the payload was written */ });
-    child.stdin.write(JSON.stringify(payload));
-    child.stdin.end();
-
-    child.on('close', (code) => {
-      if (code === 0) resolve(output.trim());
-      else reject(new Error(`Python exited with code ${code}`));
-    });
-  });
-});
-
 // ─── Start full processing job ────────────────────────────────────
 ipcMain.handle('job:start', (_event, payload) => {
   const isExport = isExportJob(payload);
 
   if (currentJob) {
     // Previews are short probes the app starts on its own (a still on load, a
-    // 3s clip on request). If one is still running when the user hits Export,
+    // one-second clip on request). If one is still running when the user hits Export,
     // the export wins — refusing it silently would look like a dead button.
     if (isExport && !currentJob.isExport) {
       currentJob.superseded = true;
@@ -424,6 +512,7 @@ ipcMain.handle('update:install', () => {
 });
 
 app.whenReady().then(() => {
+  protocol.handle(MEDIA_SCHEME, handleMediaRequest);
   createWindow();
   initAutoUpdate();
 

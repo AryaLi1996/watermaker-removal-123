@@ -8,9 +8,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveFile: (defaultName) => ipcRenderer.invoke('dialog:saveFile', defaultName),
   openPath: (filePath) => ipcRenderer.invoke('shell:openPath', filePath),
 
-  // Python hello (Epic 1 validation)
-  runPython: (payload) => ipcRenderer.invoke('python:run', payload),
-
   // Job lifecycle
   startJob: (payload) => ipcRenderer.invoke('job:start', payload),
   cancelJob: () => ipcRenderer.invoke('job:cancel'),
