@@ -24,6 +24,13 @@ import type { ProgressSample } from './eta';
 
 const SIDEBAR_W = 280;
 
+/** Preview clip lengths on offer, shortest (and cheapest) first. */
+const PREVIEW_SECOND_OPTIONS = [
+  { value: 1, labelKey: 'actions.preview1s' },
+  { value: 3, labelKey: 'actions.preview3s' },
+  { value: 5, labelKey: 'actions.preview5s' },
+] as const;
+
 function App() {
   const { t, locale, setLocale } = useTranslation();
   const [appState, setAppState] = useState<AppState>('empty');
@@ -50,6 +57,10 @@ function App() {
   const [copiedDetail, setCopiedDetail] = useState(false);
   const [customPresets, setCustomPresets] = useState<Preset[]>(() => loadCustomPresets());
   const [samples, setSamples] = useState<ProgressSample[]>([]);
+  // How much of the video a preview covers. One second is the cheapest look
+  // that still answers "is the mark gone?", so it stays the default; the
+  // longer options cost proportionally more time to produce.
+  const [previewSeconds, setPreviewSeconds] = useState(1);
 
   /** One place to fail: keeps the raw text for a report, shows plain language. */
   const failWith = useCallback((raw: string) => {
@@ -173,7 +184,7 @@ function App() {
     if (!inputPath) return;
     const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
     // outputPath is passed as placeholder; backend generates its own temp file for the preview clip
-    const payload: JobConfig = { inputPath, outputPath: outputPath ?? '/dev/null', roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy };
+    const payload: JobConfig = { inputPath, outputPath: outputPath ?? '/dev/null', roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy, previewSeconds };
     setProgress(0); setStateLabel(stageState('preparingPreview')); setSamples([]); setAppState('processing');
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobProgress((value) => {
@@ -191,7 +202,7 @@ function App() {
     if (!started) {
       failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, failWith]);
+  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, previewSeconds, failWith]);
 
   const handleCancel = useCallback(async () => {
     await window.electronAPI.cancelJob();
@@ -433,6 +444,30 @@ function App() {
             </details>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 'auto' }}>
+              {/* The cost of a preview is the length of the clip, so the
+                  choice and its price sit next to the button that spends it. */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <label htmlFor="preview-seconds" style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{t('actions.previewSeconds')}</label>
+                  <select
+                    id="preview-seconds"
+                    data-testid="preview-seconds"
+                    value={previewSeconds}
+                    disabled={!isLoaded}
+                    onChange={(e) => setPreviewSeconds(Number(e.target.value))}
+                    style={{
+                      background: '#18181b', color: '#d4d4d8', border: '1px solid #3f3f46',
+                      borderRadius: 4, fontSize: 11, padding: '2px 4px', marginLeft: 'auto',
+                      cursor: isLoaded ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    {PREVIEW_SECOND_OPTIONS.map(({ value, labelKey }) => (
+                      <option key={value} value={value}>{t(labelKey)}</option>
+                    ))}
+                  </select>
+                </div>
+                <p data-testid="preview-warning" style={{ color: '#71717a', fontSize: 10 }}>{t('actions.previewWarning')}</p>
+              </div>
               <button data-testid="btn-preview" onClick={handlePreview} disabled={!canExport} style={{ background: 'transparent', border: `1px solid ${canExport ? '#3f3f46' : '#27272a'}`, borderRadius: 6, padding: '7px 0', color: canExport ? '#d4d4d8' : '#52525b', fontSize: 12, cursor: canExport ? 'pointer' : 'not-allowed' }}>{t('actions.preview')}</button>
               <button data-testid="btn-export" onClick={() => { void handleExport(); }} disabled={!canExport} style={{ background: canExport ? '#6366f1' : '#312e81', border: 'none', borderRadius: 6, padding: '8px 0', color: canExport ? '#fff' : '#4338ca', fontSize: 13, fontWeight: 500, cursor: canExport ? 'pointer' : 'not-allowed' }}>{t('actions.export')}</button>
             </div>

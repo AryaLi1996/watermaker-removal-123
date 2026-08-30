@@ -21,6 +21,8 @@ export interface JobConfig {
   color?: [number, number, number];
   dx?: number;
   dy?: number;
+  /** Seconds of video a preview job covers; ignored for a full export. */
+  previewSeconds?: number;
 }
 
 export interface VideoMeta {

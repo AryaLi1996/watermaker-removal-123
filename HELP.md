@@ -54,8 +54,10 @@ Select one of the four methods in the sidebar:
 
 ### Step 4 — Preview (Recommended)
 
-Click **"Preview (1s)"** to render a one-second test clip from the middle of the video.
+Pick a **Preview duration** (1s, 3s or 5s — 1s by default), then click **"Preview"** to
+render a test clip from the middle of the video.
 
+- A longer clip judges the removal over more motion, but takes proportionally longer to produce
 - Processing usually takes a few seconds, depending on resolution
 - The output plays back inline in the canvas area
 - Adjust the method/parameters and re-preview as needed

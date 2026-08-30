@@ -283,7 +283,9 @@ await electronApp.evaluate(({ BrowserWindow }) => {
 | `empty-state` | Full-screen idle drop zone |
 | `browse-output` | "Browse" button in Output row |
 | `btn-export` | "Export" button |
-| `btn-preview` | "Preview (1s)" button |
+| `btn-preview` | "Preview" button |
+| `preview-seconds` | Preview clip length select (1 / 3 / 5 seconds) |
+| `preview-warning` | Note that a longer preview takes longer to produce |
 | `method-picker` | MethodPicker wrapper — up once the sidebar can take a shortcut |
 | `btn-cancel` | "Cancel" button in ProgressPanel |
 | `progress-panel` | ProgressPanel wrapper |
