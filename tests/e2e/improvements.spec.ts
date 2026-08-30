@@ -212,3 +212,56 @@ test.describe('progress estimate', () => {
     await page.getByTestId('btn-cancel').click();
   });
 });
+
+test.describe('preview duration', () => {
+  /** Replace job:start with a handler that records what the renderer sent. */
+  async function captureStartJob(electronApp: ElectronApplication) {
+    await electronApp.evaluate(({ ipcMain }) => {
+      (globalThis as Record<string, unknown>).__lastJobPayload = null;
+      ipcMain.removeHandler('job:start');
+      ipcMain.handle('job:start', (_event, payload) => {
+        (globalThis as Record<string, unknown>).__lastJobPayload = payload;
+        return true;
+      });
+    });
+  }
+
+  async function lastJobPayload(electronApp: ElectronApplication) {
+    return electronApp.evaluate(() =>
+      (globalThis as Record<string, unknown>).__lastJobPayload as { mode?: string; previewSeconds?: number } | null);
+  }
+
+  test('defaults to one second and sends the chosen length instead', async ({ page, electronApp }) => {
+    await mockDialogs(electronApp);
+    await captureStartJob(electronApp);
+    await loadVideo(page);
+
+    const selector = page.getByTestId('preview-seconds');
+    await expect(selector).toHaveValue('1');
+    await expect(page.getByTestId('preview-warning')).toHaveText('Longer preview takes more processing time');
+
+    await page.getByTestId('btn-preview').click();
+    await expect.poll(() => lastJobPayload(electronApp)).toMatchObject({ mode: 'preview', previewSeconds: 1 });
+    await page.getByTestId('btn-cancel').click();
+
+    await selector.selectOption('5');
+    await page.getByTestId('btn-preview').click();
+    await expect.poll(() => lastJobPayload(electronApp)).toMatchObject({ mode: 'preview', previewSeconds: 5 });
+    await page.getByTestId('btn-cancel').click();
+  });
+
+  test('an export is unaffected by the preview length', async ({ page, electronApp }) => {
+    await mockDialogs(electronApp);
+    await captureStartJob(electronApp);
+    await loadVideo(page);
+
+    await page.getByTestId('preview-seconds').selectOption('3');
+    await page.getByTestId('btn-export').click();
+
+    await expect.poll(() => lastJobPayload(electronApp)).toMatchObject({ mode: 'full' });
+    const payload = await lastJobPayload(electronApp);
+    expect(payload?.previewSeconds).toBeUndefined();
+
+    await page.getByTestId('btn-cancel').click();
+  });
+});

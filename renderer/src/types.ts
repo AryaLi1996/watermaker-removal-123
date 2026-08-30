@@ -25,6 +25,8 @@ export interface JobConfig {
   dx?: number;
   dy?: number;
   temporalQuality?: TemporalQuality;
+  /** Seconds of video a preview job covers; ignored for a full export. */
+  previewSeconds?: number;
 }
 
 export interface VideoMeta {

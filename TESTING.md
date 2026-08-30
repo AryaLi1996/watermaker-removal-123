@@ -11,7 +11,7 @@ How to run, understand, and extend the automated test suite.
 | Backend (Python) | `npm run test:backend` | 192 pytest | `tests/unit/backend/` |
 | Backend coverage | `npm run test:coverage` | ≥ 80% required | `htmlcov/` |
 | Renderer (TypeScript) | `npm run test:frontend` | 105 vitest | `tests/unit/renderer/`, `renderer/src/` |
-| E2E (Electron) | `npm run test:e2e` | 49 Playwright | `tests/e2e/` |
+| E2E (Electron) | `npm run test:e2e` | 55 Playwright | `tests/e2e/` |
 | Docs screenshots | `npm run screenshots` | 2 Playwright | `tests/e2e/capture-screenshots.spec.ts` |
 | Everything | `npm run test:all` | all of the above | root |
 | Environment check | `python scripts/validate_env.py` | manual | `scripts/` |
@@ -308,7 +308,9 @@ await electronApp.evaluate(({ BrowserWindow }) => {
 | `empty-state` | Full-screen idle drop zone |
 | `browse-output` | "Browse" button in Output row |
 | `btn-export` | "Export" button |
-| `btn-preview` | "Preview (1s)" button |
+| `btn-preview` | "Preview" button |
+| `preview-seconds` | Preview clip length select (1 / 3 / 5 seconds) |
+| `preview-warning` | Note that a longer preview takes longer to produce |
 | `method-picker` | MethodPicker wrapper — up once the sidebar can take a shortcut |
 | `btn-cancel` | "Cancel" button in ProgressPanel |
 | `progress-panel` | ProgressPanel wrapper |

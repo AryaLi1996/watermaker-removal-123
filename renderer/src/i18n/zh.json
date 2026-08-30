@@ -46,7 +46,12 @@
     "quality": "高质量"
   },
   "actions": {
-    "preview": "预览（1 秒）",
+    "preview": "预览",
+    "previewSeconds": "预览时长",
+    "preview1s": "1 秒",
+    "preview3s": "3 秒",
+    "preview5s": "5 秒",
+    "previewWarning": "预览时长越长，生成时间越长",
     "export": "导出",
     "cancel": "取消",
     "retry": "重试",
