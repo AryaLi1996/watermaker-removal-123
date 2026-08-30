@@ -8,13 +8,14 @@ import DonePanel from './components/DonePanel';
 import PresetPicker from './components/PresetPicker';
 import type { AppState, JobConfig, RemovalMethod, ROI, VideoMeta } from './types';
 import { normalizeCoordinates, defaultOutputName, formatDuration, mediaUrl } from './utils';
-import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX, PREVIEW_TIMEOUT_MS } from './errors';
+import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX } from './errors';
 import type { FriendlyError } from './errors';
 import { BUILT_IN_PRESETS, loadCustomPresets, saveCustomPresets, presetFromCurrent } from './presets';
 import type { Preset, PresetParams } from './presets';
 import { useHistory } from './hooks/useHistory';
 import type { JobSettings } from './hooks/useHistory';
 import { useKeyboardShortcuts, SHORTCUT_HINTS } from './hooks/useKeyboardShortcuts';
+import { useVideoLoader } from './hooks/useVideoLoader';
 import { useTranslation } from './hooks/useTranslation';
 import { LOCALES, LOCALE_NAMES } from './i18n';
 import { estimateSecondsRemaining, recordSample } from './eta';
@@ -49,7 +50,6 @@ function App() {
   const [copiedDetail, setCopiedDetail] = useState(false);
   const [customPresets, setCustomPresets] = useState<Preset[]>(() => loadCustomPresets());
   const [samples, setSamples] = useState<ProgressSample[]>([]);
-  const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** One place to fail: keeps the raw text for a report, shows plain language. */
   const failWith = useCallback((raw: string) => {
@@ -59,14 +59,13 @@ function App() {
     window.electronAPI.removeJobListeners();
   }, []);
 
-  const clearPreviewTimer = useCallback(() => {
-    if (previewTimer.current) {
-      clearTimeout(previewTimer.current);
-      previewTimer.current = null;
-    }
-  }, []);
-
-  useEffect(() => clearPreviewTimer, [clearPreviewTimer]);
+  // Opening a file is two ffmpeg calls on a file that may be very large, so
+  // the wait reports where it is and can be retried rather than only failed.
+  const loader = useVideoLoader({
+    onMeta: setVideoMeta,
+    onFrame: useCallback((framePath: string) => setPreviewFrameUrl(mediaUrl(framePath)), []),
+    onError: failWith,
+  });
 
   useEffect(() => {
     const update = () => {
@@ -88,9 +87,8 @@ function App() {
     window.electronAPI.onUpdateDownloaded((version) => setUpdateReady(version ?? ''));
   }, []);
 
-  const handleSelectFile = useCallback(async () => {
-    const path = await window.electronAPI.openFile();
-    if (!path) return;
+  /** Take a file from empty state to a frame on the canvas. */
+  const startLoad = useCallback((path: string) => {
     setInputPath(path);
     // Auto-derive default output path alongside the input file
     const dir = path.split(/[\\/]/).slice(0, -1).join('/');
@@ -98,40 +96,24 @@ function App() {
     setPreviewFrameUrl(null);
     setPreviewClipUrl(null);
     setVideoMeta(null);
-    // Opening a file is two ffmpeg calls on a file that may be very large.
-    // Saying which one is running is the difference between a wait and a
-    // hang, so the loading canvas follows the backend's stages.
-    setStateLabel(stageState('probing'));
     setAppState('loaded');
-    // Request preview frame extraction from the backend
-    window.electronAPI.removeJobListeners();
-    window.electronAPI.onJobMeta((meta) => { setVideoMeta(meta); });
-    window.electronAPI.onJobState(setStateLabel);
-    window.electronAPI.onPreviewReady((previewPath: string) => {
-      clearPreviewTimer();
-      setPreviewFrameUrl(mediaUrl(previewPath));
-      setStateLabel('');
-      window.electronAPI.removeJobListeners();
-    });
-    window.electronAPI.onJobError((msg: string) => {
-      // Without this the canvas sits on "Loading preview…" forever whenever
-      // the backend fails to produce the still.
-      clearPreviewTimer();
-      failWith(msg);
-    });
+    loader.load(path);
+  }, [loader]);
 
-    // A backend that never answers would leave the spinner running for good.
-    clearPreviewTimer();
-    previewTimer.current = setTimeout(
-      () => failWith(`${OWN_MESSAGE_PREFIX}errors.previewTimeout`),
-      PREVIEW_TIMEOUT_MS,
-    );
-    window.electronAPI.startJob({
-      inputPath: path, outputPath: '/dev/null',
-      roi: { x: 0, y: 0, w: 1, h: 1 },
-      method: 'inpaint', mode: 'preview_frame',
-    });
-  }, [failWith, clearPreviewTimer]);
+  const handleSelectFile = useCallback(async () => {
+    const path = await window.electronAPI.openFile();
+    if (!path) return;
+    startLoad(path);
+  }, [startLoad]);
+
+  /** Try the same file again after a load that failed or timed out. */
+  const handleRetryLoad = useCallback(() => {
+    if (!loader.path) return;
+    setError({ key: null, raw: '' });
+    setPreviewFrameUrl(null);
+    setAppState('loaded');
+    loader.retry();
+  }, [loader]);
 
   const handleSelectOutput = useCallback(async () => {
     if (!inputPath) return;
@@ -299,6 +281,10 @@ function App() {
   const isLoaded = appState === 'loaded';
   const isProcessing = appState === 'processing';
   const canExport = isLoaded && !!inputPath;
+  // Only a load that failed can be retried, and only the loader knows which
+  // failure was its own — an export can fall over while a still is still
+  // being decoded, and that is not a load to try again.
+  const loadFailed = loader.failed && !previewFrameUrl;
 
   const [namingPreset, setNamingPreset] = useState(false);
 
@@ -378,7 +364,11 @@ function App() {
           <div data-testid="error-panel" style={{ background: '#450a0a', border: '1px solid #b91c1c', borderRadius: 6, padding: '8px 12px', color: '#fca5a5', fontSize: 12 }}>
             {error.key ? t(error.key) : error.raw}
             <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-              <button data-testid="dismiss-error" onClick={() => setAppState('loaded')} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}>{t('actions.dismiss')}</button>
+              {loadFailed ? (
+                <button data-testid="retry-load-sidebar" onClick={handleRetryLoad} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}>{t('actions.retry')}</button>
+              ) : (
+                <button data-testid="dismiss-error" onClick={() => setAppState('loaded')} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}>{t('actions.dismiss')}</button>
+              )}
               {hasTechnicalDetail(error) && (
                 <button
                   data-testid="copy-error"
@@ -465,11 +455,29 @@ function App() {
           </div>
         )}
 
-        {appState !== 'empty' && !previewFrameUrl && (
+        {/* A load that failed must not keep spinning: the canvas says so, and
+            offers the one thing worth trying — the same file again. */}
+        {loadFailed && (
+          <div data-testid="load-failed" style={{ color: '#a1a1aa', fontSize: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: 24, textAlign: 'center' }}>
+            <span>{t('file.loadFailed')}</span>
+            {error.key && <span style={{ color: '#71717a', maxWidth: 360 }}>{t(error.key)}</span>}
+            <button
+              data-testid="retry-load"
+              onClick={handleRetryLoad}
+              style={{ background: '#6366f1', border: 'none', borderRadius: 6, padding: '6px 16px', color: '#fff', fontSize: 12, cursor: 'pointer' }}
+            >
+              {t('actions.retry')}
+            </button>
+          </div>
+        )}
+
+        {appState !== 'empty' && !previewFrameUrl && !loadFailed && (
           <div style={{ color: '#52525b', fontSize: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 24, height: 24, border: '2px solid #52525b', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
             <span data-testid="loading-stage">
-              {stateLabel ? stageLabel(stateLabel, t) : t('file.loadingPreview')}
+              {/* The canvas only ever shows a load; a running job reports
+                  through the sidebar's progress panel. */}
+              {loader.stage ? stageLabel(loader.stage, t) : t('file.loadingPreview')}
             </span>
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           </div>

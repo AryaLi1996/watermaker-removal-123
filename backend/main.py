@@ -210,8 +210,20 @@ def preview_window(duration: float, length: float = PREVIEW_SECONDS) -> tuple[fl
     return start, clip
 
 
+# The last value printed, so an unchanged one is not printed again. ffmpeg
+# reports several times a second and the coarse stages round to the same
+# tenth; a repeated line moves nothing and only adds to what the renderer
+# has to parse.
+_last_progress: str = ''
+
+
 def progress(value: float) -> None:
-    emit(f'PROGRESS:{value:.1f}')
+    global _last_progress
+    line = f'PROGRESS:{value:.1f}'
+    if line == _last_progress:
+        return
+    _last_progress = line
+    emit(line)
 
 
 def state(label: str) -> None:
@@ -251,6 +263,21 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 
 # ─── Core pipeline ──────────────────────────────────────────────────────────
 
+# Where each stage of a job ends on the 0–100 bar. The splits are rough
+# measurements of a typical export rather than guesses at equal thirds: the
+# per-frame work dominates, extraction and encoding are minutes each on a long
+# video, and the probe is instant. Progress inside every one of them is
+# reported as it happens, so the bar moves continuously from end to end
+# instead of jumping between four numbers.
+PROBE_END = 5.0
+EXTRACT_START = PROBE_END
+EXTRACT_END = 20.0
+PROCESS_END = 80.0
+# Short of 100: the mux that follows the encode still has to run, and a bar
+# that reads 100% while the file is not yet written is a bar that lies.
+ENCODE_END = 98.0
+
+
 def run_pipeline(
     config: JobConfig,
     temp_dir: str,
@@ -266,6 +293,8 @@ def run_pipeline(
     would misreport the source video the UI is describing. A preview is also
     encoded for speed rather than for keeping — see ff_utils.PREVIEW_ENCODE.
     """
+    global _last_progress
+    _last_progress = ''  # a new job starts a new bar
     is_preview = config.mode == 'preview'
     frames_dir = os.path.join(temp_dir, 'frames')
 
@@ -274,12 +303,22 @@ def run_pipeline(
     meta = ff_utils.probe_video(source_video)
     if announce_meta:
         emit_meta(meta)
-    progress(5)
+    progress(PROBE_END)
 
     # 2. Extract frames
+    #
+    # On a long video this is minutes of decoding, and the only thing between
+    # the user and a bar that has not moved since 'probing'. ffmpeg is asked
+    # where it is and that is mapped onto this stage's share of the total.
     stage('extractingFrames')
-    ff_utils.extract_frames(source_video, frames_dir)
-    progress(20)
+    expected_frames = round(meta['duration'] * meta['fps']) if meta['duration'] > 0 else None
+    ff_utils.extract_frames(
+        source_video,
+        frames_dir,
+        expected_frames=expected_frames,
+        on_progress=lambda done: progress(EXTRACT_START + done * (EXTRACT_END - EXTRACT_START)),
+    )
+    progress(EXTRACT_END)
 
     # Build ordered list of frame paths
     frame_paths = sorted(glob(os.path.join(frames_dir, 'frame_*.png')))
@@ -309,8 +348,8 @@ def run_pipeline(
     }
 
     def _progress_cb(pct: float):
-        # Maps 0–100 of processing to 20–80 of total progress
-        progress(20 + pct * 0.6)
+        # Maps 0–100 of the per-frame work onto its share of the total.
+        progress(EXTRACT_END + pct / 100 * (PROCESS_END - EXTRACT_END))
 
     load_processor().run_batch(
         frame_paths,
@@ -319,7 +358,7 @@ def run_pipeline(
         meta['height'],
         progress_callback=_progress_cb,
     )
-    progress(80)
+    progress(PROCESS_END)
 
     # 4. Reassemble
     stage('encoding')
@@ -335,6 +374,9 @@ def run_pipeline(
         temp_video=os.path.join(temp_dir, 'video_only.mp4'),
         audio_codec=meta['audio_codec'],
         encode=ff_utils.PREVIEW_ENCODE if is_preview else ff_utils.EXPORT_ENCODE,
+        # x264 at 'medium' is the slowest part of a long export after the
+        # frame work; it reports frame by frame like the extraction does.
+        on_progress=lambda done: progress(PROCESS_END + done * (ENCODE_END - PROCESS_END)),
     )
     progress(100)
     return output_path
