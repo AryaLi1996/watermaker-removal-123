@@ -33,7 +33,7 @@
     "dy": "Source Offset Y (px)"
   },
   "actions": {
-    "preview": "Preview (3s)",
+    "preview": "Preview (1s)",
     "export": "Export",
     "cancel": "Cancel",
     "dismiss": "Dismiss",
@@ -44,11 +44,19 @@
   },
   "status": {
     "starting": "Starting…",
-    "generatingPreview": "Generating 3s preview…",
     "exportComplete": "Export complete",
     "returningIn": "Returning to editor in {seconds}s…",
     "updateReady": "Update {version} ready to install",
     "updateReadyNoVersion": "Update ready to install"
+  },
+  "stages": {
+    "probing": "Reading video details…",
+    "extractingStill": "Preparing the first frame…",
+    "extractingClip": "Trimming the preview clip…",
+    "extractingFrames": "Extracting frames…",
+    "processing": "Reconstructing pixels…",
+    "encoding": "Encoding video…",
+    "preparingPreview": "Preparing preview…"
   },
   "progress": {
     "estimating": "estimating…",

@@ -62,14 +62,17 @@ electron/
 
 ### stdout protocol (parsed in `main.js`)
 
-Python writes one of these prefixed lines per event. They are matched in specificity order (most specific first) to avoid prefix collisions:
+Python writes one of these prefixed lines per event. They are matched in specificity order (most specific first) to avoid prefix collisions.
+
+Stages cross as keys rather than sentences: the interface is bilingual, and the backend cannot know which language the person watching reads. The renderer looks each key up in `renderer/src/i18n/*.json` under `stages.<key>` (see `renderer/src/stages.ts`), so the status line follows the language picker — mid-job included.
 
 ```
 PROGRESS:<float>            e.g. PROGRESS:42.5
 STATE:preview_ready:<path>  e.g. STATE:preview_ready:/tmp/abc.png
 STATE:meta:<json>           e.g. STATE:meta:{"width":1920,...}
 STATE:done:<path>           e.g. STATE:done:/Users/joe/Desktop/out.mp4
-STATE:<string>              e.g. STATE:extracting_frames
+STATE:stage:<key>           e.g. STATE:stage:extractingFrames
+STATE:<string>              a label with no translation; shown as it arrives
 ERROR:<string>              e.g. ERROR:ffmpeg not found
 DEBUG:<string>              logged only, not forwarded to renderer
 ```
@@ -163,7 +166,7 @@ backend/
 | Mode | What it does |
 |---|---|
 | `preview_frame` | Extract single PNG at `min(5s, duration-0.5s)`, emit `STATE:meta:` + `STATE:preview_ready:` |
-| `preview` | Extract 3s clip from 4s mark, run full pipeline, emit `STATE:preview_ready:` |
+| `preview` | Extract a clip (1s by default, `previewSeconds` on the job) centred in the video, run the full pipeline on it, emit `STATE:preview_ready:` |
 | `full` | Run full pipeline on entire video, emit `STATE:done:` |
 
 All modes use a `try/except/finally` block. The `finally` runs `shutil.rmtree(temp_dir)` regardless of outcome.
@@ -197,7 +200,7 @@ All calls use list-form `subprocess.run` (never `shell=True`).
 run_batch(frame_paths, config)
 ```
 
-Uses `multiprocessing.Pool(os.cpu_count())` with `imap_unordered` and `chunksize = cpu_count * 4`. Each worker process loads an image, rebuilds the mask internally, applies removal, and saves back to disk.
+Uses `multiprocessing.Pool(min(os.cpu_count(), frames))` with `imap_unordered` and `chunksize = workers * 4`. Each worker process loads an image, rebuilds the mask internally, applies removal, and saves back to disk. A batch of `SEQUENTIAL_FRAME_LIMIT` frames or fewer runs in the dispatcher process, where a pool could not repay starting its first worker.
 
 ---
 

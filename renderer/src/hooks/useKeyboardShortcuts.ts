@@ -4,7 +4,7 @@
  * Only actions that already exist in the UI are bound — a shortcut that does
  * nothing is worse than no shortcut.
  */
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { RemovalMethod } from '../types';
 
 export interface ShortcutHandlers {
@@ -28,10 +28,24 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 export function useKeyboardShortcuts(handlers: ShortcutHandlers, enabled = true): void {
+  // The caller builds a fresh handlers object on every render, so depending on
+  // it directly meant detaching and re-attaching the document listener on
+  // every keystroke, drag and incoming job message. The listener is attached
+  // once per `enabled` change instead, and reads the current handlers through
+  // a ref — same behaviour, without a subscription that churns under the
+  // user's fingers.
+  const latest = useRef(handlers);
+  // After every render, so the bound listener always calls the current
+  // closures. Assigning during render is what React's rules forbid.
+  useEffect(() => {
+    latest.current = handlers;
+  });
+
   useEffect(() => {
     if (!enabled) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
+      const handlers = latest.current;
       const mod = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
 
@@ -82,7 +96,7 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers, enabled = true)
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [handlers, enabled]);
+  }, [enabled]);
 }
 
 /** Rendered in the sidebar so the shortcuts are discoverable. */

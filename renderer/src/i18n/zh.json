@@ -33,7 +33,7 @@
     "dy": "取样垂直偏移（px）"
   },
   "actions": {
-    "preview": "预览（3 秒）",
+    "preview": "预览（1 秒）",
     "export": "导出",
     "cancel": "取消",
     "dismiss": "关闭",
@@ -44,11 +44,19 @@
   },
   "status": {
     "starting": "正在开始…",
-    "generatingPreview": "正在生成 3 秒预览…",
     "exportComplete": "导出完成",
     "returningIn": "{seconds} 秒后返回编辑器…",
     "updateReady": "更新 {version} 已就绪，可安装",
     "updateReadyNoVersion": "更新已就绪，可安装"
+  },
+  "stages": {
+    "probing": "正在读取视频信息…",
+    "extractingStill": "正在准备首帧画面…",
+    "extractingClip": "正在截取预览片段…",
+    "extractingFrames": "正在提取帧…",
+    "processing": "正在重建像素…",
+    "encoding": "正在编码视频…",
+    "preparingPreview": "正在准备预览…"
   },
   "progress": {
     "estimating": "正在估算…",

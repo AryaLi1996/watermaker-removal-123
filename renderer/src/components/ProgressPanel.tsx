@@ -4,9 +4,11 @@
  */
 import { formatRemaining } from '../eta';
 import { useTranslation } from '../hooks/useTranslation';
+import { stageLabel } from '../stages';
 
 interface ProgressPanelProps {
   progress: number; // 0–100
+  /** The backend's raw state line — translated here, so it follows the language. */
   stateLabel: string;
   /** Seconds remaining, or null while there is too little signal to say. */
   secondsRemaining: number | null;
@@ -19,7 +21,7 @@ export default function ProgressPanel({ progress, stateLabel, secondsRemaining, 
   return (
     <div data-testid="progress-panel" className="flex flex-col gap-4 pt-2">
       {/* Stage label */}
-      <p style={{ color: '#a1a1aa', fontSize: 12 }}>{stateLabel || t('status.starting')}</p>
+      <p style={{ color: '#a1a1aa', fontSize: 12 }}>{stateLabel ? stageLabel(stateLabel, t) : t('status.starting')}</p>
 
       {/* Progress bar */}
       <div style={{ background: '#27272a', borderRadius: 2, height: 2, overflow: 'hidden' }}>

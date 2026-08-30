@@ -49,7 +49,7 @@ if scenario is None:
 if scenario == 'success':
     emit('STATE:meta:' + json.dumps({'width': 640, 'height': 480, 'fps': 30, 'duration': 3}))
     emit('PROGRESS:50.0')
-    emit('STATE:Reconstructing pixels...')
+    emit('STATE:stage:processing')
     emit(f"STATE:done:{payload.get('outputPath', '')}")
 elif scenario == 'split_line':
     # Write a message in two writes with no newline between them, so Electron
@@ -61,11 +61,14 @@ elif scenario == 'split_line':
     sys.stdout.flush()
     emit(f"STATE:done:{payload.get('outputPath', '')}")
 elif scenario == 'frame':
-    # What backend/main.py emits for a preview_frame job: metadata plus a still.
+    # What backend/main.py emits for a preview_frame job: its stages, the
+    # metadata, and a still.
+    emit('STATE:stage:probing')
     emit('STATE:meta:' + json.dumps({
         'width': 640, 'height': 480, 'fps': 30, 'duration': 3,
         'videoCodec': 'h264', 'audioCodec': None,
     }))
+    emit('STATE:stage:extractingStill')
     _write_frame()
     emit(f'STATE:preview_ready:{FRAME_PNG}')
 elif scenario == 'preview':

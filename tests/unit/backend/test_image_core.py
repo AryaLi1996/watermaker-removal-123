@@ -65,6 +65,60 @@ def test_process_inpaint_fills_black_square():
     assert roi.mean() > 50, "Inpainted region should not remain black"
 
 
+def test_process_inpaint_matches_a_full_frame_pass():
+    """
+    Only the neighbourhood of the selection is handed to OpenCV, because
+    inpainting costs what the image it is given costs — a small logo on a
+    large frame was paying for the whole frame, every frame. TELEA reads no
+    pixel further than `radius` from what it is filling, so the crop must
+    produce the same image the full-frame call did.
+    """
+    rng = np.random.default_rng(7)
+    frame = cv2.GaussianBlur(
+        rng.integers(0, 255, (480, 640, 3), dtype=np.uint8), (9, 9), 0,
+    )
+    mask = create_mask(640, 480, x=500, y=380, w=90, h=40)
+
+    cropped = process_inpaint(frame, mask, radius=5, roi=(500, 380, 90, 40))
+    whole_frame = cv2.inpaint(frame, mask, 5, cv2.INPAINT_TELEA)
+
+    assert np.array_equal(cropped, whole_frame)
+
+
+def test_process_inpaint_finds_the_selection_without_being_told():
+    """The mask's bounding box is the same rectangle, so callers that have no
+    ROI to hand still get the cropped path."""
+    frame = np.ones((100, 100, 3), dtype=np.uint8) * 255
+    frame[40:60, 40:60] = 0
+    mask = create_mask(100, 100, x=40, y=40, w=20, h=20)
+
+    assert np.array_equal(
+        process_inpaint(frame, mask, radius=3),
+        process_inpaint(frame, mask, radius=3, roi=(40, 40, 20, 20)),
+    )
+
+
+def test_process_inpaint_leaves_a_frame_with_nothing_masked_alone():
+    frame = np.ones((60, 60, 3), dtype=np.uint8) * 128
+    empty = np.zeros((60, 60), dtype=np.uint8)
+
+    result = process_inpaint(frame, empty, radius=3)
+
+    assert np.array_equal(result, frame)
+    assert result is not frame  # every engine returns a copy
+
+
+def test_process_inpaint_handles_a_selection_against_the_frame_edge():
+    """The crop is clipped to the frame, so a mark in the corner still works."""
+    frame = np.ones((80, 80, 3), dtype=np.uint8) * 200
+    frame[0:15, 0:15] = 0
+    mask = create_mask(80, 80, x=0, y=0, w=15, h=15)
+
+    result = process_inpaint(frame, mask, radius=3, roi=(0, 0, 15, 15))
+
+    assert result[0:15, 0:15].mean() > 50
+
+
 # ─── process_blur ─────────────────────────────────────────────────────────────
 
 def test_process_blur_changes_roi():

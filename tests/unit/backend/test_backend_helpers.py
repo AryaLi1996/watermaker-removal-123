@@ -93,17 +93,24 @@ def test_apply_removal_still_rejects_a_fully_outside_roi():
 
 def test_preview_window_is_centred_in_a_long_video():
     start, length = backend_main.preview_window(60.0)
-    assert length == 3.0
-    assert start == pytest.approx(28.5)
+    assert length == backend_main.PREVIEW_SECONDS
+    assert start == pytest.approx((60.0 - length) / 2)
 
 
 def test_preview_window_shrinks_to_fit_a_short_video():
-    # A 2-second clip cannot yield 3 seconds — take all of it from the start
-    assert backend_main.preview_window(2.0) == (0.0, 2.0)
+    # A clip shorter than the window cannot fill it — take all of it instead
+    assert backend_main.preview_window(0.4, length=3.0) == (0.0, 0.4)
 
 
 def test_preview_window_handles_an_unknown_duration():
-    assert backend_main.preview_window(0.0) == (0.0, 3.0)
+    assert backend_main.preview_window(0.0) == (0.0, backend_main.PREVIEW_SECONDS)
+
+
+def test_preview_window_honours_a_requested_length():
+    """A job may ask for a longer look than the default second."""
+    start, length = backend_main.preview_window(60.0, length=5.0)
+    assert length == 5.0
+    assert start == pytest.approx(27.5)
 
 
 # ─── audio_args_for ──────────────────────────────────────────────────────────
@@ -166,3 +173,24 @@ def test_terminate_stops_a_running_child():
 
 def test_terminate_is_a_no_op_when_nothing_is_running():
     ff_utils.terminate()  # must not raise
+
+
+# ─── stage labels ────────────────────────────────────────────────────────────
+#
+# Stages go out as keys, not sentences. The UI is bilingual and the backend
+# cannot know which language the user reads, so the words live in the
+# renderer's locale files and only the key crosses the protocol.
+
+def test_a_stage_is_emitted_as_a_key(capsys):
+    backend_main.stage('encoding')
+    assert capsys.readouterr().out.strip() == 'STATE:stage:encoding'
+
+
+def test_stage_keys_stay_on_one_line(capsys):
+    """The Electron parser is line-based; a key with a newline in it is lost."""
+    for key in ('probing', 'extractingStill', 'extractingClip',
+                'extractingFrames', 'processing', 'encoding'):
+        backend_main.stage(key)
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert all(line.startswith('STATE:stage:') for line in lines)
+    assert len(lines) == 6

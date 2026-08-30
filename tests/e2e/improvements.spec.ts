@@ -50,6 +50,11 @@ async function loadVideo(page: Page) {
     await page.getByTestId('change-video').click();
   }
   await expect(page.getByTestId('btn-export')).toBeVisible({ timeout: 10_000 });
+  // The tests below drive the app by keyboard, and a shortcut is only bound
+  // once the sidebar's controls are up. Waiting on the export button alone
+  // proves the state flipped, not that the picker those shortcuts change is
+  // on screen.
+  await expect(page.getByTestId('method-picker')).toBeVisible({ timeout: 10_000 });
 }
 
 test.describe('keyboard shortcuts', () => {

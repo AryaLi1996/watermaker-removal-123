@@ -54,9 +54,9 @@ Select one of the four methods in the sidebar:
 
 ### Step 4 — Preview (Recommended)
 
-Click **"Preview (3s)"** to render a 3-second test clip around the 5-second mark.
+Click **"Preview (1s)"** to render a one-second test clip from the middle of the video.
 
-- Processing takes 5–20 seconds depending on resolution
+- Processing usually takes a few seconds, depending on resolution
 - The output plays back inline in the canvas area
 - Adjust the method/parameters and re-preview as needed
 - **No files are saved** during preview — it uses a temporary path

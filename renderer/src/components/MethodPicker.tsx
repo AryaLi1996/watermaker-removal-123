@@ -76,7 +76,7 @@ export default function MethodPicker({
   const { t } = useTranslation();
 
   return (
-    <div className="flex flex-col gap-4" style={{ opacity: disabled ? 0.5 : 1 }}>
+    <div data-testid="method-picker" className="flex flex-col gap-4" style={{ opacity: disabled ? 0.5 : 1 }}>
       <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
         {t('method.heading')}
       </p>

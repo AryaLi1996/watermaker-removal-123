@@ -13,7 +13,7 @@ A cross-platform desktop application for removing static watermarks from video f
 
 - **Interactive ROI selector** — drag-to-resize bounding box directly on the video frame via Konva.js canvas
 - **Four removal engines** — Inpainting (TELEA), Gaussian Blur, Solid Fill, Clone Stamp
-- **3-second quick preview** — test your settings on a short clip before committing to a full render
+- **One-second quick preview** — test your settings on a short clip before committing to a full render
 - **Real-time progress bar** — frame-by-frame progress streamed from the Python backend via IPC
 - **Multi-core processing** — Python `multiprocessing.Pool` saturates all CPU cores automatically
 - **Audio preserved** — original audio track is muxed back into the output with zero re-encoding

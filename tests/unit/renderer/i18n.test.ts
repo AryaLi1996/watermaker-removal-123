@@ -12,6 +12,7 @@ import { collectKeys, getLocale, LOCALES, LOCALE_NAMES, setLocale, t } from '../
 import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX } from '../../../renderer/src/errors';
 import { BUILT_IN_PRESETS, presetFromCurrent, presetLabel, DEFAULT_PARAMS } from '../../../renderer/src/presets';
 import { formatRemaining } from '../../../renderer/src/eta';
+import { stageLabel, stageOf, stageState, STAGES } from '../../../renderer/src/stages';
 
 describe('locale resources', () => {
   it('define the same keys in every language', () => {
@@ -172,5 +173,41 @@ describe('translated surfaces', () => {
     expect(own.key).toBe('errors.jobRunning');
     // Nothing technical to copy: the app wrote this one.
     expect(hasTechnicalDetail(own)).toBe(false);
+  });
+});
+
+describe('pipeline stages', () => {
+  beforeEach(() => {
+    setLocale('en');
+  });
+
+  it('names every stage in both languages', () => {
+    // The backend sends a key precisely so this stays the renderer's job; a
+    // stage it can report with no translation would surface as "stages.foo".
+    for (const stage of STAGES) {
+      for (const locale of LOCALES) {
+        setLocale(locale);
+        expect(t(`stages.${stage}`), `${stage} in ${locale}`).not.toContain('stages.');
+      }
+    }
+  });
+
+  it('translates a backend state line', () => {
+    setLocale('en');
+    expect(stageLabel(stageState('encoding'), t)).toBe('Encoding video…');
+    setLocale('zh');
+    expect(stageLabel(stageState('encoding'), t)).toBe('正在编码视频…');
+  });
+
+  it('shows a label it does not recognise exactly as it arrived', () => {
+    // An older or newer backend is better read verbatim than as a missing key.
+    expect(stageOf('stage:teleporting')).toBeNull();
+    expect(stageLabel('stage:teleporting', t)).toBe('stage:teleporting');
+    expect(stageLabel('Reconstructing pixels...', t)).toBe('Reconstructing pixels...');
+  });
+
+  it('reads a stage key out of a state line', () => {
+    expect(stageOf(stageState('processing'))).toBe('processing');
+    expect(stageOf('meta:{}')).toBeNull();
   });
 });

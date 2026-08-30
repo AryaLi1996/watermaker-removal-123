@@ -160,3 +160,86 @@ def test_run_batch_restores_the_previous_thread_setting(tmp_path, monkeypatch):
     processor.run_batch(paths, BLUR_CONFIG, width=320, height=240)
 
     assert cv2.getNumThreads() == 3
+
+
+# ─── choosing between a pool and this process ────────────────────────────────
+#
+# The bar for using a pool is deliberately low. Measured over the 30 frames of
+# a one-second preview on four cores, a pool took 1.2s against 4.2s in-process
+# — and 1.4s with its workers started the slow way (spawn), which is how the
+# packaged mac and Windows builds start them. Only a batch too small to repay
+# starting the first worker is run here.
+
+def _pool_spy(monkeypatch) -> list:
+    """Record every worker pool the batch starts, without starting one."""
+    started: list = []
+    real_pool = processor.multiprocessing.Pool
+
+    def spy(*args, **kwargs):
+        started.append(kwargs.get('processes'))
+        return real_pool(*args, **kwargs)
+
+    monkeypatch.setattr(processor.multiprocessing, 'Pool', spy)
+    return started
+
+
+def test_a_tiny_batch_runs_without_starting_a_pool(tmp_path, monkeypatch):
+    started = _pool_spy(monkeypatch)
+    paths = _write_frames(str(tmp_path / 'frames'), processor.SEQUENTIAL_FRAME_LIMIT)
+
+    processor.run_batch(paths, BLUR_CONFIG, width=320, height=240)
+
+    assert started == []
+    assert all(cv2.imread(p) is not None for p in paths)
+
+
+def test_a_preview_sized_batch_still_uses_every_core(tmp_path, monkeypatch):
+    """The frames of a short preview are the same size as any other frame;
+    there is nothing cheap about them to justify giving up the cores."""
+    started = _pool_spy(monkeypatch)
+    paths = _write_frames(str(tmp_path / 'frames'), 30)
+
+    processor.run_batch(paths, BLUR_CONFIG, width=320, height=240)
+
+    assert started == [min(os.cpu_count() or 1, 30)]
+
+
+def test_a_long_batch_still_uses_every_core(tmp_path, monkeypatch):
+    started = _pool_spy(monkeypatch)
+    count = processor.SEQUENTIAL_FRAME_LIMIT + 1
+    paths = _write_frames(str(tmp_path / 'frames'), count)
+
+    processor.run_batch(paths, BLUR_CONFIG, width=320, height=240)
+
+    assert started == [min(os.cpu_count() or 1, count)]
+
+
+def test_a_pool_is_never_larger_than_the_work(tmp_path, monkeypatch):
+    """Workers beyond one per frame only pay start-up costs to do nothing."""
+    monkeypatch.setattr(processor.os, 'cpu_count', lambda: 64)
+    started = _pool_spy(monkeypatch)
+    count = processor.SEQUENTIAL_FRAME_LIMIT + 2
+    paths = _write_frames(str(tmp_path / 'frames'), count)
+
+    processor.run_batch(paths, BLUR_CONFIG, width=320, height=240)
+
+    assert started == [count]
+
+
+def test_an_empty_batch_does_nothing(tmp_path, monkeypatch):
+    started = _pool_spy(monkeypatch)
+    processor.run_batch([], BLUR_CONFIG, width=320, height=240,
+                        progress_callback=lambda _: pytest.fail('no work to report'))
+    assert started == []
+
+
+def test_a_batch_run_in_process_reports_progress_the_same_way(tmp_path):
+    paths = _write_frames(str(tmp_path / 'frames'), processor.SEQUENTIAL_FRAME_LIMIT)
+    seen: list[float] = []
+
+    processor.run_batch(paths, BLUR_CONFIG, width=320, height=240,
+                        progress_callback=seen.append)
+
+    assert len(seen) == len(paths)
+    assert seen == sorted(seen)
+    assert seen[-1] == pytest.approx(100.0)

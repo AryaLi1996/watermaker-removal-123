@@ -200,3 +200,65 @@ def test_a_real_ffprobe_failure_carries_its_reason(tmp_path):
     # leaving an exit status and nothing to classify or report.
     assert caught.value.stderr, 'ffprobe reported no reason at all'
     assert ff_utils.stderr_tail(caught.value.stderr) in str(caught.value)
+
+
+# ─── stdin ───────────────────────────────────────────────────────────────────
+
+def test_children_never_inherit_this_process_stdin(sample_video, tmp_path, monkeypatch):
+    """
+    ffmpeg reads stdin unless told otherwise, and the dispatcher's stdin is the
+    pipe Electron sends the job payload down. A child that drains or closes it
+    breaks the one channel the backend has for its own input.
+    """
+    seen = {}
+    real_popen = subprocess.Popen
+
+    def spy(cmd, **kwargs):
+        seen.update(kwargs)
+        return real_popen(cmd, **kwargs)
+
+    monkeypatch.setattr(ff_utils.subprocess, 'Popen', spy)
+    ff_utils.probe_video(sample_video)
+
+    assert seen['stdin'] == subprocess.DEVNULL
+
+
+# ─── encode settings ─────────────────────────────────────────────────────────
+
+def test_a_preview_is_encoded_faster_than_an_export(sample_video, tmp_path):
+    """
+    A preview is watched once and deleted; an export is kept. Spending an
+    export's encode time on a preview is most of what made previewing slow.
+    """
+    frames_dir = str(tmp_path / 'frames')
+    ff_utils.extract_frames(sample_video, frames_dir)
+
+    out = str(tmp_path / 'preview.mp4')
+    ff_utils.reassemble_video(frames_dir, sample_video, out, fps=10.0,
+                              temp_video=str(tmp_path / 'vo.mp4'),
+                              audio_codec='aac',
+                              encode=ff_utils.PREVIEW_ENCODE)
+
+    assert os.path.getsize(out) > 0
+    assert ff_utils.probe_video(out)['video_codec'] == 'h264'
+    # The two settings must actually differ, or the split buys nothing.
+    assert ff_utils.PREVIEW_ENCODE != ff_utils.EXPORT_ENCODE
+
+
+def test_extracted_frames_are_still_lossless(sample_video, tmp_path):
+    """
+    Frames are written at the cheapest PNG level for speed. PNG is lossless at
+    every level, so the pixels must survive the round trip exactly.
+    """
+    import cv2
+    import numpy as np
+
+    frames_dir = str(tmp_path / 'frames')
+    ff_utils.extract_frames(sample_video, frames_dir)
+    first = sorted(glob.glob(os.path.join(frames_dir, 'frame_*.png')))[0]
+
+    image = cv2.imread(first)
+    rewritten = str(tmp_path / 'again.png')
+    cv2.imwrite(rewritten, image, [cv2.IMWRITE_PNG_COMPRESSION, ff_utils.PNG_COMPRESSION])
+
+    assert np.array_equal(cv2.imread(rewritten), image)

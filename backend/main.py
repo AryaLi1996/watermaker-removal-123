@@ -4,15 +4,20 @@ full pipeline, and emits structured stdout messages for the Electron IPC parser.
 
 Stdout protocol:
   PROGRESS:<float>   — numeric progress (0–100)
-  STATE:<string>     — human-readable stage label
+  STATE:stage:<key>  — pipeline stage, as a key the renderer translates
   STATE:preview_ready:<path> — quick-preview output path
   ERROR:<string>     — fatal error; Electron shows modal
   DEBUG:<string>     — ignored in production Electron build
+
+Stage labels are keys, not prose: the UI is bilingual and the backend has no
+business deciding which language the status line is written in. The renderer
+looks each key up in its own resources (`stages.<key>`).
 """
 from __future__ import annotations
 
 import json
 import math
+import multiprocessing
 import os
 import shutil
 import signal
@@ -24,7 +29,19 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, BeforeValidator, Field, ValidationError, field_validator
 
 import ff_utils
-import processor
+
+
+def load_processor():
+    """
+    Import the frame processor on first use.
+
+    It pulls in OpenCV, which costs the best part of a second to import and,
+    in the frozen build, unpacks a large chunk of the bundle. The metadata
+    and still-frame probes that run when the user picks a file need none of
+    it, and that wait is the whole of "importing is slow".
+    """
+    import processor  # noqa: PLC0415 — deliberately deferred
+    return processor
 
 
 # ─── Pydantic schema ────────────────────────────────────────────────────────
@@ -48,6 +65,13 @@ def _round_pixels(value: object) -> object:
 
 
 Pixels = Annotated[int, BeforeValidator(_round_pixels)]
+
+# How much of the video a quick preview covers. One second is enough to judge
+# a removal — the mark is either gone or it is not — and it is a third of the
+# frames to extract, process and encode, which is a third of the wait.
+# `previewSeconds` on the job overrides it.
+PREVIEW_SECONDS = 1.0
+
 
 RemovalMethod = Literal['inpaint', 'blur', 'solidFill', 'cloneStamp']
 JobMode = Literal['full', 'preview', 'preview_frame']
@@ -77,6 +101,8 @@ class JobConfig(BaseModel):
     color: list[int] = Field(default=[0, 0, 0], min_length=3, max_length=3)
     dx: Pixels = 0
     dy: Pixels = -50
+    # How many seconds of video a quick preview covers.
+    previewSeconds: float = Field(default=PREVIEW_SECONDS, gt=0, le=30)
 
     @field_validator('color')
     @classmethod
@@ -170,9 +196,6 @@ def emit_meta(meta: dict) -> None:
     }))
 
 
-PREVIEW_SECONDS = 3.0
-
-
 def preview_window(duration: float, length: float = PREVIEW_SECONDS) -> tuple[float, float]:
     """
     Pick a clip window centred in the video, clamped to what actually exists.
@@ -195,6 +218,17 @@ def state(label: str) -> None:
     emit(f'STATE:{label}')
 
 
+def stage(key: str) -> None:
+    """
+    Announce a pipeline stage by key, for the renderer to translate.
+
+    The stage names live in the renderer's locale files alongside every other
+    string in the UI, so a Chinese user sees a Chinese status line without the
+    backend carrying a translation table of its own.
+    """
+    state(f'stage:{key}')
+
+
 # ─── Signal handler (cancel) ────────────────────────────────────────────────
 
 def _handle_sigterm(signum, frame):
@@ -203,7 +237,11 @@ def _handle_sigterm(signum, frame):
     Both the worker pool and any running ffmpeg child have to go, or they
     outlive this process and keep writing into a deleted temp directory.
     """
-    processor.terminate()
+    # Only if the frame pipeline was ever reached — importing it here, purely
+    # to cancel work it never started, would delay the exit by the import.
+    loaded = sys.modules.get('processor')
+    if loaded is not None:
+        loaded.terminate()
     ff_utils.terminate()
     sys.exit(0)
 
@@ -224,20 +262,22 @@ def run_pipeline(
     `source_video` is the file from which frames are extracted (may be a
     trimmed clip for preview mode).
 
-    `announce_meta` is off for preview runs: the metadata of a 3-second clip
-    would misreport the source video the UI is describing.
+    `announce_meta` is off for preview runs: the metadata of a trimmed clip
+    would misreport the source video the UI is describing. A preview is also
+    encoded for speed rather than for keeping — see ff_utils.PREVIEW_ENCODE.
     """
+    is_preview = config.mode == 'preview'
     frames_dir = os.path.join(temp_dir, 'frames')
 
     # 1. Probe metadata
-    state('Probing video metadata...')
+    stage('probing')
     meta = ff_utils.probe_video(source_video)
     if announce_meta:
         emit_meta(meta)
     progress(5)
 
     # 2. Extract frames
-    state('Extracting frames...')
+    stage('extractingFrames')
     ff_utils.extract_frames(source_video, frames_dir)
     progress(20)
 
@@ -255,7 +295,7 @@ def run_pipeline(
         )
 
     # 3. Process frames in parallel
-    state('Reconstructing pixels...')
+    stage('processing')
     roi_dict = config.roi.model_dump()
     removal_config = {
         'method': config.method,
@@ -272,7 +312,7 @@ def run_pipeline(
         # Maps 0–100 of processing to 20–80 of total progress
         progress(20 + pct * 0.6)
 
-    processor.run_batch(
+    load_processor().run_batch(
         frame_paths,
         removal_config,
         meta['width'],
@@ -282,18 +322,19 @@ def run_pipeline(
     progress(80)
 
     # 4. Reassemble
-    state('Encoding output video...')
+    stage('encoding')
     output_path = config.outputPath
     ff_utils.reassemble_video(
         frames_dir,
         # Audio and metadata come from the file the frames were extracted from.
         # In preview mode that is the trimmed clip — muxing the full original
-        # here leaves a 3-second video carrying the whole soundtrack.
+        # here leaves a one-second video carrying the whole soundtrack.
         source_video,
         output_path,
         meta['fps'],
         temp_video=os.path.join(temp_dir, 'video_only.mp4'),
         audio_codec=meta['audio_codec'],
+        encode=ff_utils.PREVIEW_ENCODE if is_preview else ff_utils.EXPORT_ENCODE,
     )
     progress(100)
     return output_path
@@ -318,6 +359,10 @@ def main() -> None:
             raise ValueError(describe_validation_error(exc)) from exc
 
         if config.mode == 'preview_frame':
+            # Loading a video is two ffmpeg calls and no UI of its own, so it
+            # says where it is: without that the canvas shows a spinner and
+            # the user cannot tell a slow file from a stuck app.
+            stage('probing')
             # Probe metadata first so the UI can display width/height/fps/duration.
             meta = ff_utils.probe_video(config.inputPath)
             emit_meta(meta)
@@ -325,6 +370,7 @@ def main() -> None:
             # Extract a single representative frame for the UI canvas.
             # Placed OUTSIDE temp_dir so finally:rmtree doesn't delete it
             # before Electron reads it. Electron is responsible for cleanup.
+            stage('extractingStill')
             fd, preview_png = tempfile.mkstemp(suffix='_wm_preview.png')
             os.close(fd)
             # Clamp timestamp: if video is shorter than 5 s use 0 s
@@ -333,17 +379,17 @@ def main() -> None:
             emit(f'STATE:preview_ready:{preview_png}')
 
         elif config.mode == 'preview':
-            # Extract a 3-second clip, run the full pipeline on it, and return
+            # Extract a short clip, run the full pipeline on it, and return
             # the result. Write OUTSIDE temp_dir so finally:rmtree doesn't
             # delete it before Electron reads it. Electron cleans it up.
             fd, preview_out = tempfile.mkstemp(suffix='_wm_preview_clip.mp4')
             os.close(fd)
 
-            state('Extracting preview clip...')
+            stage('extractingClip')
             clip_path = os.path.join(temp_dir, 'preview_src.mp4')
             src_meta = ff_utils.probe_video(config.inputPath)
             emit_meta(src_meta)
-            start, length = preview_window(src_meta['duration'])
+            start, length = preview_window(src_meta['duration'], config.previewSeconds)
             ff_utils.extract_clip(config.inputPath, clip_path, start=start, duration=length)
             # Run pipeline on the clip, writing to the safe external path
             preview_config = config.model_copy(update={'outputPath': preview_out})
@@ -368,4 +414,13 @@ def main() -> None:
 
 
 if __name__ == '__main__':
+    # Must come first, and before anything reads stdin.
+    #
+    # The release ships this dispatcher frozen into a single executable, and
+    # the frame pool starts its workers by re-running that executable. Without
+    # this call each worker runs the dispatcher again from the top: it finds
+    # the stdin Electron already closed, reports "No input received on stdin."
+    # on the same stdout the real job is reporting on, and the user sees that
+    # error in the middle of a preview that was otherwise going fine.
+    multiprocessing.freeze_support()
     main()
