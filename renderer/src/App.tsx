@@ -8,8 +8,11 @@ import DonePanel from './components/DonePanel';
 import TemporalFallbackNote from './components/TemporalFallbackNote';
 import DeepNoticeNote from './components/DeepNoticeNote';
 import PresetPicker from './components/PresetPicker';
+import SubscriptionStatusBar from './components/SubscriptionStatusBar';
+import SubscriptionPage from './pages/SubscriptionPage';
 import type { AppState, DeepNotice, JobConfig, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
 import { deepAvailability, deepPresetFor, previewSecondsFor, qualityForJob, temporalAvailability, usesDeepEngine, TEMPORAL_PREVIEW_MAX_SECONDS } from './capabilities';
+import type { Availability } from './capabilities';
 import { normalizeCoordinates, defaultOutputName, formatDuration, mediaUrl, NULL_SINK } from './utils';
 import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX } from './errors';
 import type { FriendlyError } from './errors';
@@ -20,12 +23,26 @@ import type { JobSettings } from './hooks/useHistory';
 import { useKeyboardShortcuts, SHORTCUT_HINTS } from './hooks/useKeyboardShortcuts';
 import { useVideoLoader } from './hooks/useVideoLoader';
 import { useTranslation } from './hooks/useTranslation';
+import { useSubscription } from './hooks/useSubscription';
 import { LOCALES, LOCALE_NAMES } from './i18n';
 import { estimateSecondsRemaining, recordSample } from './eta';
 import { stageLabel, stageState } from './stages';
 import type { ProgressSample } from './eta';
 
 const SIDEBAR_W = 280;
+
+/** Which screen the top nav is showing. */
+type Screen = 'editor' | 'subscription';
+
+/** How a feature reads when the subscription, not the hardware, is what
+ *  rules it out. Same shape the capability checks return. */
+const LOCKED: Availability = { available: false, reasonKey: 'subscription.lockedFeature' };
+
+/** The screens the top bar switches between, in the order they appear. */
+const NAV_ITEMS: { id: Screen; labelKey: string }[] = [
+  { id: 'editor', labelKey: 'subscription.navEditor' },
+  { id: 'subscription', labelKey: 'subscription.nav' },
+];
 
 /** Preview clip lengths on offer, shortest (and cheapest) first. */
 const PREVIEW_SECOND_OPTIONS = [
@@ -36,6 +53,8 @@ const PREVIEW_SECOND_OPTIONS = [
 
 function App() {
   const { t, locale, setLocale } = useTranslation();
+  const subscription = useSubscription();
+  const [screen, setScreen] = useState<Screen>('editor');
   const [appState, setAppState] = useState<AppState>('empty');
   const [inputPath, setInputPath] = useState<string | null>(null);
   const [outputPath, setOutputPath] = useState<string | null>(null);
@@ -46,7 +65,7 @@ function App() {
   const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
   const [canvasScale, setCanvasScale] = useState(1);
   const [canvasROI, setCanvasROI] = useState<ROI>({ x: 0, y: 0, w: 200, h: 100 });
-  const [method, setMethod] = useState<RemovalMethod>('inpaint');
+  const [selectedMethod, setMethod] = useState<RemovalMethod>('inpaint');
   const [radius, setRadius] = useState(3);
   const [kernelSize, setKernelSize] = useState(51);
   const [color, setColor] = useState<[number, number, number]>([0, 0, 0]);
@@ -55,7 +74,7 @@ function App() {
   const [temporalQuality, setTemporalQuality] = useState<TemporalQuality>('balanced');
   // Off by default: it needs a graphics card most machines do not have, and a
   // switch that silently falls back on every run is a switch that lies.
-  const [deepLearning, setDeepLearning] = useState(false);
+  const [selectedDeepLearning, setDeepLearning] = useState(false);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [progress, setProgress] = useState(0);
   const [stateLabel, setStateLabel] = useState('');
@@ -74,13 +93,30 @@ function App() {
   // longer options cost proportionally more time to produce.
   const [previewSeconds, setPreviewSeconds] = useState(1);
 
+  // A paid feature is off the table the same way an underpowered machine puts
+  // one off the table: greyed out with the reason on the card, rather than a
+  // control that accepts a click and then refuses the job.
+  const { entitlements } = subscription;
+  const temporal = entitlements.temporalFill ? temporalAvailability(systemInfo) : LOCKED;
+
+  // The method and the engine a job would actually run. A trial can run out
+  // with temporal fill selected, so the selection is read through what the
+  // tier allows rather than written back to state — nothing to keep in sync,
+  // and the choice returns intact if the user subscribes.
+  const method: RemovalMethod = selectedMethod === 'temporal' && !temporal.available ? 'inpaint' : selectedMethod;
+  const deepLearning = selectedDeepLearning && entitlements.deepLearning;
+
   // Whether the learned engine can run here, whether this job would use it,
   // and which preset it would run. All three follow from the switch, the
   // method and what the host reported about the graphics card, so they are
   // derived on every render rather than kept in state that could drift.
-  const deep = deepAvailability(systemInfo);
+  const deep = entitlements.deepLearning ? deepAvailability(systemInfo) : LOCKED;
   const usesDeep = usesDeepEngine(method, deepLearning, systemInfo);
   const deepPreset = deepPresetFor(temporalQuality, systemInfo);
+  // The preview length that will actually run: capped by the method first,
+  // then by the tier. A free tier that asks for five seconds gets one, and
+  // the control shows that rather than a number the app will not honour.
+  const effectivePreviewSeconds = Math.min(previewSecondsFor(method, previewSeconds), entitlements.maxPreviewSeconds);
 
   /** One place to fail: keeps the raw text for a report, shows plain language. */
   const failWith = useCallback((raw: string) => {
@@ -219,7 +255,7 @@ function App() {
     // capped in the backend too, so the length sent is the length that runs),
     // and at the quickest quality whatever the dial says (`qualityForJob`).
     // The export keeps both of the user's choices.
-    const payload: JobConfig = { inputPath, outputPath: outputPath ?? NULL_SINK, roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy, temporalQuality: qualityForJob(method, temporalQuality, true), useDeepLearning: usesDeep, previewSeconds: previewSecondsFor(method, previewSeconds) };
+    const payload: JobConfig = { inputPath, outputPath: outputPath ?? NULL_SINK, roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy, temporalQuality: qualityForJob(method, temporalQuality, true), useDeepLearning: usesDeep, previewSeconds: effectivePreviewSeconds };
     setProgress(0); setStateLabel(stageState('preparingPreview')); setSamples([]); setTemporalFallback(null); setDeepNotice(null); setAppState('processing');
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobProgress((value) => {
@@ -239,7 +275,7 @@ function App() {
     if (!started) {
       failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, previewSeconds, failWith]);
+  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, effectivePreviewSeconds, failWith]);
 
   const handleCancel = useCallback(async () => {
     await window.electronAPI.cancelJob();
@@ -301,7 +337,6 @@ function App() {
   // ── Presets ───────────────────────────────────────────────────────────
   // What this machine can actually run: a preset for a method that is greyed
   // out would apply a method the user cannot select or export with.
-  const temporal = temporalAvailability(systemInfo);
   const presets = [...BUILT_IN_PRESETS, ...customPresets]
     .filter((p) => p.method !== 'temporal' || temporal.available);
 
@@ -371,27 +406,60 @@ function App() {
   const secondsRemaining = estimateSecondsRemaining(samples);
 
   return (
-    <div className="app-shell" style={{ display: 'flex', width: '100%', height: '100%', background: '#18181b' }}>
+    <div className="app-shell" style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: '#18181b' }}>
+      {/* Top navigation: which screen, and the language the app speaks */}
+      <div
+        className="app-topbar"
+        style={{
+          display: 'flex', alignItems: 'center', gap: 16, padding: '0 14px', height: 40,
+          background: '#27272a', borderBottom: '1px solid #3f3f46',
+        }}
+      >
+        <p style={{ color: '#f4f4f5', fontSize: 13, fontWeight: 500 }}>{t('app.title')}</p>
+        <nav style={{ display: 'flex', gap: 4 }}>
+          {NAV_ITEMS.map(({ id, labelKey }) => {
+            const active = screen === id;
+            return (
+              <button
+                key={id}
+                data-testid={`nav-${id}`}
+                aria-current={active ? 'page' : undefined}
+                onClick={() => setScreen(id)}
+                style={{
+                  background: active ? '#3f3f46' : 'transparent', border: 'none', borderRadius: 6,
+                  padding: '4px 12px', color: active ? '#f4f4f5' : '#a1a1aa', fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                {t(labelKey)}
+              </button>
+            );
+          })}
+        </nav>
+        <select
+          data-testid="language-select"
+          aria-label={t('app.language')}
+          value={locale}
+          onChange={(e) => setLocale(e.target.value as typeof locale)}
+          style={{
+            marginLeft: 'auto', background: '#18181b', color: '#a1a1aa', border: '1px solid #3f3f46',
+            borderRadius: 4, fontSize: 11, padding: '2px 4px', cursor: 'pointer',
+          }}
+        >
+          {LOCALES.map((code) => (
+            <option key={code} value={code}>{LOCALE_NAMES[code]}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* The editor stays mounted behind the subscription page: hiding it
+          keeps the loaded video, the box the user drew and a running job. */}
+      <div
+        className="app-body"
+        style={{ flex: 1, minHeight: 0, display: screen === 'editor' ? 'flex' : 'none' }}
+      >
       {/* Sidebar */}
       <div className="app-sidebar" style={{ width: SIDEBAR_W, minWidth: SIDEBAR_W, background: '#27272a', borderRight: '1px solid #3f3f46', display: 'flex', flexDirection: 'column', padding: 24, gap: 20, overflowY: 'auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-          <p style={{ color: '#f4f4f5', fontSize: 14, fontWeight: 500 }}>{t('app.title')}</p>
-          <select
-            data-testid="language-select"
-            aria-label={t('app.language')}
-            value={locale}
-            onChange={(e) => setLocale(e.target.value as typeof locale)}
-            style={{
-              background: '#18181b', color: '#a1a1aa', border: '1px solid #3f3f46',
-              borderRadius: 4, fontSize: 11, padding: '2px 4px', cursor: 'pointer',
-            }}
-          >
-            {LOCALES.map((code) => (
-              <option key={code} value={code}>{LOCALE_NAMES[code]}</option>
-            ))}
-          </select>
-        </div>
-
         {appState === 'empty' && (
           <button
             data-testid="btn-load-video"
@@ -477,7 +545,7 @@ function App() {
               onSaveCurrent={saveCurrentPreset}
             />
 
-            <MethodPicker method={method} deepLearning={deepLearning} deep={deep} deepPreset={deepPreset} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} temporalQuality={temporalQuality} temporal={temporal} videoMeta={videoMeta} cpuCount={systemInfo?.cpuCount} previewSeconds={previewSecondsFor(method, previewSeconds)} disabled={!isLoaded} onChange={handleMethodChange} />
+            <MethodPicker method={method} deepLearning={deepLearning} deep={deep} deepPreset={deepPreset} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} temporalQuality={temporalQuality} temporal={temporal} videoMeta={videoMeta} cpuCount={systemInfo?.cpuCount} previewSeconds={effectivePreviewSeconds} disabled={!isLoaded} onChange={handleMethodChange} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{t('file.output')}</p>
@@ -511,7 +579,7 @@ function App() {
                   <select
                     id="preview-seconds"
                     data-testid="preview-seconds"
-                    value={previewSecondsFor(method, previewSeconds)}
+                    value={effectivePreviewSeconds}
                     disabled={!isLoaded}
                     onChange={(e) => setPreviewSeconds(Number(e.target.value))}
                     style={{
@@ -526,7 +594,10 @@ function App() {
                         value={value}
                         // Offering a length this method will not run would be
                         // a control that lies about what it does.
-                        disabled={method === 'temporal' && value > TEMPORAL_PREVIEW_MAX_SECONDS}
+                        disabled={
+                          (method === 'temporal' && value > TEMPORAL_PREVIEW_MAX_SECONDS)
+                          || value > entitlements.maxPreviewSeconds
+                        }
                       >
                         {t(labelKey)}
                       </option>
@@ -534,6 +605,10 @@ function App() {
                   </select>
                 </div>
                 <p data-testid="preview-warning" style={{ color: '#71717a', fontSize: 10 }}>{t('actions.previewWarning')}</p>
+                {/* Why the longer options are greyed out, said where they are. */}
+                {entitlements.maxPreviewSeconds < 5 && (
+                  <p data-testid="preview-locked" style={{ color: '#71717a', fontSize: 10 }}>{t('subscription.lockedPreview')}</p>
+                )}
               </div>
               {/* A preview reports the same caveat, where it is cheapest to
                   act on: the export has not been started yet. */}
@@ -595,6 +670,21 @@ function App() {
           <button data-testid="change-video" onClick={handleSelectFile} style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(39,39,42,0.85)', border: '1px solid #3f3f46', borderRadius: 6, padding: '5px 12px', color: '#d4d4d8', fontSize: 11, cursor: 'pointer' }}>{t('file.change')}</button>
         )}
       </div>
+      </div>
+
+      {screen === 'subscription' && (
+        <SubscriptionPage
+          status={subscription.status}
+          onSubscribe={subscription.subscribe}
+          onCancelAutoRenew={subscription.cancelAutoRenew}
+        />
+      )}
+
+      <SubscriptionStatusBar
+        status={subscription.status}
+        loading={subscription.loading}
+        onOpen={() => setScreen('subscription')}
+      />
     </div>
   );
 }

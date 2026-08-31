@@ -253,6 +253,22 @@ greyed out; an unknown or older main process keeps it), that everything the
 method puts on screen is translated in both languages, and that a change of
 quality counts as an edit worth undoing.
 
+**Files:** `tests/unit/renderer/subscription.test.ts`,
+`tests/unit/renderer/subscription-store.test.ts`,
+`renderer/src/pages/SubscriptionPage.test.tsx`,
+`renderer/src/App.subscription.test.tsx` — the subscription
+
+The first covers the prices each plan works out to, the three-day trial and
+how it reads once it has run out, renewing early without losing the days
+already paid for, and what each tier unlocks. The second covers the record the
+main process keeps: a trial granted exactly once, a purchase that survives a
+restart, a damaged file that starts over rather than refusing to load, and
+cancelling auto-renewal without cancelling the plan. The third renders the
+page — the four cards, the QR dialog, and that nothing is bought until it is
+confirmed. The fourth is the app with the pieces wired together: the trial in
+the bottom bar, the navigation, and a purchase that survives a remount. `tests/e2e/subscription.spec.ts` drives the same flow through the
+real IPC handlers.
+
 **File:** `tests/unit/renderer/utils.test.ts`
 
 | Test group | Tests | What is checked |

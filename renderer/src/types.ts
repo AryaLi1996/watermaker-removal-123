@@ -1,6 +1,8 @@
 /**
  * Type declarations for window.electronAPI (provided by preload.js).
  */
+import type { PaidPlanId, PaymentMethod, Subscription } from './subscription';
+
 export interface ROI {
   x: number;
   y: number;
@@ -118,6 +120,10 @@ declare global {
       onUpdateDownloaded: (cb: (version: string | null) => void) => void;
       installUpdate: () => Promise<boolean>;
       systemInfo: () => Promise<SystemInfo>;
+      /** Absent from a main process older than the subscription feature. */
+      subscriptionStatus?: () => Promise<Subscription | null>;
+      subscribe?: (plan: PaidPlanId, paymentMethod: PaymentMethod) => Promise<Subscription | null>;
+      cancelAutoRenew?: () => Promise<Subscription | null>;
       tempDir: () => Promise<string>;
       notify: (title: string, body: string) => Promise<boolean>;
       removeJobListeners: () => void;
