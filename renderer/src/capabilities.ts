@@ -96,3 +96,82 @@ export function qualityForJob(
 export function previewIsDowngraded(method: RemovalMethod, chosen: TemporalQuality): boolean {
   return method === 'temporal' && chosen !== PREVIEW_TEMPORAL_QUALITY;
 }
+
+/**
+ * The learned engine (ProPainter) needs a CUDA card, and enough of one.
+ *
+ * The numbers below mirror `backend/propainter_engine.PRESETS`: each preset
+ * has a resolution and a chunk length, and those decide how much video memory
+ * a run allocates. They are duplicated here rather than fetched because the
+ * sidebar has to answer "can I tick this box" before any backend process has
+ * been started — and because being a few hundred megabytes optimistic here
+ * costs a fallback notice, while being pessimistic hides a feature that works.
+ *
+ * A machine below the smallest preset is not offered the switch at all: it
+ * would tick, run nothing, and report a fallback every single time.
+ */
+export const DEEP_PRESET_VRAM_MB: Record<TemporalQuality, number> = {
+  fast: 4096,
+  balanced: 8192,
+  high: 20480,
+};
+
+/** The smallest card that can run anything. Below this, no preset fits. */
+export const DEEP_MIN_VRAM_MB = DEEP_PRESET_VRAM_MB.fast;
+
+/**
+ * Whether the learned engine should be offered here.
+ *
+ * Unknown is available, as everywhere else in this file: `info` is null until
+ * the main process answers. A main process old enough not to report a GPU at
+ * all is the one exception where that rule would be wrong — it cannot tell us
+ * there is a card, so offering the switch would promise something nothing can
+ * deliver — but it also cannot tell us there is not, and the backend checks
+ * again and falls back gracefully. So: offered, with the fallback as the net.
+ */
+export function deepAvailability(info: SystemInfo | null): Availability {
+  if (!info || !info.gpu) return AVAILABLE;
+  if (!info.gpu.available) return { available: false, reasonKey: 'deep.needsGpu' };
+  if (info.gpu.memoryTotalMB > 0 && info.gpu.memoryTotalMB < DEEP_MIN_VRAM_MB) {
+    return { available: false, reasonKey: 'deep.needsVram' };
+  }
+  return AVAILABLE;
+}
+
+/**
+ * The preset the learned engine will actually run, given the dial and the
+ * card. It steps down rather than refusing — see `select_settings` in
+ * `backend/propainter_engine.py`, which this mirrors — so the sidebar can
+ * say up front that "high" will run as "balanced" here.
+ *
+ * Null where nothing fits, which `deepAvailability` has already ruled out.
+ */
+export function deepPresetFor(
+  chosen: TemporalQuality,
+  info: SystemInfo | null,
+): TemporalQuality | null {
+  const memory = info?.gpu?.memoryTotalMB ?? 0;
+  // An unknown card is taken at its word: the backend will pick correctly and
+  // report if it had to step down.
+  if (memory <= 0) return chosen;
+
+  const order = TEMPORAL_QUALITIES.slice(0, TEMPORAL_QUALITIES.indexOf(chosen) + 1);
+  for (const level of order.reverse()) {
+    if (memory >= DEEP_PRESET_VRAM_MB[level]) return level;
+  }
+  return null;
+}
+
+/**
+ * Whether the learned engine is what a job will actually use.
+ *
+ * The switch only means anything under temporal fill: it is that method's
+ * second implementation, not a method of its own.
+ */
+export function usesDeepEngine(
+  method: RemovalMethod,
+  enabled: boolean,
+  info: SystemInfo | null,
+): boolean {
+  return method === 'temporal' && enabled && deepAvailability(info).available;
+}

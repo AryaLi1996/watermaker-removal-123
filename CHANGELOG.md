@@ -32,12 +32,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     that makes the other methods feel instant would make this one the slowest
     thing in the app.
 
+- **Deep learning enhancement (optional)** — a switch under Temporal Fill that
+  hands the job to [ProPainter](https://github.com/sczhou/ProPainter), a
+  learned video-inpainting model, instead of the optical-flow engine. It is the
+  answer to the one case flow cannot help with: a locked-off camera over a
+  still background, where no frame in the video ever shows what is behind the
+  mark, so there is nothing to recover and something has to be invented.
+  - Not bundled, and not downloaded on your behalf: it needs PyTorch, CUDA and
+    an NVIDIA card. See [docs/deep-learning.md](docs/deep-learning.md) for the
+    install. Without it the switch is greyed out with the reason and everything
+    behaves exactly as before.
+  - The model weights (about 200 MB, three files) *are* fetched automatically,
+    on the first job that uses the engine, with progress as they come down.
+  - The quality dial picks the resolution the model runs at. A card too small
+    for the preset chosen steps down to the next one rather than refusing, and
+    the sidebar says which preset will run before the job starts.
+  - Only the repainted rectangle is pasted back, feathered into the frame. The
+    model works at a resolution its memory budget allows; everything outside
+    the selection keeps the pixels ffmpeg extracted, at full resolution.
+  - Long videos are processed in chunks, so length costs time rather than video
+    memory.
+  - Every way this can fail is a fallback, never a lost export: the optical-flow
+    engine finishes the job and the app says what happened and why. It is never
+    silent about it — an export that quietly used a different engine than the
+    one selected is an export nobody can reason about.
+
 ### Changed
 - The method shortcuts now run 1–5, the fifth being temporal fill. On a
   machine where the method is unavailable, the key does nothing rather than
   selecting something that cannot be exported.
 - `system:info` reports the host's core count and total memory, so the
-  renderer can tell whether the heavier methods are worth offering.
+  renderer can tell whether the heavier methods are worth offering. It now also
+  reports the GPU — name and video memory, asked of the NVIDIA driver — which
+  is what decides whether the deep-learning switch is offered and which preset
+  it promises.
+- The core and memory bar for temporal fill applies to the optical-flow engine
+  only. A two-core machine with a large graphics card runs the deep engine
+  faster than an eight-core one runs the flow engine; refusing it for want of
+  cores would refuse the fastest job the app can do.
 
 ## [1.1.0] - 2026-08-30
 

@@ -9,6 +9,16 @@ import { useTranslation } from '../hooks/useTranslation';
 
 interface MethodPickerProps {
   method: RemovalMethod;
+  /** Whether temporal fill should hand the job to the learned engine. */
+  deepLearning: boolean;
+  /** Whether this machine can run that engine, and why not if it cannot. */
+  deep: Availability;
+  /**
+   * The preset the learned engine would actually run here — below the dial
+   * where the card is too small for it. Null when nothing fits, which
+   * `deep.available` has already ruled out.
+   */
+  deepPreset: TemporalQuality | null;
   radius: number;
   kernelSize: number;
   color: [number, number, number];
@@ -37,6 +47,7 @@ interface MethodPickerProps {
     dx: number;
     dy: number;
     temporalQuality: TemporalQuality;
+    deepLearning: boolean;
   }>) => void;
 }
 
@@ -83,6 +94,9 @@ function Slider({
 
 export default function MethodPicker({
   method,
+  deepLearning,
+  deep,
+  deepPreset,
   radius,
   kernelSize,
   color,
@@ -104,6 +118,10 @@ export default function MethodPicker({
   // Both forecasts come from the same model; they differ only in how much
   // video they cover and — because a preview is always run at the quick
   // setting — in which quality they price.
+  // The switch only bites under temporal fill and only where the machine can
+  // honour it; everywhere else the sidebar should describe the CPU engine.
+  const usesDeep = method === 'temporal' && deepLearning && deep.available;
+
   const exportEstimate = videoMeta && formatEstimate(
     estimateTemporalSeconds({
       fps: videoMeta.fps,
@@ -262,7 +280,62 @@ export default function MethodPicker({
             {/* What the choice above actually costs, in the only unit that
                 helps someone decide whether to make it. Absent until a video
                 is loaded, because until then there is nothing to forecast. */}
-            {exportEstimate && (
+            {/* Whether the job goes to the graphics card. Under the quality
+                dial, not beside the method: it is a second implementation of
+                temporal fill, not a sixth method, and it reads the same
+                quality setting. Greyed out with a reason where the machine
+                cannot run it — a switch that does nothing is worse than one
+                that is not offered. */}
+            <label
+              data-testid="deep-toggle"
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 8,
+                cursor: disabled || !deep.available ? 'not-allowed' : 'pointer',
+                opacity: deep.available ? 1 : 0.5,
+              }}
+              title={!deep.available && deep.reasonKey ? t(deep.reasonKey) : t('method.deepLearningHint')}
+            >
+              <input
+                type="checkbox"
+                checked={deepLearning && deep.available}
+                disabled={disabled || !deep.available}
+                onChange={(e) => onChange({ deepLearning: e.target.checked })}
+                style={{ marginTop: 2, accentColor: '#6366f1' }}
+              />
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ color: '#d4d4d8', fontSize: 12 }}>{t('method.deepLearning')}</span>
+                  <span style={{ color: '#818cf8', background: '#312e81', borderRadius: 3, fontSize: 9, padding: '1px 4px', letterSpacing: '0.04em' }}>
+                    {t('method.deepBadge')}
+                  </span>
+                </span>
+                {/* A disabled switch has to say why, or it reads as a bug. */}
+                {!deep.available && deep.reasonKey && (
+                  <span data-testid="deep-reason" style={{ color: '#71717a', fontSize: 11 }}>
+                    {t(deep.reasonKey)}
+                  </span>
+                )}
+              </span>
+            </label>
+
+            {/* What the card will actually do with the setting above. Said
+                before the run, not reported after it. */}
+            {deepLearning && deep.available && deepPreset && deepPreset !== temporalQuality && (
+              <p data-testid="deep-downgrade" style={{ color: '#a1a1aa', fontSize: 11 }}>
+                {t('method.deepDowngrade', { quality: t(`quality.${deepPreset}`) })}
+              </p>
+            )}
+
+            {deepLearning && deep.available && (
+              <p data-testid="deep-note" style={{ color: '#a1a1aa', fontSize: 11, lineHeight: 1.5, background: '#1e1b4b', border: '1px solid #312e81', borderRadius: 4, padding: '6px 8px' }}>
+                {t('method.deepNote')}
+              </p>
+            )}
+
+            {/* The forecast below models the CPU engine, frame by frame over
+                the core count. It says nothing useful about a run on a
+                graphics card, and a wrong number is worse than none. */}
+            {!usesDeep && exportEstimate && (
               <p data-testid="temporal-estimate" style={{ color: '#a1a1aa', fontSize: 11 }}>
                 {t('estimate.export', { time: exportEstimate })}
                 {previewEstimate && (
@@ -276,13 +349,18 @@ export default function MethodPicker({
             {/* The preview does not run at the setting above, and a preview
                 that is quietly rougher than the export is a preview that
                 misleads. Only shown when the two actually differ. */}
-            {previewIsDowngraded(method, temporalQuality) && (
+            {!usesDeep && previewIsDowngraded(method, temporalQuality) && (
               <p data-testid="temporal-preview-fast" style={{ color: '#a1a1aa', fontSize: 11 }}>
                 {t('method.temporalPreviewFast', { quality: t(`quality.${PREVIEW_TEMPORAL_QUALITY}`) })}
               </p>
             )}
             {/* Slower by a lot, and worth it for the right footage: both
                 halves of that belong on screen before the user starts. */}
+            {usesDeep && (
+              <p data-testid="deep-preview-fast" style={{ color: '#a1a1aa', fontSize: 11 }}>
+                {t('method.deepPreviewFast')}
+              </p>
+            )}
             <p data-testid="temporal-note" style={{ color: '#a1a1aa', fontSize: 11, lineHeight: 1.5, background: '#1e1b4b', border: '1px solid #312e81', borderRadius: 4, padding: '6px 8px' }}>
               {t('method.temporalNote')}
             </p>

@@ -72,6 +72,26 @@ your box.
 - **Previews are capped at 3 seconds** for this method. Each frame costs the
   same as it does in the export, so a five-second preview would be a wait the
   button does not look like it is asking for.
+#### Deep learning enhancement
+
+A switch under Temporal Fill, and the answer to the case above: on a
+locked-off shot over a still background, no frame in the video ever shows what
+is behind the mark, so nothing can be recovered and something has to be
+invented. A trained model (ProPainter) does that far better than a single-frame
+fill can.
+
+- It runs on an **NVIDIA graphics card** and is **not included** — it needs
+  PyTorch and CUDA, well over a gigabyte of install. The switch is greyed out,
+  with the reason, until it is set up. See `docs/deep-learning.md`.
+- The **first run downloads** about 200 MB of model files.
+- **Quality** picks the resolution the model works at, which is what decides
+  whether it fits in your card's memory. A card too small for the setting you
+  picked runs the next one down, and the sidebar says so before you start.
+- **Previews always run the Fast setting**, whatever the dial says.
+- If it cannot run — no card, not enough video memory, out of memory
+  mid-export — **the export still finishes** on the standard Temporal Fill, and
+  the app tells you it did.
+
 - It is greyed out on machines with fewer than 4 cores or less than 4 GB of
   memory, where the wait would not be reasonable. The reason is shown under
   the method name, and a job that reaches the backend anyway is refused there

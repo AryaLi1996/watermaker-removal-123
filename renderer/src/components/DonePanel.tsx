@@ -3,14 +3,17 @@
  * Auto-transitions back to loaded state after 5 seconds.
  */
 import { useEffect, useState } from 'react';
-import type { TemporalFallback } from '../types';
+import type { DeepNotice, TemporalFallback } from '../types';
 import TemporalFallbackNote from './TemporalFallbackNote';
+import DeepNoticeNote from './DeepNoticeNote';
 import { useTranslation } from '../hooks/useTranslation';
 
 interface DonePanelProps {
   outputPath: string;
   /** Frames the temporal engine could not rebuild, or null if none were. */
   temporalFallback?: TemporalFallback | null;
+  /** What the learned engine did differently, or null where it did not. */
+  deepNotice?: DeepNotice | null;
   onReveal: () => void;
   onReset: () => void;
 }
@@ -18,6 +21,7 @@ interface DonePanelProps {
 export default function DonePanel({
   outputPath,
   temporalFallback = null,
+  deepNotice = null,
   onReveal,
   onReset,
 }: DonePanelProps) {
@@ -28,7 +32,9 @@ export default function DonePanel({
   // "done" and nothing else, and the one panel that carries the news about a
   // degraded result is the wrong thing to snatch away — there is nowhere else
   // the user could go to find it again.
-  const hasNotice = !!temporalFallback && temporalFallback.degraded > 0;
+  // Either caveat counts: an export that used a different engine than the one
+  // selected is exactly as much a thing to read as frames that fell back.
+  const hasNotice = (!!temporalFallback && temporalFallback.degraded > 0) || !!deepNotice;
 
   useEffect(() => {
     if (hasNotice) return;
@@ -60,6 +66,7 @@ export default function DonePanel({
       <p style={{ color: '#a1a1aa', fontSize: 11, wordBreak: 'break-all' }}>{filename}</p>
 
       <TemporalFallbackNote report={temporalFallback} />
+      <DeepNoticeNote notice={deepNotice} />
 
       <button
         data-testid="btn-reveal"

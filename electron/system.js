@@ -9,6 +9,7 @@
  */
 
 const { app, shell, Notification } = require('electron');
+const { execFile } = require('child_process');
 const os = require('os');
 const path = require('path');
 
@@ -78,6 +79,49 @@ function platformInfo() {
 }
 
 /**
+ * How long nvidia-smi gets to answer before we treat the machine as having no
+ * usable GPU. It is milliseconds on a healthy driver and a hang on a wedged
+ * one, and this runs while the window is coming up.
+ */
+const GPU_PROBE_TIMEOUT_MS = 5000;
+
+/** Remembered for the life of the process — the hardware will not change. */
+let gpuPromise = null;
+
+/**
+ * What the machine offers a CUDA workload, as the renderer needs it.
+ *
+ * Asked of the NVIDIA driver rather than of PyTorch: this runs in the Electron
+ * main process, which has no Python, and the answer is needed before the
+ * backend has ever been started — the sidebar has to know whether to offer
+ * the learned engine while the user is still choosing a file. The backend
+ * asks again, more authoritatively, before it actually runs anything.
+ *
+ * Never rejects. No GPU is the common case, not an error.
+ */
+function gpuInfo() {
+  if (gpuPromise) return gpuPromise;
+
+  gpuPromise = new Promise((resolve) => {
+    const none = { available: false, name: '', memoryTotalMB: 0 };
+    execFile(
+      'nvidia-smi',
+      ['--query-gpu=name,memory.total', '--format=csv,noheader,nounits'],
+      { timeout: GPU_PROBE_TIMEOUT_MS },
+      (err, stdout) => {
+        if (err || !stdout || !stdout.trim()) return resolve(none);
+        // One line per device; the first is the one CUDA picks by default.
+        const [name, memory] = stdout.trim().split('\n')[0].split(',').map((s) => s.trim());
+        const mb = Number.parseInt(memory, 10);
+        if (!name || !Number.isFinite(mb)) return resolve(none);
+        resolve({ available: true, name, memoryTotalMB: mb });
+      },
+    );
+  });
+  return gpuPromise;
+}
+
+/**
  * Executable name for a bundled tool on this platform.
  * Windows needs the .exe; the others do not.
  */
@@ -92,6 +136,7 @@ function bundledBinaryDir() {
 
 module.exports = {
   appDataDir,
+  gpuInfo,
   tempDir,
   revealInFileManager,
   notify,

@@ -328,6 +328,18 @@ function handleBackendLine(line, ctx) {
     });
     return;
   }
+  // Same reason: these carry a free-text detail that must not reach the
+  // status line as a label.
+  const deepFallbackMatch = line.match(/^STATE:deep_fallback:(.*)$/);
+  if (deepFallbackMatch) {
+    send('job:deep-notice', { kind: 'fallback', detail: deepFallbackMatch[1].trim() });
+    return;
+  }
+  const deepQualityMatch = line.match(/^STATE:deep_quality:(.*)$/);
+  if (deepQualityMatch) {
+    send('job:deep-notice', { kind: 'quality', detail: deepQualityMatch[1].trim() });
+    return;
+  }
   const progressMatch = line.match(/^PROGRESS:([\d.]+)$/);
   if (progressMatch) {
     send('job:progress', parseFloat(progressMatch[1]));
@@ -372,7 +384,12 @@ ipcMain.handle('dialog:saveFile', async (_event, defaultName) => {
 ipcMain.handle('shell:openPath', (_event, filePath) => system.revealInFileManager(filePath));
 
 // ─── Host platform facts and notifications ───────────────────────
-ipcMain.handle('system:info', () => system.platformInfo());
+// The GPU probe shells out to the driver, so this handler is async while
+// platformInfo() stays synchronous: the renderer awaits one object either way.
+ipcMain.handle('system:info', async () => ({
+  ...system.platformInfo(),
+  gpu: await system.gpuInfo(),
+}));
 ipcMain.handle('system:tempDir', () => system.tempDir());
 ipcMain.handle('system:notify', (_event, title, body) => system.notify(title, body));
 

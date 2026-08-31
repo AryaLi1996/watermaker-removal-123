@@ -226,6 +226,11 @@ release/
 backend/dist/
 backend/build/
 
+# The optional ProPainter checkout and its half-gigabyte of model weights,
+# where someone installs it in the conventional spot. Third-party source and
+# binaries, cloned per machine — see docs/deep-learning.md.
+backend/ProPainter/
+
 # electron-builder's buildResources (icon, entitlements) live at the repo root
 # and must be tracked, despite the generic build/ ignore above.
 !/build/

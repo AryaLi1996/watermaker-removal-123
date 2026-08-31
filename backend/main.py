@@ -8,6 +8,10 @@ Stdout protocol:
   STATE:preview_ready:<path> — quick-preview output path
   STATE:temporal_fallback:<n>/<total> — frames a failure pushed onto the
                        single-frame fill; sent once, only when n > 0
+  STATE:deep_fallback:<reason> — the learned engine could not run and the
+                       optical-flow one took the job; sent once
+  STATE:deep_quality:<preset> — the learned engine ran a lower preset than
+                       was asked for, because the GPU could not carry it
   ERROR:<string>     — fatal error; Electron shows modal
   DEBUG:<string>     — ignored in production Electron build
 
@@ -127,6 +131,11 @@ class JobConfig(BaseModel):
     dy: Pixels = -50
     # Speed against edge quality for the temporal engine; ignored by the rest.
     temporalQuality: TemporalQuality = 'balanced'
+    # Whether temporal fill should use the learned engine (ProPainter) rather
+    # than the optical-flow one. A request, not an instruction: a machine
+    # without a GPU, or without the checkout, runs the flow engine and says so.
+    # Defaults off, so a renderer that predates the feature keeps its behaviour.
+    useDeepLearning: bool = False
     # How many seconds of video a quick preview covers.
     previewSeconds: float = Field(default=PREVIEW_SECONDS, gt=0, le=30)
 
@@ -204,6 +213,21 @@ def report_temporal_fallback(degraded: int, total: int) -> None:
     """
     if degraded > 0:
         emit(f'STATE:temporal_fallback:{degraded}/{total}')
+
+
+def report_deep_notice(key: str, detail: str) -> None:
+    """
+    Relay something the deep engine wants the user to know that is not a
+    failure: that it stood aside for the flow engine, or that it ran a lower
+    preset than the dial asked for.
+
+    A single line each, on the same channel as everything else, and always
+    said — an export that quietly used a different engine than the one the
+    user selected is an export they cannot reason about. The detail is left
+    in English: the renderer has a sentence for the key and shows this beside
+    it, the way it already does with a backend error.
+    """
+    emit(f'STATE:{key}:' + detail.replace('\n', ' '))
 
 
 def describe_exception(exc: BaseException) -> str:
@@ -352,6 +376,10 @@ ENCODE_END = 98.0
 TEMPORAL_MIN_CORES = 4
 TEMPORAL_MIN_MEMORY_MB = 4096
 
+# The preset a preview of the deep engine runs at, whatever the dial says.
+# See temporal_quality_for.
+DEEP_PREVIEW_QUALITY = 'fast'
+
 # A preview of a temporal job is capped shorter than the others. It is the
 # same work per frame as the export, so the length the user picked to see a
 # result quickly would instead be the slowest thing in the app.
@@ -419,6 +447,52 @@ def check_temporal_supported() -> None:
         )
 
 
+def resolve_temporal_engine(config: JobConfig) -> str:
+    """
+    Which temporal engine this job will actually run: 'deep' or 'flow'.
+
+    Asked once, before any work, and reported when the answer is not the one
+    the job asked for. Deciding here rather than deep in the frame batch is
+    deliberate: the answer changes what the machine has to be capable of, what
+    the status line says, and how long the whole thing will take, and all
+    three are wanted before the first frame is extracted.
+    """
+    if config.method != 'temporal' or not config.useDeepLearning:
+        return 'flow'
+    # A still for the canvas processes no frames at all, and the renderer
+    # sends whichever method happens to be selected with it. Probing for that
+    # would put a GPU probe and an OpenCV import in front of opening a file,
+    # which is the one thing this mode exists to be quick at.
+    if config.mode == 'preview_frame':
+        return 'flow'
+
+    # Imports OpenCV and probes the GPU, so it happens only for a job that
+    # asked for the deep engine.
+    import propainter_engine  # noqa: PLC0415 — deliberately deferred
+
+    ready = propainter_engine.availability()
+    if ready.available:
+        return 'deep'
+    report_deep_notice('deep_fallback', ready.detail or 'ProPainter is unavailable')
+    return 'flow'
+
+
+def temporal_quality_for(config: JobConfig, engine: str) -> str:
+    """
+    The quality preset a job actually runs at.
+
+    A preview of the deep engine is forced to the quick preset whatever the
+    dial says. The renderer does this too, and this is not redundancy for its
+    own sake: on the deep engine the difference between presets is not a few
+    seconds but a resolution the GPU may not have the memory for, and a
+    preview that dies of an allocation the export would have survived is the
+    worst possible way to find out about a setting.
+    """
+    if engine == 'deep' and config.mode == 'preview':
+        return DEEP_PREVIEW_QUALITY
+    return config.temporalQuality
+
+
 def preview_length_for(method: str, length: float) -> float:
     """
     How much of the video a preview of this method may cover.
@@ -444,6 +518,7 @@ def run_pipeline(
     temp_dir: str,
     source_video: str,
     announce_meta: bool = True,
+    engine: str = 'flow',
 ) -> str:
     """
     Extract → process → reassemble. Returns the output file path.
@@ -453,6 +528,11 @@ def run_pipeline(
     `announce_meta` is off for preview runs: the metadata of a trimmed clip
     would misreport the source video the UI is describing. A preview is also
     encoded for speed rather than for keeping — see ff_utils.PREVIEW_ENCODE.
+
+    `engine` picks between the two temporal implementations and is ignored by
+    every other method. It is resolved by the caller — see
+    `resolve_temporal_engine` — because the answer decides what this machine
+    has to be capable of before a frame is extracted.
     """
     global _last_progress
     _last_progress = ''  # a new job starts a new bar
@@ -500,7 +580,10 @@ def run_pipeline(
     # Temporal inpainting says so: it is five to ten times slower than the
     # single-frame engines, and a status line that reads the same for both
     # makes a working export look like a stuck one.
-    stage('temporalProcessing' if config.method == 'temporal' else 'processing')
+    if config.method != 'temporal':
+        stage('processing')
+    else:
+        stage('deepProcessing' if engine == 'deep' else 'temporalProcessing')
     roi_dict = config.roi.model_dump()
     removal_config = {
         'method': config.method,
@@ -511,7 +594,8 @@ def run_pipeline(
         'color': config.color,
         'dx': config.dx,
         'dy': config.dy,
-        'temporalQuality': config.temporalQuality,
+        'temporalQuality': temporal_quality_for(config, engine),
+        'temporalEngine': engine,
     }
 
     def _progress_cb(pct: float):
@@ -524,6 +608,7 @@ def run_pipeline(
         meta['width'],
         meta['height'],
         progress_callback=_progress_cb,
+        on_notice=report_deep_notice,
     )
     progress(process_end)
 
@@ -569,9 +654,17 @@ def main() -> None:
             # carries the field and the reason, not just the error count.
             raise ValueError(describe_validation_error(exc)) from exc
 
-        # Before any work: a job this machine cannot carry is refused now,
-        # not after the frames have been extracted.
-        if config.method == 'temporal':
+        # Which temporal engine will run, decided before any work: it is what
+        # the checks below are about, and a job that asked for the deep engine
+        # and cannot have it should hear so now rather than at the end.
+        engine = resolve_temporal_engine(config)
+
+        # A job this machine cannot carry is refused now, not after the frames
+        # have been extracted. The bar is about the CPU pool, so it applies
+        # only to the flow engine: the deep one does its work on the GPU, and
+        # refusing it for want of cores would refuse a job that would in fact
+        # run faster than anything else here.
+        if config.method == 'temporal' and engine == 'flow':
             check_temporal_supported()
 
         if config.mode == 'preview_frame':
@@ -613,10 +706,11 @@ def main() -> None:
             # Run pipeline on the clip, writing to the safe external path
             preview_config = config.model_copy(update={'outputPath': preview_out})
             run_pipeline(preview_config, temp_dir, source_video=clip_path,
-                         announce_meta=False)
+                         announce_meta=False, engine=engine)
             emit(f'STATE:preview_ready:{preview_out}')
         else:
-            output = run_pipeline(config, temp_dir, source_video=config.inputPath)
+            output = run_pipeline(config, temp_dir, source_video=config.inputPath,
+                                  engine=engine)
             emit(f'STATE:done:{output}')
 
     except Exception as exc:

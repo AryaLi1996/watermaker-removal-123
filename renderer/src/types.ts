@@ -25,6 +25,12 @@ export interface JobConfig {
   dx?: number;
   dy?: number;
   temporalQuality?: TemporalQuality;
+  /**
+   * Ask temporal fill to use the learned engine (ProPainter) rather than the
+   * optical-flow one. A request: the backend runs the flow engine and says so
+   * where the machine cannot carry the learned one.
+   */
+  useDeepLearning?: boolean;
   /** Seconds of video a preview job covers; ignored for a full export. */
   previewSeconds?: number;
 }
@@ -48,6 +54,20 @@ export interface TemporalFallback {
   total: number;
 }
 
+/**
+ * Something the learned engine wants said about a run that is not a failure.
+ *
+ * `fallback` — it could not run at all and the optical-flow engine took the
+ * job. `quality` — it ran, at a lower preset than the dial asked for, because
+ * the GPU could not carry that one. `detail` is the backend's own English
+ * sentence, shown beside the translated explanation the way a backend error
+ * already is.
+ */
+export interface DeepNotice {
+  kind: 'fallback' | 'quality';
+  detail: string;
+}
+
 export type AppState = 'empty' | 'loaded' | 'processing' | 'done' | 'error';
 
 /**
@@ -63,6 +83,19 @@ export interface SystemInfo {
   appVersion: string;
   cpuCount?: number;
   totalMemoryMB?: number;
+  /** Absent from an older main process, which knew nothing about a GPU. */
+  gpu?: GpuInfo;
+}
+
+/**
+ * The CUDA device the learned engine would run on, as the main process found
+ * it. `available: false` is the ordinary answer on most machines, not a fault.
+ */
+export interface GpuInfo {
+  available: boolean;
+  name: string;
+  /** Total video memory. What decides which preset can run. */
+  memoryTotalMB: number;
 }
 
 declare global {
@@ -80,6 +113,7 @@ declare global {
       onJobMeta: (cb: (meta: VideoMeta) => void) => void;
       onPreviewReady: (cb: (path: string) => void) => void;
       onTemporalFallback: (cb: (report: TemporalFallback) => void) => void;
+      onDeepNotice: (cb: (notice: DeepNotice) => void) => void;
       onUpdateAvailable: (cb: (version: string | null) => void) => void;
       onUpdateDownloaded: (cb: (version: string | null) => void) => void;
       installUpdate: () => Promise<boolean>;
