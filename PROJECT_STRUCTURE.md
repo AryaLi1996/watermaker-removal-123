@@ -99,18 +99,17 @@ renderer/
 │   ├── subscription.ts             # Plans, trial arithmetic, and what each tier unlocks
 │   ├── index.css                   # Theme tokens (light + dark) and global styles
 │   ├── utils.ts                    # Pure utility functions
-│   ├── App.css                     # App-shell layout styles
 │   ├── test-setup.ts               # Vitest global setup (@testing-library/jest-dom)
 │   ├── components/
-│       ├── VideoCanvas.tsx         # Konva canvas — preview frame + ROI transformer
-│       ├── MethodPicker.tsx        # Sidebar: radio group + dynamic method controls
-│       ├── ProgressPanel.tsx       # Progress bar + Cancel button (processing state)
-│       ├── DonePanel.tsx           # Completion view — output path + open button
-│       ├── SubscriptionCard.tsx    # One plan: price, discount, subscribe button
-│       ├── SubscriptionStatusBar.tsx # Bottom bar — plan or trial countdown
-│       ├── PaymentQr.tsx           # The stand-in QR code the payment dialog shows
-│       ├── ThemePicker.tsx         # Light / dark / follow-the-system
-│       └── EmptyState.tsx          # Idle state — drop zone / open prompt
+│   │   ├── VideoCanvas.tsx         # Konva canvas — preview frame + ROI transformer
+│   │   ├── MethodPicker.tsx        # Sidebar: radio group + dynamic method controls
+│   │   ├── ProgressPanel.tsx       # Progress bar + Cancel button (processing state)
+│   │   ├── DonePanel.tsx           # Completion view — output path + open button
+│   │   ├── SubscriptionCard.tsx    # One plan: price, discount, subscribe button
+│   │   ├── SubscriptionStatusBar.tsx # Bottom bar — plan or trial countdown
+│   │   ├── PaymentQr.tsx           # The stand-in QR code the payment dialog shows
+│   │   ├── ThemePicker.tsx         # Light / dark / follow-the-system
+│   │   └── EmptyState.tsx          # Idle state — drop zone / open prompt
 │   ├── pages/
 │   │   ├── SubscriptionPage.tsx    # Plan comparison, payment, and managing a plan
 │   │   └── SettingsPage.tsx        # Appearance and About
