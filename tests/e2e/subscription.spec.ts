@@ -185,13 +185,18 @@ test.describe('with a licence in force', () => {
     await expect(page.getByTestId('status-bar-subscribe')).toBeHidden();
   });
 
-  test('lifts the preview cap and unlocks temporal fill', async ({ page, electronApp }) => {
+  test('lifts the preview cap, and stops the licence blocking temporal fill', async ({ page, electronApp }) => {
     await loadVideo(page, electronApp);
 
     await expect(page.getByTestId('preview-locked')).toBeHidden();
     await page.getByTestId('preview-seconds').selectOption('5');
     await expect(page.getByTestId('preview-seconds')).toHaveValue('5');
-    await expect(page.getByTestId('method-temporal')).toBeEnabled();
+
+    // Not `toBeEnabled`: temporal fill also needs four cores and 4 GB, and a
+    // runner may have neither — that is a different reason, checked in
+    // sidebar.spec. What a licence decides is that the *subscription* is no
+    // longer what is standing in the way.
+    await expect(page.getByTestId('method-temporal')).not.toContainText('Needs a subscription');
   });
 
   test('shows the plan, its end date, and that nothing renews itself', async ({ page }) => {
@@ -219,6 +224,8 @@ test.describe('in the grace period', () => {
     await expect(page.getByTestId('status-bar-subscribe')).toBeVisible();
 
     await loadVideo(page, electronApp);
-    await expect(page.getByTestId('method-temporal')).toBeEnabled();
+    // Same as above: the grace period stops the licence being the blocker,
+    // whatever the runner's hardware says about temporal fill.
+    await expect(page.getByTestId('method-temporal')).not.toContainText('Needs a subscription');
   });
 });
