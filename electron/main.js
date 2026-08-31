@@ -9,6 +9,14 @@ const system = require('./system');
 const { SubscriptionMonitor } = require('./subscription-monitor');
 const { createRequest } = require('./license-request');
 const { LICENSE_CONFIG, usingDefaultSigningSecret, manualActivationEnabled } = require('./license-config');
+const temporalUsage = require('./temporal-usage');
+
+/**
+ * Marks a failure this process raised itself, as a translation key rather
+ * than English prose. `classifyError` in renderer/src/errors.ts strips it and
+ * translates the rest; the two ends have to agree on the string.
+ */
+const OWN_MESSAGE_PREFIX = 'i18n:';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -452,7 +460,13 @@ function getMonitor() {
     });
     // The renderer does not poll for expiry: a trial running out, a payment
     // settling or a background refresh all push the new state.
-    monitor.on('state-change', (state) => send('license:state-changed', state));
+    monitor.on('state-change', (state) => {
+      send('license:state-changed', state);
+      // Paying clears whatever was spent before paying: the allowance is a
+      // nudge toward subscribing, and it has done its job.
+      if (monitor.isLicensedNow()) temporalUsage.resetUses(usageDir());
+      sendTemporalUsage();
+    });
   }
   return monitor;
 }
@@ -478,6 +492,37 @@ ipcMain.handle('license:getConfig', () => ({
   // ENABLE_MANUAL_ACTIVATION=true — see license-config.js.
   manualActivationEnabled,
 }));
+
+// ─── The trial's allowance of temporal exports ───────────────────
+// Enforced here rather than in the renderer: a disabled button is a courtesy
+// to the user, not a limit, and the renderer is the one process that a
+// determined user can talk to directly. See electron/temporal-usage.js for
+// what counts and why previews do not.
+function usageDir() {
+  return app.getPath('userData');
+}
+
+function licenseContext() {
+  const monitor = getMonitor();
+  return {
+    licensed: monitor.isLicensedNow(),
+    // The allowance belongs to the trial. An ended trial with no subscription
+    // gets the method back the way it was before: locked.
+    trialActive: !!monitor.getState().trial?.active,
+  };
+}
+
+function temporalUsageState() {
+  return temporalUsage.usageState(usageDir(), licenseContext());
+}
+
+/** Push the allowance to the renderer, so the sidebar's count moves the
+ *  moment an export starts rather than on the next poll. */
+function sendTemporalUsage() {
+  send('temporal:usage', temporalUsageState());
+}
+
+ipcMain.handle('temporal:usage', () => temporalUsageState());
 
 ipcMain.handle('payment:getPlans', () => getMonitor().getPlans());
 ipcMain.handle('payment:getMethods', (_event, lang) => getMonitor().getPaymentMethods(lang));
@@ -534,6 +579,17 @@ ipcMain.handle('payment:closeEmbedded', () => {
 ipcMain.handle('job:start', (_event, payload) => {
   const isExport = isExportJob(payload);
 
+  // The trial's allowance of temporal exports. Checked before anything is
+  // spawned or cleaned up, so a refused export leaves the previous job's
+  // preview exactly where it was.
+  if (isExport && payload?.method === 'temporal') {
+    const usage = temporalUsageState();
+    if (!usage.allowed) {
+      send('job:error', `${OWN_MESSAGE_PREFIX}errors.temporalTrialExhausted`);
+      return false;
+    }
+  }
+
   if (currentJob) {
     // Previews are short probes the app starts on its own (a still on load, a
     // one-second clip on request). If one is still running when the user hits Export,
@@ -560,6 +616,13 @@ ipcMain.handle('job:start', (_event, payload) => {
   const child = spawn(command, args, { env: backendEnv() });
   const job = { child, isExport, cancelled: false, superseded: false };
   currentJob = job;
+
+  // Counted once the run is under way. Counting before the spawn would charge
+  // for an export that never started because the backend is missing.
+  if (isExport && payload?.method === 'temporal') {
+    temporalUsage.recordUse(usageDir(), licenseContext());
+    sendTemporalUsage();
+  }
 
   // Per-job state shared with the line parser.
   const ctx = { outputPath: null, errored: false, mode: payload?.mode ?? 'full' };

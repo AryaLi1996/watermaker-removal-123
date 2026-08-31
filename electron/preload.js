@@ -59,6 +59,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // bar was keeping clear for them.
   onFullScreenChange: (cb) => ipcRenderer.on('window:full-screen', (_e, v) => cb(v)),
 
+  // The trial's allowance of temporal-fill exports. Owned by the main
+  // process, which is also what enforces it — see electron/temporal-usage.js.
+  temporalUsage: () => ipcRenderer.invoke('temporal:usage'),
+  onTemporalUsage: (cb) => ipcRenderer.on('temporal:usage', (_e, v) => cb(v)),
+
   // Host platform
   systemInfo: () => ipcRenderer.invoke('system:info'),
   tempDir: () => ipcRenderer.invoke('system:tempDir'),
@@ -66,6 +71,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   removeWindowListeners: () => {
     ipcRenderer.removeAllListeners('window:full-screen');
+  },
+
+  removeTemporalUsageListeners: () => {
+    ipcRenderer.removeAllListeners('temporal:usage');
   },
 
   removeLicenseListeners: () => {

@@ -10,7 +10,7 @@
  * remaining time visibly moves, while the state behind it is unchanged.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { OrderError } from '../types';
+import type { OrderError, TemporalUsage } from '../types';
 import {
   APP_MISMATCH,
   entitlementsFor,
@@ -40,6 +40,9 @@ export interface UseSubscription {
   /** Milliseconds left on the trial, recomputed as the clock moves. */
   trialMsRemaining: number;
   createOrder: (planId: PlanId, method: PaymentMethodId) => Promise<Order | OrderError>;
+  /** The trial's remaining temporal-fill exports. Null until the main
+   *  process answers, or where it does not meter them at all. */
+  temporalUsage: TemporalUsage | null;
   /** Whether this build offers the box for typing a licence in by hand. */
   manualActivation: boolean;
   /** Activate from a licence key or a pasted token. */
@@ -61,6 +64,7 @@ export function useSubscription(locale: string): UseSubscription {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [manualActivation, setManualActivation] = useState(false);
+  const [temporalUsage, setTemporalUsage] = useState<TemporalUsage | null>(null);
 
   const applyState = useCallback((next: LicenseState) => {
     const at = Date.now();
@@ -86,6 +90,21 @@ export function useSubscription(locale: string): UseSubscription {
       api.removeLicenseListeners?.();
     };
   }, [applyState]);
+
+  // The allowance is read once and then pushed: it changes when an export
+  // starts, and when a licence arrives and clears it.
+  useEffect(() => {
+    const api = window.electronAPI;
+    let cancelled = false;
+    void api.temporalUsage?.()
+      .then((usage) => { if (!cancelled && usage) setTemporalUsage(usage); })
+      .catch(() => {});
+    api.onTemporalUsage?.((usage) => { if (!cancelled && usage) setTemporalUsage(usage); });
+    return () => {
+      cancelled = true;
+      api.removeTemporalUsageListeners?.();
+    };
+  }, []);
 
   // Whether to offer manual activation is the main process's to decide: the
   // environment variable behind it is not visible from here.
@@ -171,7 +190,10 @@ export function useSubscription(locale: string): UseSubscription {
   }, [applyState]);
 
   const { state } = reading;
-  const entitlements = useMemo(() => entitlementsFor(state), [state]);
+  const entitlements = useMemo(
+    () => entitlementsFor(state, temporalUsage),
+    [state, temporalUsage],
+  );
 
   // What the main process reported, less however long ago it reported it —
   // so the countdown moves every minute without it having to push a state.
@@ -189,6 +211,7 @@ export function useSubscription(locale: string): UseSubscription {
     createOrder,
     watchOrder,
     refresh,
+    temporalUsage,
     manualActivation,
     activate,
   };

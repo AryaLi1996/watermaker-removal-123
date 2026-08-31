@@ -42,6 +42,7 @@
     "temporal": "Temporal Fill",
     "temporalDescription": "Rebuilds from nearby frames (moving backgrounds)",
     "temporalBeta": "Beta",
+    "temporalUsesLeft": "{count} left",
     "temporalNote": "Slower than the other methods, but the edges come out natural. Best where the background moves — a pan, a handheld shot, a moving subject.",
     "temporalTooltip": "Reads the frames either side of each one and follows the motion between them, so the area behind the mark is recovered from a frame that actually shows it rather than guessed at. A higher quality looks further and blends more carefully, and takes longer.",
     "temporalPreviewFast": "Previews always run at {quality} so they come back quickly; the export uses the setting above.",
@@ -166,7 +167,8 @@
     "unknown": "Something went wrong, and the backend gave no reason.",
     "temporalUnsupported": "Temporal fill needs at least 4 processor cores and 4 GB of memory. Choose another removal method for this machine.",
     "jobRunning": "Another job is already running. Wait for it to finish, or cancel it.",
-    "previewTimeout": "Still waiting for a preview of this video after 90 seconds. It may be very large, or the backend may be stuck — try loading it again."
+    "previewTimeout": "Still waiting for a preview of this video after 90 seconds. It may be very large, or the backend may be stuck — try loading it again.",
+    "temporalTrialExhausted": "Your 3 trial runs of temporal fill are used up. Subscribe to carry on, or pick another method."
   },
   "notifications": {
     "exportDoneTitle": "Export complete",
@@ -250,6 +252,7 @@
     "trialEndedTitle": "Your free trial has ended",
     "trialEndedBody": "Temporal fill and longer previews need a subscription. Everything you have made stays yours.",
     "lockedFeature": "Needs a subscription",
+    "temporalTrialSpent": "Your 3 trial runs of temporal fill are used up — subscribe to keep going",
     "lockedPreview": "Previews are limited to 1 second without a subscription",
     "benefitsHeading": "What a subscription unlocks",
     "benefitTemporal": "Temporal fill, including the deep learning engine",

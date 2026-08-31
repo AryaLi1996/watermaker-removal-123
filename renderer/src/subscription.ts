@@ -180,14 +180,42 @@ export const PAID_TIER: Entitlements = {
 };
 
 /**
+ * How much of the trial's temporal allowance is left, as the main process
+ * reports it. Null until it has answered.
+ */
+export interface TemporalAllowance {
+  /** Whether temporal fill may run at all right now. */
+  allowed: boolean;
+  remaining: number;
+  limit: number;
+  limited: boolean;
+}
+
+/**
  * The limits in force.
  *
- * The trial deliberately sits on the free tier: it buys time to evaluate the
- * basics rather than a preview of the paid features. One constant changes
- * that if the product decides otherwise.
+ * The trial used to sit on the free tier outright: it bought time to evaluate
+ * the basics, and none of the paid features. It now gets a metered allowance
+ * of temporal fill on top — enough to finish something small with the method
+ * that is the reason to subscribe, not enough to finish a project with it.
+ * The count and the cap are the main process's (electron/temporal-usage.js);
+ * this only spends what it is handed.
+ *
+ * `allowance` omitted means no allowance is known — an older main process, or
+ * the first frames before it has answered — and the trial falls back to the
+ * free tier exactly as it did before.
  */
-export function entitlementsFor(state: LicenseState): Entitlements {
-  return isLicensed(state.status) ? PAID_TIER : FREE_TIER;
+export function entitlementsFor(
+  state: LicenseState,
+  allowance?: TemporalAllowance | null,
+): Entitlements {
+  if (isLicensed(state.status)) return PAID_TIER;
+  if (!allowance?.allowed) return FREE_TIER;
+  // Temporal fill and the learned engine move together: the second is the
+  // first's other implementation, not a feature of its own, so metering one
+  // and withholding the other would offer a method that cannot run its
+  // faster path for no reason the user could see.
+  return { ...FREE_TIER, temporalFill: true, deepLearning: true };
 }
 
 // ─── Naming and formatting ─────────────────────────────────────────────

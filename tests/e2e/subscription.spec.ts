@@ -9,7 +9,7 @@
  */
 import { test, expect } from './fixtures/electron-fixture';
 import {
-  LICENSED_STATE, TRIAL_STATE, paymentCalls, setLicenseState, stubPayments,
+  LICENSED_STATE, TRIAL_STATE, paymentCalls, setLicenseState, setTemporalUsage, stubPayments,
 } from './fixtures/subscription-state';
 import type { ElectronApplication, Page } from '@playwright/test';
 
@@ -78,7 +78,37 @@ test.describe('on a free trial', () => {
     await expect(page.locator('[data-testid="preview-seconds"] option[value="5"]')).toBeDisabled();
   });
 
-  test('greys temporal fill out, with the subscription as the reason', async ({ page, electronApp }) => {
+  test('lends temporal fill while the trial has runs left, and counts them', async ({ page, electronApp }) => {
+    // The trial used to get none of this method at all. It now gets three
+    // exports of it, and the card says how many are left before they run out
+    // rather than only once the number reaches zero.
+    await setTemporalUsage(electronApp, { used: 0, remaining: 3, allowed: true });
+    await page.reload();
+    await loadVideo(page, electronApp);
+
+    const temporal = page.getByTestId('method-temporal');
+    await expect(temporal).toBeEnabled();
+    await expect(page.getByTestId('temporal-uses-left')).toHaveText('3 left');
+  });
+
+  test('takes it back once the runs are spent, and says which limit was hit', async ({ page, electronApp }) => {
+    await setTemporalUsage(electronApp, { used: 3, remaining: 0, allowed: false });
+    await page.reload();
+    await loadVideo(page, electronApp);
+
+    const temporal = page.getByTestId('method-temporal');
+    await expect(temporal).toBeDisabled();
+    // "Needs a subscription" on a method they ran twice this morning reads as
+    // a bug; this has to name the allowance that ran out.
+    await expect(temporal).toContainText('trial runs');
+    await expect(page.getByTestId('temporal-uses-left')).toBeHidden();
+  });
+
+  test('greys temporal fill out with no allowance at all, as before', async ({ page, electronApp }) => {
+    // An ended trial gets the method back the way it was: locked, and asking
+    // for a subscription rather than reporting a spent allowance.
+    await setTemporalUsage(electronApp, { used: 0, remaining: 3, allowed: false });
+    await page.reload();
     await loadVideo(page, electronApp);
 
     const temporal = page.getByTestId('method-temporal');

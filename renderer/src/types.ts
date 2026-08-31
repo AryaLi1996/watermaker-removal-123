@@ -78,6 +78,26 @@ export type AppState = 'empty' | 'loaded' | 'processing' | 'done' | 'error';
  * The two hardware fields are optional on purpose: an older main process does
  * not send them, and a feature must not be hidden because a number is missing.
  */
+/**
+ * How much of the trial's temporal-fill allowance is left.
+ *
+ * `limited` is false for a subscriber, for whom the count is meaningless
+ * rather than merely large — the UI asks that question, so the main process
+ * answers it rather than each caller re-deriving it.
+ */
+export interface TemporalUsage {
+  used: number;
+  limit: number;
+  /** `Infinity` where nothing is limited. */
+  remaining: number;
+  limited: boolean;
+  exhausted: boolean;
+  /** Whether temporal fill may run at all right now — a subscription, or a
+   *  live trial with allowance left. The one question the UI and the job
+   *  handler both ask, answered by the main process so the two agree. */
+  allowed: boolean;
+}
+
 export interface SystemInfo {
   platform: string;
   arch: string;
@@ -165,6 +185,14 @@ declare global {
       onUpdateDownloaded: (cb: (version: string | null) => void) => void;
       installUpdate: () => Promise<boolean>;
       systemInfo: () => Promise<SystemInfo>;
+      /**
+       * The trial's allowance of temporal-fill exports. Optional: a main
+       * process without it imposes no limit, and `NO_TEMPORAL_LIMIT` is what
+       * the renderer falls back to.
+       */
+      temporalUsage?: () => Promise<TemporalUsage>;
+      onTemporalUsage?: (cb: (usage: TemporalUsage) => void) => void;
+      removeTemporalUsageListeners?: () => void;
       /**
        * Whether the window is full screen. Optional: a main process older
        * than this never sends it, and the top bar's default inset is right
