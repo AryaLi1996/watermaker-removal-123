@@ -6,7 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The app is now SmoothVoice Watermark Remover** — 舒音水印去除 in Chinese.
+  The name follows the interface language everywhere it is shown in the app,
+  including the window title, which the page sets from the active locale. The
+  system-facing name — the macOS menu bar, the About dialog, the window before
+  its page has loaded — is the English one, because it is needed before any
+  renderer exists to say which language the user reads. Installers and
+  executables are named from `build.productName`, so they change with it.
+
 ### Added
+- **Light and dark themes**, with "follow the system" as the default, under a
+  new **Settings** screen in the top bar.
+  - The choice is kept in `localStorage` and applied to `<html>`, so it takes
+    effect immediately, survives a restart, and needs no reload.
+  - "System" stays subscribed to `prefers-color-scheme`, so a machine that
+    switches at sunset switches the app with it. An explicit light or dark
+    ignores it.
+  - An inline script in `index.html` applies the stored theme before the
+    bundle loads, so a dark user gets no white flash on launch.
+  - Every colour in the interface now comes from a semantic CSS variable
+    (`--surface`, `--text-muted`, `--danger-border`, …) defined once in
+    `index.css`. The dark palette is exactly what shipped before; the light
+    one is new. The video canvas is the deliberate exception — it stays black
+    in both themes, because judging a watermark against it is the job.
 - **Subscription** — a subscription screen, reachable from the new top-bar
   navigation and from the status bar along the bottom of the window.
   - Four plans, priced off a ¥99 monthly rate: monthly (¥99), quarterly (¥282,

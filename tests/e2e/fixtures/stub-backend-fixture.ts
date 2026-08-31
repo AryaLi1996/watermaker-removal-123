@@ -47,6 +47,8 @@ export const test = base.extend<Fixtures, Options>({
     await window.waitForLoadState('domcontentloaded');
     // Pin the language — see electron-fixture.ts for why.
     await window.evaluate(() => window.localStorage.setItem('watermark-remover:locale', 'en'));
+    // Pin the theme — see electron-fixture.ts for why.
+    await window.evaluate(() => window.localStorage.setItem('theme-preference', 'dark'));
     // Pin the subscription — see electron-fixture.ts for why.
     await grantSubscription(electronApp);
     await window.reload();

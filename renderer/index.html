@@ -4,7 +4,25 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>renderer</title>
+    <!-- A placeholder: App sets the real one from the active language, so the
+         name follows the language picker the way the rest of the UI does. -->
+    <title>SmoothVoice Watermark Remover</title>
+    <script>
+      // Applied before the first paint, and before React has loaded, so a dark
+      // user does not get a white flash on every launch. ThemeProvider reads
+      // the same key and takes over from here.
+      (function () {
+        try {
+          var stored = window.localStorage.getItem('theme-preference');
+          var theme = stored === 'light' || stored === 'dark' ? stored
+            : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          document.documentElement.classList.add(theme);
+          document.documentElement.style.colorScheme = theme;
+        } catch (err) {
+          document.documentElement.classList.add('light');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

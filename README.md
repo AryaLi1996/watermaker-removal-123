@@ -1,4 +1,6 @@
-# Watermark Remover
+# SmoothVoice Watermark Remover
+
+舒音水印去除 — the app names itself in whichever language the interface is set to.
 
 A cross-platform desktop application for removing static watermarks from video files. Draw a box over the watermark, pick a removal method, and export a clean output — no cloud upload, no subscription, everything runs locally.
 

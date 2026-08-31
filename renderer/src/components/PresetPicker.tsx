@@ -44,7 +44,7 @@ export default function PresetPicker({
   return (
     <div className="flex flex-col gap-2" style={{ opacity: disabled ? 0.5 : 1 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+        <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
           {t('presets.heading')}
         </p>
         <button
@@ -52,7 +52,7 @@ export default function PresetPicker({
           onClick={() => onNamingChange(true)}
           disabled={disabled}
           style={{
-            background: 'none', border: 'none', color: '#818cf8', fontSize: 11,
+            background: 'none', border: 'none', color: 'var(--accent-link)', fontSize: 11,
             cursor: disabled ? 'not-allowed' : 'pointer', padding: 0, textDecoration: 'underline',
           }}
         >
@@ -73,16 +73,16 @@ export default function PresetPicker({
               if (e.key === 'Escape') { onNamingChange(false); setName(''); }
             }}
             style={{
-              flex: 1, minWidth: 0, background: '#18181b', border: '1px solid #3f3f46',
-              borderRadius: 4, padding: '4px 8px', color: '#f4f4f5', fontSize: 11,
+              flex: 1, minWidth: 0, background: 'var(--bg)', border: '1px solid var(--border)',
+              borderRadius: 4, padding: '4px 8px', color: 'var(--text)', fontSize: 11,
             }}
           />
           <button
             data-testid="preset-name-confirm"
             onClick={save}
             style={{
-              background: '#6366f1', border: 'none', borderRadius: 4, padding: '4px 10px',
-              color: '#fff', fontSize: 11, cursor: 'pointer',
+              background: 'var(--accent)', border: 'none', borderRadius: 4, padding: '4px 10px',
+              color: 'var(--accent-contrast)', fontSize: 11, cursor: 'pointer',
             }}
           >
             {t('presets.save')}
@@ -115,15 +115,15 @@ export default function PresetPicker({
                 style={{
                   width: '100%',
                   textAlign: 'left',
-                  background: active ? '#312e81' : '#27272a',
-                  border: `1px solid ${active ? '#6366f1' : '#3f3f46'}`,
+                  background: active ? 'var(--accent-soft)' : 'var(--surface)',
+                  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
                   borderRadius: 6,
                   padding: '6px 8px',
                   cursor: disabled ? 'not-allowed' : 'pointer',
                 }}
               >
-                <span style={{ display: 'block', color: '#f4f4f5', fontSize: 11 }}>{label.name}</span>
-                <span style={{ display: 'block', color: '#71717a', fontSize: 10, marginTop: 2 }}>
+                <span style={{ display: 'block', color: 'var(--text)', fontSize: 11 }}>{label.name}</span>
+                <span style={{ display: 'block', color: 'var(--text-faint)', fontSize: 10, marginTop: 2 }}>
                   {label.description}
                 </span>
               </button>
@@ -134,7 +134,7 @@ export default function PresetPicker({
                   aria-label={t('presets.delete', { name: label.name })}
                   style={{
                     position: 'absolute', top: 2, right: 4, background: 'none', border: 'none',
-                    color: '#71717a', fontSize: 12, lineHeight: 1, cursor: 'pointer', padding: 2,
+                    color: 'var(--text-faint)', fontSize: 12, lineHeight: 1, cursor: 'pointer', padding: 2,
                   }}
                 >
                   ×

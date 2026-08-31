@@ -10,6 +10,7 @@ import DeepNoticeNote from './components/DeepNoticeNote';
 import PresetPicker from './components/PresetPicker';
 import SubscriptionStatusBar from './components/SubscriptionStatusBar';
 import SubscriptionPage from './pages/SubscriptionPage';
+import SettingsPage from './pages/SettingsPage';
 import type { AppState, DeepNotice, JobConfig, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
 import { deepAvailability, deepPresetFor, previewSecondsFor, qualityForJob, temporalAvailability, usesDeepEngine, TEMPORAL_PREVIEW_MAX_SECONDS } from './capabilities';
 import type { Availability } from './capabilities';
@@ -32,7 +33,7 @@ import type { ProgressSample } from './eta';
 const SIDEBAR_W = 280;
 
 /** Which screen the top nav is showing. */
-type Screen = 'editor' | 'subscription';
+type Screen = 'editor' | 'subscription' | 'settings';
 
 /** How a feature reads when the subscription, not the hardware, is what
  *  rules it out. Same shape the capability checks return. */
@@ -42,6 +43,7 @@ const LOCKED: Availability = { available: false, reasonKey: 'subscription.locked
 const NAV_ITEMS: { id: Screen; labelKey: string }[] = [
   { id: 'editor', labelKey: 'subscription.navEditor' },
   { id: 'subscription', labelKey: 'subscription.nav' },
+  { id: 'settings', labelKey: 'settings.nav' },
 ];
 
 /** Preview clip lengths on offer, shortest (and cheapest) first. */
@@ -159,6 +161,13 @@ function App() {
   useEffect(() => {
     window.electronAPI.onUpdateDownloaded((version) => setUpdateReady(version ?? ''));
   }, []);
+
+  // The window is named in the language the user reads. Electron takes the
+  // window title from the document, so setting it here is what renames the
+  // window itself — no main-process round trip, and it follows the picker.
+  useEffect(() => {
+    document.title = t('app.name');
+  }, [t]);
 
   /** Take a file from empty state to a frame on the canvas. */
   const startLoad = useCallback((path: string) => {
@@ -406,16 +415,16 @@ function App() {
   const secondsRemaining = estimateSecondsRemaining(samples);
 
   return (
-    <div className="app-shell" style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: '#18181b' }}>
+    <div className="app-shell" style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: 'var(--bg)' }}>
       {/* Top navigation: which screen, and the language the app speaks */}
       <div
         className="app-topbar"
         style={{
           display: 'flex', alignItems: 'center', gap: 16, padding: '0 14px', height: 40,
-          background: '#27272a', borderBottom: '1px solid #3f3f46',
+          background: 'var(--surface)', borderBottom: '1px solid var(--border)',
         }}
       >
-        <p style={{ color: '#f4f4f5', fontSize: 13, fontWeight: 500 }}>{t('app.title')}</p>
+        <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 500 }}>{t('app.name')}</p>
         <nav style={{ display: 'flex', gap: 4 }}>
           {NAV_ITEMS.map(({ id, labelKey }) => {
             const active = screen === id;
@@ -426,8 +435,8 @@ function App() {
                 aria-current={active ? 'page' : undefined}
                 onClick={() => setScreen(id)}
                 style={{
-                  background: active ? '#3f3f46' : 'transparent', border: 'none', borderRadius: 6,
-                  padding: '4px 12px', color: active ? '#f4f4f5' : '#a1a1aa', fontSize: 12,
+                  background: active ? 'var(--border)' : 'transparent', border: 'none', borderRadius: 6,
+                  padding: '4px 12px', color: active ? 'var(--text)' : 'var(--text-muted)', fontSize: 12,
                   cursor: 'pointer',
                 }}
               >
@@ -442,7 +451,7 @@ function App() {
           value={locale}
           onChange={(e) => setLocale(e.target.value as typeof locale)}
           style={{
-            marginLeft: 'auto', background: '#18181b', color: '#a1a1aa', border: '1px solid #3f3f46',
+            marginLeft: 'auto', background: 'var(--bg)', color: 'var(--text-muted)', border: '1px solid var(--border)',
             borderRadius: 4, fontSize: 11, padding: '2px 4px', cursor: 'pointer',
           }}
         >
@@ -459,26 +468,26 @@ function App() {
         style={{ flex: 1, minHeight: 0, display: screen === 'editor' ? 'flex' : 'none' }}
       >
       {/* Sidebar */}
-      <div className="app-sidebar" style={{ width: SIDEBAR_W, minWidth: SIDEBAR_W, background: '#27272a', borderRight: '1px solid #3f3f46', display: 'flex', flexDirection: 'column', padding: 24, gap: 20, overflowY: 'auto' }}>
+      <div className="app-sidebar" style={{ width: SIDEBAR_W, minWidth: SIDEBAR_W, background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', padding: 24, gap: 20, overflowY: 'auto' }}>
         {appState === 'empty' && (
           <button
             data-testid="btn-load-video"
             onClick={handleSelectFile}
-            style={{ background: '#6366f1', border: 'none', borderRadius: 6, padding: '8px 0', color: '#fff', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}
+            style={{ background: 'var(--accent)', border: 'none', borderRadius: 6, padding: '8px 0', color: 'var(--accent-contrast)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}
           >
             {t('file.load')}
           </button>
         )}
 
         {updateReady !== null && !isProcessing && (
-          <div data-testid="update-banner" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, padding: '8px 12px', color: '#cbd5e1', fontSize: 12 }}>
+          <div data-testid="update-banner" style={{ background: 'var(--info-bg)', border: '1px solid var(--info-border)', borderRadius: 6, padding: '8px 12px', color: 'var(--info-text)', fontSize: 12 }}>
             {updateReady
               ? t('status.updateReady', { version: updateReady })
               : t('status.updateReadyNoVersion')}
             <button
               data-testid="install-update"
               onClick={() => window.electronAPI.installUpdate()}
-              style={{ display: 'block', marginTop: 6, background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}
+              style={{ display: 'block', marginTop: 6, background: 'none', border: 'none', color: 'var(--accent-link)', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}
             >
               {t('actions.restartAndInstall')}
             </button>
@@ -499,13 +508,13 @@ function App() {
         )}
 
         {appState === 'error' && (
-          <div data-testid="error-panel" style={{ background: '#450a0a', border: '1px solid #b91c1c', borderRadius: 6, padding: '8px 12px', color: '#fca5a5', fontSize: 12 }}>
+          <div data-testid="error-panel" style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 6, padding: '8px 12px', color: 'var(--danger-text)', fontSize: 12 }}>
             {error.key ? t(error.key) : error.raw}
             <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
               {loadFailed ? (
-                <button data-testid="retry-load-sidebar" onClick={handleRetryLoad} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}>{t('actions.retry')}</button>
+                <button data-testid="retry-load-sidebar" onClick={handleRetryLoad} style={{ background: 'none', border: 'none', color: 'var(--danger-action)', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}>{t('actions.retry')}</button>
               ) : (
-                <button data-testid="dismiss-error" onClick={() => setAppState('loaded')} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}>{t('actions.dismiss')}</button>
+                <button data-testid="dismiss-error" onClick={() => setAppState('loaded')} style={{ background: 'none', border: 'none', color: 'var(--danger-action)', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}>{t('actions.dismiss')}</button>
               )}
               {hasTechnicalDetail(error) && (
                 <button
@@ -516,7 +525,7 @@ function App() {
                       .then(() => setCopiedDetail(true))
                       .catch(() => setCopiedDetail(false));
                   }}
-                  style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}
+                  style={{ background: 'none', border: 'none', color: 'var(--danger-action)', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}
                 >
                   {copiedDetail ? t('actions.copied') : t('actions.copyDetails')}
                 </button>
@@ -528,9 +537,9 @@ function App() {
         {isLoaded && (
           <>
             {inputPath && videoMeta && (
-              <div style={{ borderBottom: '1px solid #3f3f46', paddingBottom: 12 }}>
-                <p style={{ color: '#f4f4f5', fontSize: 12, wordBreak: 'break-all' }}>{inputPath.split(/[\\/]/).pop()}</p>
-                <p style={{ color: '#71717a', fontSize: 11, marginTop: 3 }}>{videoMeta.width}×{videoMeta.height} · {Math.round(videoMeta.fps)}fps · {formatDuration(videoMeta.duration)}</p>
+              <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
+                <p style={{ color: 'var(--text)', fontSize: 12, wordBreak: 'break-all' }}>{inputPath.split(/[\\/]/).pop()}</p>
+                <p style={{ color: 'var(--text-faint)', fontSize: 11, marginTop: 3 }}>{videoMeta.width}×{videoMeta.height} · {Math.round(videoMeta.fps)}fps · {formatDuration(videoMeta.duration)}</p>
               </div>
             )}
 
@@ -548,23 +557,23 @@ function App() {
             <MethodPicker method={method} deepLearning={deepLearning} deep={deep} deepPreset={deepPreset} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} temporalQuality={temporalQuality} temporal={temporal} videoMeta={videoMeta} cpuCount={systemInfo?.cpuCount} previewSeconds={effectivePreviewSeconds} disabled={!isLoaded} onChange={handleMethodChange} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{t('file.output')}</p>
+              <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{t('file.output')}</p>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <p style={{ color: outputPath ? '#d4d4d8' : '#52525b', fontSize: 11, flex: 1, wordBreak: 'break-all' }}>{outputPath ? outputPath.split(/[\\/]/).pop() : t('file.notSet')}</p>
-                <button data-testid="browse-output" onClick={handleSelectOutput} style={{ background: 'transparent', border: '1px solid #3f3f46', borderRadius: 6, padding: '4px 10px', color: '#a1a1aa', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>{t('file.browse')}</button>
+                <p style={{ color: outputPath ? 'var(--text-secondary)' : 'var(--text-disabled)', fontSize: 11, flex: 1, wordBreak: 'break-all' }}>{outputPath ? outputPath.split(/[\\/]/).pop() : t('file.notSet')}</p>
+                <button data-testid="browse-output" onClick={handleSelectOutput} style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', color: 'var(--text-muted)', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>{t('file.browse')}</button>
               </div>
             </div>
 
             {/* Shortcuts are worth nothing if nobody can find them. */}
             <details data-testid="shortcut-hints" style={{ marginTop: 4 }}>
-              <summary style={{ color: '#71717a', fontSize: 11, cursor: 'pointer', listStyle: 'none' }}>
+              <summary style={{ color: 'var(--text-faint)', fontSize: 11, cursor: 'pointer', listStyle: 'none' }}>
                 {t('shortcuts.heading')}
               </summary>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
                 {SHORTCUT_HINTS.map((hint) => (
                   <div key={hint.keys} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                    <span style={{ color: '#71717a', fontSize: 10 }}>{t(hint.labelKey)}</span>
-                    <span style={{ color: '#a1a1aa', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>{hint.keys}</span>
+                    <span style={{ color: 'var(--text-faint)', fontSize: 10 }}>{t(hint.labelKey)}</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>{hint.keys}</span>
                   </div>
                 ))}
               </div>
@@ -575,7 +584,7 @@ function App() {
                   choice and its price sit next to the button that spends it. */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <label htmlFor="preview-seconds" style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{t('actions.previewSeconds')}</label>
+                  <label htmlFor="preview-seconds" style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{t('actions.previewSeconds')}</label>
                   <select
                     id="preview-seconds"
                     data-testid="preview-seconds"
@@ -583,7 +592,7 @@ function App() {
                     disabled={!isLoaded}
                     onChange={(e) => setPreviewSeconds(Number(e.target.value))}
                     style={{
-                      background: '#18181b', color: '#d4d4d8', border: '1px solid #3f3f46',
+                      background: 'var(--bg)', color: 'var(--text-secondary)', border: '1px solid var(--border)',
                       borderRadius: 4, fontSize: 11, padding: '2px 4px', marginLeft: 'auto',
                       cursor: isLoaded ? 'pointer' : 'not-allowed',
                     }}
@@ -604,10 +613,10 @@ function App() {
                     ))}
                   </select>
                 </div>
-                <p data-testid="preview-warning" style={{ color: '#71717a', fontSize: 10 }}>{t('actions.previewWarning')}</p>
+                <p data-testid="preview-warning" style={{ color: 'var(--text-faint)', fontSize: 10 }}>{t('actions.previewWarning')}</p>
                 {/* Why the longer options are greyed out, said where they are. */}
                 {entitlements.maxPreviewSeconds < 5 && (
-                  <p data-testid="preview-locked" style={{ color: '#71717a', fontSize: 10 }}>{t('subscription.lockedPreview')}</p>
+                  <p data-testid="preview-locked" style={{ color: 'var(--text-faint)', fontSize: 10 }}>{t('subscription.lockedPreview')}</p>
                 )}
               </div>
               {/* A preview reports the same caveat, where it is cheapest to
@@ -616,15 +625,15 @@ function App() {
               {/* Same place, same reasoning: the engine that ran is as much a
                   caveat on the preview as the frames that fell back. */}
               <DeepNoticeNote notice={deepNotice} />
-              <button data-testid="btn-preview" onClick={handlePreview} disabled={!canExport} style={{ background: 'transparent', border: `1px solid ${canExport ? '#3f3f46' : '#27272a'}`, borderRadius: 6, padding: '7px 0', color: canExport ? '#d4d4d8' : '#52525b', fontSize: 12, cursor: canExport ? 'pointer' : 'not-allowed' }}>{t('actions.preview')}</button>
-              <button data-testid="btn-export" onClick={() => { void handleExport(); }} disabled={!canExport} style={{ background: canExport ? '#6366f1' : '#312e81', border: 'none', borderRadius: 6, padding: '8px 0', color: canExport ? '#fff' : '#4338ca', fontSize: 13, fontWeight: 500, cursor: canExport ? 'pointer' : 'not-allowed' }}>{t('actions.export')}</button>
+              <button data-testid="btn-preview" onClick={handlePreview} disabled={!canExport} style={{ background: 'transparent', border: `1px solid ${canExport ? 'var(--border)' : 'var(--surface)'}`, borderRadius: 6, padding: '7px 0', color: canExport ? 'var(--text-secondary)' : 'var(--text-disabled)', fontSize: 12, cursor: canExport ? 'pointer' : 'not-allowed' }}>{t('actions.preview')}</button>
+              <button data-testid="btn-export" onClick={() => { void handleExport(); }} disabled={!canExport} style={{ background: canExport ? 'var(--accent)' : 'var(--accent-soft)', border: 'none', borderRadius: 6, padding: '8px 0', color: canExport ? 'var(--accent-contrast)' : 'var(--accent-disabled-text)', fontSize: 13, fontWeight: 500, cursor: canExport ? 'pointer' : 'not-allowed' }}>{t('actions.export')}</button>
             </div>
           </>
         )}
       </div>
 
       {/* Canvas */}
-      <div ref={canvasContainerRef} className="app-canvas" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', overflow: 'hidden', position: 'relative' }}>
+      <div ref={canvasContainerRef} className="app-canvas" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--canvas-bg)', overflow: 'hidden', position: 'relative' }}>
         {appState === 'empty' && <EmptyState onSelectFile={handleSelectFile} />}
 
         {appState !== 'empty' && previewFrameUrl && !previewClipUrl && (
@@ -632,22 +641,22 @@ function App() {
         )}
 
         {previewClipUrl && (
-          <div style={{ position: 'absolute', inset: 0, background: '#000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'var(--canvas-bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
             <video src={previewClipUrl} autoPlay controls loop style={{ maxWidth: '100%', maxHeight: 'calc(100% - 44px)', outline: 'none' }} />
-            <button onClick={() => setPreviewClipUrl(null)} style={{ marginTop: 10, background: 'rgba(39,39,42,0.9)', border: '1px solid #3f3f46', borderRadius: 6, padding: '5px 16px', color: '#d4d4d8', fontSize: 11, cursor: 'pointer' }}>{t('file.closePreview')}</button>
+            <button onClick={() => setPreviewClipUrl(null)} style={{ marginTop: 10, background: 'var(--surface-translucent)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 16px', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}>{t('file.closePreview')}</button>
           </div>
         )}
 
         {/* A load that failed must not keep spinning: the canvas says so, and
             offers the one thing worth trying — the same file again. */}
         {loadFailed && (
-          <div data-testid="load-failed" style={{ color: '#a1a1aa', fontSize: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: 24, textAlign: 'center' }}>
+          <div data-testid="load-failed" style={{ color: 'var(--canvas-text)', fontSize: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: 24, textAlign: 'center' }}>
             <span>{t('file.loadFailed')}</span>
-            {error.key && <span style={{ color: '#71717a', maxWidth: 360 }}>{t(error.key)}</span>}
+            {error.key && <span style={{ color: 'var(--canvas-text)', maxWidth: 360 }}>{t(error.key)}</span>}
             <button
               data-testid="retry-load"
               onClick={handleRetryLoad}
-              style={{ background: '#6366f1', border: 'none', borderRadius: 6, padding: '6px 16px', color: '#fff', fontSize: 12, cursor: 'pointer' }}
+              style={{ background: 'var(--accent)', border: 'none', borderRadius: 6, padding: '6px 16px', color: 'var(--accent-contrast)', fontSize: 12, cursor: 'pointer' }}
             >
               {t('actions.retry')}
             </button>
@@ -655,8 +664,8 @@ function App() {
         )}
 
         {appState !== 'empty' && !previewFrameUrl && !loadFailed && (
-          <div style={{ color: '#52525b', fontSize: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 24, height: 24, border: '2px solid #52525b', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <div style={{ color: 'var(--canvas-text)', fontSize: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 24, height: 24, border: '2px solid var(--canvas-text)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
             <span data-testid="loading-stage">
               {/* The canvas only ever shows a load; a running job reports
                   through the sidebar's progress panel. */}
@@ -667,7 +676,7 @@ function App() {
         )}
 
         {appState !== 'empty' && (
-          <button data-testid="change-video" onClick={handleSelectFile} style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(39,39,42,0.85)', border: '1px solid #3f3f46', borderRadius: 6, padding: '5px 12px', color: '#d4d4d8', fontSize: 11, cursor: 'pointer' }}>{t('file.change')}</button>
+          <button data-testid="change-video" onClick={handleSelectFile} style={{ position: 'absolute', top: 12, right: 12, background: 'var(--surface-translucent)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 12px', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }}>{t('file.change')}</button>
         )}
       </div>
       </div>
@@ -679,6 +688,8 @@ function App() {
           onCancelAutoRenew={subscription.cancelAutoRenew}
         />
       )}
+
+      {screen === 'settings' && <SettingsPage systemInfo={systemInfo} />}
 
       <SubscriptionStatusBar
         status={subscription.status}

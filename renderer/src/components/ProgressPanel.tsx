@@ -21,15 +21,15 @@ export default function ProgressPanel({ progress, stateLabel, secondsRemaining, 
   return (
     <div data-testid="progress-panel" className="flex flex-col gap-4 pt-2">
       {/* Stage label */}
-      <p style={{ color: '#a1a1aa', fontSize: 12 }}>{stateLabel ? stageLabel(stateLabel, t) : t('status.starting')}</p>
+      <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>{stateLabel ? stageLabel(stateLabel, t) : t('status.starting')}</p>
 
       {/* Progress bar */}
-      <div style={{ background: '#27272a', borderRadius: 2, height: 2, overflow: 'hidden' }}>
+      <div style={{ background: 'var(--surface)', borderRadius: 2, height: 2, overflow: 'hidden' }}>
         <div
           style={{
             height: '100%',
             width: `${progress}%`,
-            background: '#6366f1',
+            background: 'var(--accent)',
             borderRadius: 2,
             transition: 'width 0.3s ease',
           }}
@@ -38,10 +38,10 @@ export default function ProgressPanel({ progress, stateLabel, secondsRemaining, 
 
       {/* Percentage and time remaining */}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-        <p style={{ color: '#71717a', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+        <p style={{ color: 'var(--text-faint)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
           {Math.round(progress)}%
         </p>
-        <p data-testid="eta" style={{ color: '#71717a', fontSize: 11 }}>
+        <p data-testid="eta" style={{ color: 'var(--text-faint)', fontSize: 11 }}>
           {formatRemaining(secondsRemaining, t)}
         </p>
       </div>
@@ -53,7 +53,7 @@ export default function ProgressPanel({ progress, stateLabel, secondsRemaining, 
         style={{
           background: 'transparent',
           border: 'none',
-          color: '#71717a',
+          color: 'var(--text-faint)',
           fontSize: 12,
           cursor: 'pointer',
           padding: '4px 0',

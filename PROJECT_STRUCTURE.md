@@ -97,11 +97,11 @@ renderer/
 │   ├── types.ts                    # Shared TypeScript types
 │   ├── capabilities.ts             # Whether this machine can run the heavier methods
 │   ├── subscription.ts             # Plans, trial arithmetic, and what each tier unlocks
+│   ├── index.css                   # Theme tokens (light + dark) and global styles
 │   ├── utils.ts                    # Pure utility functions
-│   ├── index.css                   # Global dark theme styles (Tailwind base)
 │   ├── App.css                     # App-shell layout styles
 │   ├── test-setup.ts               # Vitest global setup (@testing-library/jest-dom)
-│   └── components/
+│   ├── components/
 │       ├── VideoCanvas.tsx         # Konva canvas — preview frame + ROI transformer
 │       ├── MethodPicker.tsx        # Sidebar: radio group + dynamic method controls
 │       ├── ProgressPanel.tsx       # Progress bar + Cancel button (processing state)
@@ -109,9 +109,14 @@ renderer/
 │       ├── SubscriptionCard.tsx    # One plan: price, discount, subscribe button
 │       ├── SubscriptionStatusBar.tsx # Bottom bar — plan or trial countdown
 │       ├── PaymentQr.tsx           # The stand-in QR code the payment dialog shows
+│       ├── ThemePicker.tsx         # Light / dark / follow-the-system
 │       └── EmptyState.tsx          # Idle state — drop zone / open prompt
-│   └── pages/
-│       └── SubscriptionPage.tsx    # Plan comparison, payment, and managing a plan
+│   ├── pages/
+│   │   ├── SubscriptionPage.tsx    # Plan comparison, payment, and managing a plan
+│   │   └── SettingsPage.tsx        # Appearance and About
+│   └── theme/
+│       ├── theme.ts                # The preference, where it is stored, what it resolves to
+│       └── ThemeProvider.tsx       # Applies it, and follows the system while asked to
 ├── public/
 │   ├── favicon.svg
 │   └── icons.svg

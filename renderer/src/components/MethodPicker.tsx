@@ -74,8 +74,8 @@ function Slider({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex justify-between items-center">
-        <span style={{ color: '#a1a1aa', fontSize: 11 }}>{label}</span>
-        <span style={{ color: '#f4f4f5', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{label}</span>
+        <span style={{ color: 'var(--text)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
       </div>
       <input
         type="range"
@@ -85,8 +85,10 @@ function Slider({
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full accent-indigo-500 disabled:opacity-40"
-        style={{ height: 4 }}
+        className="w-full disabled:opacity-40"
+        // The filled part of the track: the theme's accent, from the same
+        // token as every other accent in the app.
+        style={{ height: 4, accentColor: 'var(--accent)' }}
       />
     </div>
   );
@@ -143,7 +145,7 @@ export default function MethodPicker({
 
   return (
     <div data-testid="method-picker" className="flex flex-col gap-4" style={{ opacity: disabled ? 0.5 : 1 }}>
-      <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+      <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
         {t('method.heading')}
       </p>
 
@@ -162,8 +164,8 @@ export default function MethodPicker({
               }
               onClick={() => !disabled && !off && onChange({ method: id })}
               style={{
-                background: method === id ? '#312e81' : 'transparent',
-                border: `1px solid ${method === id ? '#6366f1' : '#3f3f46'}`,
+                background: method === id ? 'var(--accent-soft)' : 'transparent',
+                border: `1px solid ${method === id ? 'var(--accent)' : 'var(--border)'}`,
                 borderRadius: 6,
                 padding: '7px 10px',
                 cursor: disabled || off ? 'not-allowed' : 'pointer',
@@ -173,10 +175,10 @@ export default function MethodPicker({
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ color: method === id ? '#e0e7ff' : '#d4d4d8', fontSize: 13 }}>{t(`method.${id}`)}</span>
+                <span style={{ color: method === id ? 'var(--accent-soft-text)' : 'var(--text-secondary)', fontSize: 13 }}>{t(`method.${id}`)}</span>
                 {id === 'temporal' && (
                   <>
-                    <span style={{ color: '#818cf8', background: '#312e81', borderRadius: 3, fontSize: 9, padding: '1px 4px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                    <span style={{ color: 'var(--accent-link)', background: 'var(--accent-soft)', borderRadius: 3, fontSize: 9, padding: '1px 4px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
                       {t('method.temporalBeta')}
                     </span>
                     {/* "Beta" says the feature is new; it does not say what it
@@ -195,14 +197,14 @@ export default function MethodPicker({
                       data-testid="temporal-info"
                       aria-hidden="true"
                       title={t('method.temporalTooltip')}
-                      style={{ color: '#818cf8', fontSize: 11, cursor: 'help' }}
+                      style={{ color: 'var(--accent-link)', fontSize: 11, cursor: 'help' }}
                     >
                       ⓘ
                     </span>
                   </>
                 )}
               </div>
-              <div style={{ color: '#71717a', fontSize: 11, marginTop: 1 }}>
+              <div style={{ color: 'var(--text-faint)', fontSize: 11, marginTop: 1 }}>
                 {/* A greyed-out method has to say why, or it reads as a bug. */}
                 {off && temporal.reasonKey ? t(temporal.reasonKey) : t(`method.${id}Description`)}
               </div>
@@ -212,7 +214,7 @@ export default function MethodPicker({
       </div>
 
       {/* Method-specific controls */}
-      <div className="flex flex-col gap-3 pt-1" style={{ borderTop: '1px solid #27272a' }}>
+      <div className="flex flex-col gap-3 pt-1" style={{ borderTop: '1px solid var(--surface)' }}>
         {method === 'inpaint' && (
           <Slider
             label={t('params.radius')}
@@ -233,7 +235,7 @@ export default function MethodPicker({
         )}
         {method === 'solidFill' && (
           <div className="flex flex-col gap-1">
-            <span style={{ color: '#a1a1aa', fontSize: 11 }}>{t('params.color')}</span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('params.color')}</span>
             <input
               type="color"
               disabled={disabled}
@@ -245,14 +247,14 @@ export default function MethodPicker({
                 const b = parseInt(hex.slice(4,6), 16);
                 onChange({ color: [r, g, b] });
               }}
-              style={{ width: 40, height: 28, border: '1px solid #3f3f46', borderRadius: 4, background: 'none', cursor: disabled ? 'not-allowed' : 'pointer' }}
+              style={{ width: 40, height: 28, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: disabled ? 'not-allowed' : 'pointer' }}
             />
           </div>
         )}
         {method === 'temporal' && (
           <>
             <div className="flex flex-col gap-1">
-              <span style={{ color: '#a1a1aa', fontSize: 11 }}>{t('params.temporalQuality')}</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('params.temporalQuality')}</span>
               <div style={{ display: 'flex', gap: 4 }}>
                 {TEMPORAL_QUALITIES.map((level) => (
                   <button
@@ -263,11 +265,11 @@ export default function MethodPicker({
                     onClick={() => !disabled && onChange({ temporalQuality: level })}
                     style={{
                       flex: 1,
-                      background: temporalQuality === level ? '#312e81' : 'transparent',
-                      border: `1px solid ${temporalQuality === level ? '#6366f1' : '#3f3f46'}`,
+                      background: temporalQuality === level ? 'var(--accent-soft)' : 'transparent',
+                      border: `1px solid ${temporalQuality === level ? 'var(--accent)' : 'var(--border)'}`,
                       borderRadius: 4,
                       padding: '4px 0',
-                      color: temporalQuality === level ? '#e0e7ff' : '#a1a1aa',
+                      color: temporalQuality === level ? 'var(--accent-soft-text)' : 'var(--text-muted)',
                       fontSize: 11,
                       cursor: disabled ? 'not-allowed' : 'pointer',
                     }}
@@ -300,18 +302,18 @@ export default function MethodPicker({
                 checked={deepLearning && deep.available}
                 disabled={disabled || !deep.available}
                 onChange={(e) => onChange({ deepLearning: e.target.checked })}
-                style={{ marginTop: 2, accentColor: '#6366f1' }}
+                style={{ marginTop: 2, accentColor: 'var(--accent)' }}
               />
               <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ color: '#d4d4d8', fontSize: 12 }}>{t('method.deepLearning')}</span>
-                  <span style={{ color: '#818cf8', background: '#312e81', borderRadius: 3, fontSize: 9, padding: '1px 4px', letterSpacing: '0.04em' }}>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{t('method.deepLearning')}</span>
+                  <span style={{ color: 'var(--accent-link)', background: 'var(--accent-soft)', borderRadius: 3, fontSize: 9, padding: '1px 4px', letterSpacing: '0.04em' }}>
                     {t('method.deepBadge')}
                   </span>
                 </span>
                 {/* A disabled switch has to say why, or it reads as a bug. */}
                 {!deep.available && deep.reasonKey && (
-                  <span data-testid="deep-reason" style={{ color: '#71717a', fontSize: 11 }}>
+                  <span data-testid="deep-reason" style={{ color: 'var(--text-faint)', fontSize: 11 }}>
                     {t(deep.reasonKey)}
                   </span>
                 )}
@@ -321,13 +323,13 @@ export default function MethodPicker({
             {/* What the card will actually do with the setting above. Said
                 before the run, not reported after it. */}
             {deepLearning && deep.available && deepPreset && deepPreset !== temporalQuality && (
-              <p data-testid="deep-downgrade" style={{ color: '#a1a1aa', fontSize: 11 }}>
+              <p data-testid="deep-downgrade" style={{ color: 'var(--text-muted)', fontSize: 11 }}>
                 {t('method.deepDowngrade', { quality: t(`quality.${deepPreset}`) })}
               </p>
             )}
 
             {deepLearning && deep.available && (
-              <p data-testid="deep-note" style={{ color: '#a1a1aa', fontSize: 11, lineHeight: 1.5, background: '#1e1b4b', border: '1px solid #312e81', borderRadius: 4, padding: '6px 8px' }}>
+              <p data-testid="deep-note" style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.5, background: 'var(--note-bg)', border: '1px solid var(--accent-soft)', borderRadius: 4, padding: '6px 8px' }}>
                 {t('method.deepNote')}
               </p>
             )}
@@ -336,7 +338,7 @@ export default function MethodPicker({
                 the core count. It says nothing useful about a run on a
                 graphics card, and a wrong number is worse than none. */}
             {!usesDeep && exportEstimate && (
-              <p data-testid="temporal-estimate" style={{ color: '#a1a1aa', fontSize: 11 }}>
+              <p data-testid="temporal-estimate" style={{ color: 'var(--text-muted)', fontSize: 11 }}>
                 {t('estimate.export', { time: exportEstimate })}
                 {previewEstimate && (
                   <>
@@ -350,18 +352,18 @@ export default function MethodPicker({
                 that is quietly rougher than the export is a preview that
                 misleads. Only shown when the two actually differ. */}
             {!usesDeep && previewIsDowngraded(method, temporalQuality) && (
-              <p data-testid="temporal-preview-fast" style={{ color: '#a1a1aa', fontSize: 11 }}>
+              <p data-testid="temporal-preview-fast" style={{ color: 'var(--text-muted)', fontSize: 11 }}>
                 {t('method.temporalPreviewFast', { quality: t(`quality.${PREVIEW_TEMPORAL_QUALITY}`) })}
               </p>
             )}
             {/* Slower by a lot, and worth it for the right footage: both
                 halves of that belong on screen before the user starts. */}
             {usesDeep && (
-              <p data-testid="deep-preview-fast" style={{ color: '#a1a1aa', fontSize: 11 }}>
+              <p data-testid="deep-preview-fast" style={{ color: 'var(--text-muted)', fontSize: 11 }}>
                 {t('method.deepPreviewFast')}
               </p>
             )}
-            <p data-testid="temporal-note" style={{ color: '#a1a1aa', fontSize: 11, lineHeight: 1.5, background: '#1e1b4b', border: '1px solid #312e81', borderRadius: 4, padding: '6px 8px' }}>
+            <p data-testid="temporal-note" style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.5, background: 'var(--note-bg)', border: '1px solid var(--accent-soft)', borderRadius: 4, padding: '6px 8px' }}>
               {t('method.temporalNote')}
             </p>
           </>
@@ -369,23 +371,23 @@ export default function MethodPicker({
         {method === 'cloneStamp' && (
           <>
             <div className="flex flex-col gap-1">
-              <span style={{ color: '#a1a1aa', fontSize: 11 }}>Source Offset X (px)</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Source Offset X (px)</span>
               <input
                 type="number"
                 disabled={disabled}
                 value={dx}
                 onChange={(e) => onChange({ dx: parseInt(e.target.value) || 0 })}
-                style={{ background: '#27272a', border: '1px solid #3f3f46', borderRadius: 4, padding: '4px 8px', color: '#f4f4f5', width: '100%', fontSize: 12 }}
+                style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, padding: '4px 8px', color: 'var(--text)', width: '100%', fontSize: 12 }}
               />
             </div>
             <div className="flex flex-col gap-1">
-              <span style={{ color: '#a1a1aa', fontSize: 11 }}>Source Offset Y (px)</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Source Offset Y (px)</span>
               <input
                 type="number"
                 disabled={disabled}
                 value={dy}
                 onChange={(e) => onChange({ dy: parseInt(e.target.value) || 0 })}
-                style={{ background: '#27272a', border: '1px solid #3f3f46', borderRadius: 4, padding: '4px 8px', color: '#f4f4f5', width: '100%', fontSize: 12 }}
+                style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, padding: '4px 8px', color: 'var(--text)', width: '100%', fontSize: 12 }}
               />
             </div>
           </>

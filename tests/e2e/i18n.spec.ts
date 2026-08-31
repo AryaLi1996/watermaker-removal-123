@@ -33,25 +33,28 @@ test.describe('language', () => {
   test('switching to Chinese translates the interface immediately', async ({ page, electronApp }) => {
     await mockDialogs(electronApp);
 
-    await expect(page.getByText('Watermark Remover')).toBeVisible();
+    await expect(page.getByText('SmoothVoice Watermark Remover')).toBeVisible();
     await expect(page.getByText('Click to browse for a video file')).toBeVisible();
 
     await chooseLanguage(page, 'zh');
 
-    await expect(page.getByText('视频水印去除工具')).toBeVisible();
+    await expect(page.getByText('舒音水印去除')).toBeVisible();
     await expect(page.getByText('点击选择视频文件')).toBeVisible();
     // No reload was needed
-    await expect(page.getByText('Watermark Remover')).toBeHidden();
+    await expect(page.getByText('SmoothVoice Watermark Remover')).toBeHidden();
+    // The window is named in the language the user reads: Electron takes the
+    // window title from the document, which App sets from the active locale.
+    await expect(page).toHaveTitle('舒音水印去除');
   });
 
   test('the choice survives a restart', async ({ page, electronApp }) => {
     await mockDialogs(electronApp);
     await chooseLanguage(page, 'zh');
-    await expect(page.getByText('视频水印去除工具')).toBeVisible();
+    await expect(page.getByText('舒音水印去除')).toBeVisible();
 
     await page.reload();
 
-    await expect(page.getByText('视频水印去除工具')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('舒音水印去除')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('language-select')).toHaveValue('zh');
   });
 

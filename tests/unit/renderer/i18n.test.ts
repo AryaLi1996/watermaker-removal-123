@@ -78,7 +78,7 @@ describe('t', () => {
   it('falls back to English for a key missing from the active locale', () => {
     // Every key exists in both today; this pins the behaviour for when one does not.
     setLocale('zh');
-    expect(t('app.title')).toBe('视频水印去除工具');
+    expect(t('app.name')).toBe('舒音水印去除');
     expect(t('some.key.only.in.english')).toBe('some.key.only.in.english');
   });
 

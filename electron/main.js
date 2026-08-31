@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, nativeTheme, protocol } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -9,6 +9,17 @@ const system = require('./system');
 const subscription = require('./subscription');
 
 const isDev = process.env.NODE_ENV === 'development';
+
+/**
+ * The product name, as the OS should show it.
+ *
+ * English here on purpose: this names the application to the system — the
+ * window before its page loads, the macOS menu bar, the About dialog — and
+ * that happens before any renderer exists to say which language the user
+ * reads. Inside the app the name is translated (`app.name` in the i18n
+ * resources), and the page title takes over as soon as it loads.
+ */
+const PRODUCT_NAME = 'SmoothVoice Watermark Remover';
 
 // ─── Preview media protocol ───────────────────────────────────────
 /**
@@ -252,7 +263,15 @@ function createWindow() {
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#18181b',
+    // What the frame is painted before the page has loaded. The renderer's
+    // theme preference lives in its own localStorage, which this process
+    // cannot read, so the system setting is the best guess available — right
+    // for "follow the system", and a brief flash for someone who overrode it.
+    // The values are the --bg tokens from renderer/src/index.css.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#18181b' : '#fafafa',
+    // Replaced by the page's own <title> once it loads, which is how the
+    // window ends up named in the language the user reads.
+    title: app.getName(),
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -564,6 +583,10 @@ ipcMain.handle('update:install', () => {
 });
 
 app.whenReady().then(() => {
+  // The product name, for the window, the menu bar and the About dialog.
+  // package.json's `name` is the npm one — lower case and hyphenated — so
+  // without this the app introduces itself as "smoothvoice-watermark-remover".
+  app.setName(PRODUCT_NAME);
   protocol.handle(MEDIA_SCHEME, handleMediaRequest);
   createWindow();
   initAutoUpdate();

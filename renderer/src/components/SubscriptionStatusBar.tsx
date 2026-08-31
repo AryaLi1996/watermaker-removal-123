@@ -32,12 +32,12 @@ export default function SubscriptionStatusBar({ status, loading, onOpen }: Subsc
       data-testid="status-bar"
       style={{
         display: 'flex', alignItems: 'center', gap: 12, padding: '5px 14px',
-        background: '#27272a', borderTop: '1px solid #3f3f46', minHeight: 26,
+        background: 'var(--surface)', borderTop: '1px solid var(--border)', minHeight: 26,
       }}
     >
       <span
         data-testid="subscription-bar-label"
-        style={{ color: status.subscribed ? '#a5b4fc' : '#a1a1aa', fontSize: 11 }}
+        style={{ color: status.subscribed ? 'var(--accent-emphasis)' : 'var(--text-muted)', fontSize: 11 }}
       >
         {loading ? '' : label()}
       </span>
@@ -46,7 +46,7 @@ export default function SubscriptionStatusBar({ status, loading, onOpen }: Subsc
           data-testid="status-bar-subscribe"
           onClick={onOpen}
           style={{
-            background: 'none', border: 'none', color: '#818cf8', fontSize: 11,
+            background: 'none', border: 'none', color: 'var(--accent-link)', fontSize: 11,
             textDecoration: 'underline', cursor: 'pointer', padding: 0,
           }}
         >
