@@ -58,9 +58,12 @@ test.beforeEach(async ({ electronApp, page }) => {
 
 test.describe('the free trial', () => {
   test('starts on first launch and is reported in the bottom bar', async ({ page }) => {
-    await expect(page.getByTestId('subscription-bar-label')).toContainText('free trial');
-    // Three days, so the countdown reads two-and-something days left.
-    await expect(page.getByTestId('subscription-bar-label')).toContainText('2 days');
+    // Three days, counting down. Whether the first read lands on "3 days
+    // 00:00" or has already ticked into "2 days 23:59" depends on how the
+    // grant and the render fall in the same millisecond, so the assertion is
+    // on the shape of the countdown rather than on which side of that it is.
+    await expect(page.getByTestId('subscription-bar-label'))
+      .toHaveText(/free trial \([23] days \d{2}:\d{2} left\)/);
   });
 
   test('does not restart itself on the next launch', async ({ page }) => {

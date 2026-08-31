@@ -52,10 +52,13 @@ afterEach(() => {
 describe('App — subscription', () => {
   it('starts the trial on first launch and counts it down in the bottom bar', async () => {
     render(<App />);
+    // Three days, counting down. The first render can land on "3 days 00:00"
+    // when the grant and the read fall in the same millisecond, so this pins
+    // the shape of the countdown rather than which side of that tick it is.
     await waitFor(() =>
-      expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('free trial'),
+      expect(screen.getByTestId('subscription-bar-label'))
+        .toHaveTextContent(/free trial \([23] days \d{2}:\d{2} left\)/),
     );
-    expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('2 days');
   });
 
   it('opens the subscription page from the top bar and from the bar itself', async () => {
