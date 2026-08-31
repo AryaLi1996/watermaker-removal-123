@@ -61,9 +61,13 @@ export type LicenseStatus = 'loading' | 'unlicensed' | 'active' | 'grace_period'
  * "try again"; this one never resolves by retrying, so it gets its own
  * message telling the user to activate here instead.
  */
-export type LicenseErrorCode = 'app_mismatch';
+export type LicenseErrorCode = 'app_mismatch' | 'expired';
 
 export const APP_MISMATCH: LicenseErrorCode = 'app_mismatch';
+
+/** A licence that verifies, but whose period is already over. Typing it in
+ *  again will not help, so it is worded as its own outcome. */
+export const EXPIRED: LicenseErrorCode = 'expired';
 
 /**
  * How watching an order ended.
@@ -77,7 +81,9 @@ export type OrderOutcome = 'paid' | 'timeout' | 'cancelled' | 'mismatch';
 /** The message for a coded failure, or null when the raw reason is all there
  *  is to say. */
 export function licenseErrorKey(code?: string | null): string | null {
-  return code === APP_MISMATCH ? 'subscription.appMismatch' : null;
+  if (code === APP_MISMATCH) return 'subscription.appMismatch';
+  if (code === EXPIRED) return 'subscription.activateExpired';
+  return null;
 }
 
 export interface LicensePayload {

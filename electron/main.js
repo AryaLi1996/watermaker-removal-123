@@ -8,7 +8,7 @@ const { Readable } = require('stream');
 const system = require('./system');
 const { SubscriptionMonitor } = require('./subscription-monitor');
 const { createRequest } = require('./license-request');
-const { LICENSE_CONFIG, usingDefaultSigningSecret } = require('./license-config');
+const { LICENSE_CONFIG, usingDefaultSigningSecret, manualActivationEnabled } = require('./license-config');
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -474,6 +474,9 @@ ipcMain.handle('license:getConfig', () => ({
   orderPollIntervalMs: LICENSE_CONFIG.orderPollIntervalMs,
   orderPollTimeoutMs: LICENSE_CONFIG.orderPollTimeoutMs,
   usingDefaultSigningSecret,
+  // Whether to show the box for typing a licence in by hand. Off unless
+  // ENABLE_MANUAL_ACTIVATION=true — see license-config.js.
+  manualActivationEnabled,
 }));
 
 ipcMain.handle('payment:getPlans', () => getMonitor().getPlans());

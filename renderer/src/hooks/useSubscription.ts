@@ -40,6 +40,10 @@ export interface UseSubscription {
   /** Milliseconds left on the trial, recomputed as the clock moves. */
   trialMsRemaining: number;
   createOrder: (planId: PlanId, method: PaymentMethodId) => Promise<Order | OrderError>;
+  /** Whether this build offers the box for typing a licence in by hand. */
+  manualActivation: boolean;
+  /** Activate from a licence key or a pasted token. */
+  activate: (code: string) => Promise<{ success: boolean; error?: string; code?: string }>;
   /** Poll one order until it is paid, the user gives up, or time runs out. */
   watchOrder: (orderId: string, signal: { cancelled: boolean }) => Promise<OrderOutcome>;
   refresh: () => Promise<void>;
@@ -56,6 +60,7 @@ export function useSubscription(locale: string): UseSubscription {
   const [plansAreFallback, setPlansAreFallback] = useState(false);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [now, setNow] = useState(() => Date.now());
+  const [manualActivation, setManualActivation] = useState(false);
 
   const applyState = useCallback((next: LicenseState) => {
     const at = Date.now();
@@ -81,6 +86,16 @@ export function useSubscription(locale: string): UseSubscription {
       api.removeLicenseListeners?.();
     };
   }, [applyState]);
+
+  // Whether to offer manual activation is the main process's to decide: the
+  // environment variable behind it is not visible from here.
+  useEffect(() => {
+    let cancelled = false;
+    void window.electronAPI.licenseConfig?.()
+      .then((config) => { if (!cancelled && config) setManualActivation(!!config.manualActivationEnabled); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // Plans and methods come from the service, and the method list is
   // localised there, so it is re-fetched when the language changes.
@@ -136,6 +151,19 @@ export function useSubscription(locale: string): UseSubscription {
     return 'timeout';
   }, [applyState]);
 
+  const activate = useCallback(async (code: string) => {
+    const api = window.electronAPI;
+    if (!api.licenseActivate) return { success: false, error: 'activation is not available in this build' };
+    const result = await api.licenseActivate(code);
+    // The main process pushes the new state on success, but reading it back
+    // here is what makes the page update on the same tick as the message.
+    if (result?.success) {
+      const next = await api.licenseState?.().catch(() => null);
+      if (next) applyState(next);
+    }
+    return result;
+  }, [applyState]);
+
   const refresh = useCallback(async () => {
     await window.electronAPI.licenseRefresh?.().catch(() => {});
     const next = await window.electronAPI.licenseState?.().catch(() => null);
@@ -161,5 +189,7 @@ export function useSubscription(locale: string): UseSubscription {
     createOrder,
     watchOrder,
     refresh,
+    manualActivation,
+    activate,
   };
 }

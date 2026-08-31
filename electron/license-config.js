@@ -128,6 +128,17 @@ function fallbackPlans() {
  *  method has since been switched off. */
 const PAYMENT_METHODS = ['wechat_pay', 'alipay', 'douyin_pay', 'card'];
 
+/**
+ * Whether the app offers a box to type a licence into.
+ *
+ * Off by default, and meant for internal testing and the occasional offline
+ * or redeemed activation — not because the path is less trustworthy than
+ * paying (it runs the same verification, and forging anything it accepts
+ * still needs the signing secret) but because a field asking for a code the
+ * shop never issues is a support question waiting to happen.
+ */
+const manualActivationEnabled = process.env.ENABLE_MANUAL_ACTIVATION === 'true';
+
 const LICENSE_CONFIG = {
   /** Which app the service should scope this client's trial, orders and
    *  license to. Sent on every route. */
@@ -163,6 +174,7 @@ const LICENSE_CONFIG = {
 const usingDefaultSigningSecret = LICENSE_CONFIG.signingSecret === DEFAULT_SIGNING_SECRET;
 
 module.exports = {
+  manualActivationEnabled,
   DEFAULT_SIGNING_SECRET,
   DEFAULT_LICENSE_URL,
   DEFAULT_APP_ID,

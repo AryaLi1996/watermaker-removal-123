@@ -703,6 +703,8 @@ function App() {
           createOrder={subscription.createOrder}
           watchOrder={subscription.watchOrder}
           refresh={subscription.refresh}
+          manualActivation={subscription.manualActivation}
+          activate={subscription.activate}
         />
       )}
 

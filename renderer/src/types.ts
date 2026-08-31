@@ -111,6 +111,9 @@ export interface LicenseConfig {
   orderPollIntervalMs: number;
   orderPollTimeoutMs: number;
   usingDefaultSigningSecret: boolean;
+  /** Whether to offer the box for entering a licence by hand. Off unless the
+   *  build sets ENABLE_MANUAL_ACTIVATION. */
+  manualActivationEnabled?: boolean;
 }
 
 /** A create-order that did not produce an order. `code` is set only when the
@@ -174,7 +177,7 @@ declare global {
        * does not expose them, and the renderer must still start.
        */
       licenseState?: () => Promise<LicenseState>;
-      licenseActivate?: (licenseKey: string) => Promise<{ success: boolean; error?: string }>;
+      licenseActivate?: (licenseKey: string) => Promise<{ success: boolean; error?: string; code?: string }>;
       licenseDeactivate?: () => Promise<{ success: boolean }>;
       licenseRefresh?: () => Promise<{ success: boolean; error?: string }>;
       licenseConfig?: () => Promise<LicenseConfig>;
