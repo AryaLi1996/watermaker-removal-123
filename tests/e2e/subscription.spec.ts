@@ -7,17 +7,18 @@
  * purchase decides every test after it.
  */
 import { test, expect } from './fixtures/electron-fixture';
+import { clearSubscription } from './fixtures/subscription-state';
 import type { ElectronApplication, Page } from '@playwright/test';
 
 test.use({ appTag: 'subscription' });
 
-/** Put the app back to a first launch: no record, so a new trial is granted. */
+/**
+ * Put the app back to a first launch. The fixture grants a plan so the other
+ * specs can drive the paid features (see fixtures/subscription-state.ts);
+ * these tests are about the trial, so they take it away again.
+ */
 async function resetSubscription(electronApp: ElectronApplication, page: Page) {
-  await electronApp.evaluate(({ app }) => {
-    const fs = require('fs');
-    const path = require('path');
-    fs.rmSync(path.join(app.getPath('userData'), 'subscription.json'), { force: true });
-  });
+  await clearSubscription(electronApp);
   await page.reload();
   await expect(page.getByTestId('status-bar')).toBeVisible();
 }
@@ -74,6 +75,14 @@ test.describe('the free trial', () => {
     await expect(page.getByTestId('preview-locked')).toBeVisible();
     await expect(page.getByTestId('preview-seconds')).toHaveValue('1');
     await expect(page.locator('[data-testid="preview-seconds"] option[value="5"]')).toBeDisabled();
+  });
+
+  test('greys temporal fill out, with the subscription as the reason', async ({ page, electronApp }) => {
+    await loadVideo(page, electronApp);
+
+    const temporal = page.getByTestId('method-temporal');
+    await expect(temporal).toBeDisabled();
+    await expect(temporal).toContainText('Needs a subscription');
   });
 });
 

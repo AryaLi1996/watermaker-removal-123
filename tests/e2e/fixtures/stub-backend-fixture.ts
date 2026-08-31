@@ -10,6 +10,7 @@ import { test as base, expect, _electron as electron } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
 import { SANDBOX_ARGS } from './launch-args';
+import { grantSubscription } from './subscription-state';
 
 
 const repoRoot = path.join(__dirname, '..', '..', '..');
@@ -46,6 +47,8 @@ export const test = base.extend<Fixtures, Options>({
     await window.waitForLoadState('domcontentloaded');
     // Pin the language — see electron-fixture.ts for why.
     await window.evaluate(() => window.localStorage.setItem('watermark-remover:locale', 'en'));
+    // Pin the subscription — see electron-fixture.ts for why.
+    await grantSubscription(electronApp);
     await window.reload();
     await window.waitForLoadState('domcontentloaded');
     await use(window);
