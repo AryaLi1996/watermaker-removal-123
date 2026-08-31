@@ -37,6 +37,8 @@ still ends with `/trial/status`. Point `LICENSE_URL` at either.
 | `GET` | `/trial/status?deviceId=` | Whether this device has had a trial. |
 | `POST` | `/` | Exchanges a license key for a fresh token (the refresh path). |
 
+Every one of them also carries `appId` — see below.
+
 ---
 
 ## How the client is put together
@@ -71,17 +73,18 @@ lock someone out of what they paid for.
 These follow from reusing one Lambda and one set of tables, and are worth
 knowing before this ships.
 
-1. **One license covers both apps.** `LicensesTable` is keyed by `userId`
-   alone, with no application dimension. A plan bought in SootheVoice
-   satisfies this app for the same anonymous id, and the reverse. If the two
-   should be sold separately, the service needs an app dimension in the table
-   and in `/create-order` — a change in that repository, not this one.
+1. **One license covers both apps** — until the service carries an app
+   dimension. `LicensesTable` is keyed by `userId` alone, so a plan bought in
+   SootheVoice satisfies this app for the same anonymous id, and the reverse.
+   This client now names itself on every request (below); the isolation is
+   only real once the service reads it.
 
-2. **One free trial per machine, across both apps.** `TrialsTable` is keyed by
-   `deviceId`. Someone who used their three days in SootheVoice arrives here
-   with the trial already spent. The device id is derived the same way in both
-   clients (MAC addresses + platform + arch, SHA-256) so it genuinely is the
-   same key.
+2. **One free trial per machine, across both apps**, for the same reason.
+   `TrialsTable` is keyed by `deviceId`, so someone who used their three days
+   in SootheVoice arrives here with the trial already spent. The device id is
+   derived the same way in both clients (MAC addresses + platform + arch,
+   SHA-256) so it genuinely is the same key — which is why the app, not the
+   machine, has to be the other half of it.
 
 3. **The token's `features` are SootheVoice's** (`training`, `synthesis`,
    `separation`, `cover`). This app deliberately gates on *having* a valid
@@ -101,12 +104,74 @@ knowing before this ships.
 
 ---
 
+## Which app this is
+
+The service holds one set of tables for every app on the account. Nothing but
+an app dimension separates them, so this client names itself on every request:
+
+```
+appId = smoothvoice
+```
+
+Sent as a query parameter on the `GET` routes and a body field on the `POST`
+routes — `/plans`, `/payment-methods`, `/trial/status`, `/trial/activate`,
+`/create-order`, `/order-status`, `/payment-history` and the refresh path.
+`electron/license-config.js` holds the value and
+`electron/subscription-monitor.js` puts it on the wire; `URLSearchParams` in
+one helper builds the query strings, so no route can quietly go without it.
+
+**`smoothvoice`, not `shuyin`.** This app's rows already exist in the
+service's tables with no appId at all, and the migration stamps exactly that
+value onto them. It is also the value the service falls back to for a request
+carrying none, so an upgraded client and an old build resolve to the same
+subscription during the rollout. A different id here would strand every
+license bought before the change. `LICENSE_APP_ID` (or `VITE_APP_ID`)
+overrides it at build time, which is for pointing a build at a test
+deployment — not for renaming the app.
+
+### What the client does with the answer
+
+A token carries the appId the service issued it for. One naming another app
+verifies here — same account, same signing secret — so only that field stops
+it unlocking this app off a sibling's purchase:
+
+* a stored token for another app is ignored at startup, and the app reads as
+  unlicensed rather than honouring it;
+* a token that arrives with a settled order is refused, and the page says the
+  subscription belongs to a different app and to activate here, rather than
+  reporting a payment that failed;
+* a token with **no** appId is honoured. Every license bought before this
+  change carries none; reading that as a mismatch would sign out every
+  existing subscriber on upgrade.
+
+### What the service still has to do
+
+The client half is in place and is inert against today's deployment, which
+ignores the extra field. Isolation begins when
+[`ruanjian123`](https://github.com/AryaLi1996/ruanjian123) ships:
+
+| | |
+|---|---|
+| `LicensesV2` | partition key `(appId, licenseId)`, GSI `appId-deviceId-index` |
+| `TrialsV2` | partition key `(appId, deviceId)` |
+| Migration | existing rows stamped `appId = 'smoothvoice'` |
+| `USE_APP_ID_DIMENSION` | Lambda env var switching the new lookups on |
+| Orders | `appId` stored on the order, so the payment webhook issues the license for the right app |
+| Missing `appId` | defaults to `smoothvoice` and logs a warning, for the transition |
+
+Until then a trial spent in the sibling app still arrives here used, and a
+plan bought there still satisfies this one. Nothing in this repository can
+change that — see the note at the top: this app deploys no infrastructure.
+
+---
+
 ## Configuration
 
 | Variable | Effect |
 |---|---|
 | `LICENSE_URL` | The base URL — Function URL or API Gateway stage |
 | `LICENSE_SIGNING_SECRET` | HMAC secret; **must match the deployment's** |
+| `LICENSE_APP_ID` / `VITE_APP_ID` | Which app the service scopes this build to. Defaults to `smoothvoice`; only change it for a test deployment |
 
 The signing secret ships with a public default, in this repository and in the
 service's own source. A build still using it can have its tokens forged

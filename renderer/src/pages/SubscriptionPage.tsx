@@ -13,13 +13,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import SubscriptionCard from '../components/SubscriptionCard';
 import { useTranslation } from '../hooks/useTranslation';
+import type { OrderError } from '../types';
 import {
+  APP_MISMATCH,
   formatRemaining,
   isLicensed,
+  licenseErrorKey,
   planNameKey,
   statusNameKey,
   type LicenseState,
   type Order,
+  type OrderOutcome,
   type PaymentMethod,
   type PaymentMethodId,
   type Plan,
@@ -32,8 +36,8 @@ interface SubscriptionPageProps {
   plansAreFallback: boolean;
   methods: PaymentMethod[];
   trialMsRemaining: number;
-  createOrder: (planId: PlanId, method: PaymentMethodId) => Promise<Order | { error: string }>;
-  watchOrder: (orderId: string, signal: { cancelled: boolean }) => Promise<'paid' | 'timeout' | 'cancelled'>;
+  createOrder: (planId: PlanId, method: PaymentMethodId) => Promise<Order | OrderError>;
+  watchOrder: (orderId: string, signal: { cancelled: boolean }) => Promise<OrderOutcome>;
   refresh: () => Promise<void>;
 }
 
@@ -57,7 +61,9 @@ type Phase =
   | { kind: 'waiting'; order: Order }
   | { kind: 'paid' }
   | { kind: 'timeout' }
-  | { kind: 'error'; message: string };
+  // `code` is set for the failures with their own wording — an order or a
+  // license belonging to another app, which no amount of retrying fixes.
+  | { kind: 'error'; message: string; code?: string };
 
 export default function SubscriptionPage({
   state, plans, plansAreFallback, methods, trialMsRemaining, createOrder, watchOrder, refresh,
@@ -92,7 +98,7 @@ export default function SubscriptionPage({
 
     const created = await createOrder(plan.id, method);
     if ('error' in created) {
-      setPhase({ kind: 'error', message: created.error });
+      setPhase({ kind: 'error', message: created.error, code: created.code });
       return;
     }
 
@@ -111,6 +117,7 @@ export default function SubscriptionPage({
     await window.electronAPI.paymentCloseEmbedded?.();
     if (outcome === 'paid') setPhase({ kind: 'paid' });
     else if (outcome === 'timeout') setPhase({ kind: 'timeout' });
+    else if (outcome === 'mismatch') setPhase({ kind: 'error', message: '', code: APP_MISMATCH });
     else setPhase({ kind: 'idle' });
   }, [createOrder, method, watchOrder]);
 
@@ -119,6 +126,10 @@ export default function SubscriptionPage({
     void window.electronAPI.paymentCloseEmbedded?.();
     setPhase({ kind: 'idle' });
   }, []);
+
+  // A failure with wording of its own — a licence belonging to another app —
+  // or null, in which case the reason the service gave is what to show.
+  const errorKey = phase.kind === 'error' ? licenseErrorKey(phase.code) : null;
 
   const licensed = isLicensed(state.status);
   const expiry = state.expiresAt
@@ -180,7 +191,7 @@ export default function SubscriptionPage({
             data-testid="subscribe-error"
             style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 8, padding: '10px 14px', color: 'var(--danger-text)', fontSize: 12 }}
           >
-            {t('subscription.payFailed', { reason: phase.message })}
+            {errorKey ? t(errorKey) : t('subscription.payFailed', { reason: phase.message })}
           </div>
         )}
 

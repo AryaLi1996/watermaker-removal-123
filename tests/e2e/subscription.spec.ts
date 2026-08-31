@@ -174,6 +174,42 @@ test.describe('paying', () => {
   });
 });
 
+test.describe('which app the licence is for', () => {
+  /**
+   * The service holds one set of tables for every app on the account, so what
+   * this build calls itself decides whose trial and whose subscription it
+   * gets. Both halves are worth reaching through the real app: the id it
+   * declares, and what it says when the service scopes something elsewhere.
+   */
+  test('declares itself to the licence service', async ({ page, electronApp }) => {
+    await stubPayments(electronApp, { plans: PLANS, methods: METHODS });
+    await asState(electronApp, page, TRIAL_STATE);
+
+    // Through the preload bridge, as the renderer reads it: a build carrying
+    // the wrong appId looks exactly like one whose subscription vanished.
+    const appId = await page.evaluate(async () =>
+      (await (window as any).electronAPI.licenseConfig()).appId);
+    expect(appId).toBe('smoothvoice');
+  });
+
+  test('explains a subscription that belongs to another app', async ({ page, electronApp }) => {
+    // Retrying never fixes this, so the page must not word it as a payment
+    // that failed — it tells the user to activate here instead.
+    await stubPayments(electronApp, {
+      plans: PLANS, methods: METHODS,
+      order: { error: 'appId mismatch', code: 'app_mismatch' },
+    });
+    await asState(electronApp, page, TRIAL_STATE);
+
+    await page.getByTestId('nav-subscription').click();
+    await page.getByTestId('subscribe-monthly').click();
+
+    await expect(page.getByTestId('subscribe-error')).toContainText(/different app/i);
+    await expect(page.getByTestId('subscribe-error')).not.toContainText('appId mismatch');
+    expect((await paymentCalls(electronApp)).opened).toEqual([]);
+  });
+});
+
 test.describe('with a licence in force', () => {
   test.beforeEach(async ({ electronApp, page }) => {
     await stubPayments(electronApp, { plans: PLANS, methods: METHODS });

@@ -176,6 +176,28 @@ describe('paying', () => {
     expect(api.paymentOpenEmbedded).not.toHaveBeenCalled();
   });
 
+  it('explains an order the service scoped to another app, rather than a raw reason', async () => {
+    // Retrying never fixes this one, so it gets its own wording telling the
+    // user to activate here — not "could not start the payment: …".
+    const createOrder = vi.fn().mockResolvedValue({ error: 'appId mismatch', code: 'app_mismatch' });
+    renderPage(TRIALING, { createOrder });
+
+    fireEvent.click(screen.getByTestId('subscribe-monthly'));
+    await waitFor(() => expect(screen.getByTestId('subscribe-error')).toHaveTextContent(/different app/i));
+    expect(screen.getByTestId('subscribe-error')).not.toHaveTextContent('appId mismatch');
+  });
+
+  it('does not claim a payment unlocked anything when the licence was another app\'s', async () => {
+    // The money went through; what it bought was scoped elsewhere. Reporting
+    // success here would leave the user looking for features they cannot use.
+    const watchOrder = vi.fn().mockResolvedValue('mismatch');
+    renderPage(TRIALING, { watchOrder });
+
+    fireEvent.click(screen.getByTestId('subscribe-monthly'));
+    await waitFor(() => expect(screen.getByTestId('subscribe-error')).toHaveTextContent(/different app/i));
+    expect(screen.queryByTestId('subscribe-success')).toBeNull();
+  });
+
   it('gives up watching after the timeout, and says what to do about it', async () => {
     const watchOrder = vi.fn().mockResolvedValue('timeout');
     renderPage(TRIALING, { watchOrder });

@@ -222,6 +222,7 @@
     "payStopWaiting": "停止等待",
     "paySuccess": "支付已到账，全部功能已解锁。",
     "payFailed": "无法发起支付：{reason}",
+    "appMismatch": "该订阅属于您账号下的其他应用，无法解锁本应用。请在此处重新激活；如果您本就想为水印去除购买，请联系客服。",
     "payTimeout": "10 分钟内未收到支付，已停止等待。如果你已经付款，请点击下方的“刷新”。",
     "manageHeading": "我的订阅",
     "expiresOn": "有效期至 {date}",

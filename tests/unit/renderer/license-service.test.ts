@@ -64,6 +64,34 @@ describe('the fallback plan prices', () => {
   });
 });
 
+describe('which app this client is', () => {
+  it('is the id the service already holds this app\'s rows under', () => {
+    // The migration stamps the existing, appId-less rows with this value, and
+    // it is what the service falls back to for a request that carries none.
+    // Renaming it would strand every licence bought before the change.
+    expect(config.DEFAULT_APP_ID).toBe('smoothvoice');
+    expect(config.LICENSE_CONFIG.appId).toBe(config.APP_ID);
+  });
+
+  it('can be overridden at build time, for a test deployment', async () => {
+    // Both spellings: LICENSE_APP_ID is the main process's, VITE_APP_ID is
+    // the renderer's, and a build that sets only one must not leave the two
+    // halves disagreeing about which app they are.
+    for (const name of ['LICENSE_APP_ID', 'VITE_APP_ID']) {
+      const previous = process.env[name];
+      process.env[name] = 'smoothvoice-test';
+      try {
+        delete require.cache[require.resolve('../../../electron/license-config.js')];
+        expect(require('../../../electron/license-config.js').APP_ID, name).toBe('smoothvoice-test');
+      } finally {
+        if (previous === undefined) delete process.env[name];
+        else process.env[name] = previous;
+        delete require.cache[require.resolve('../../../electron/license-config.js')];
+      }
+    }
+  });
+});
+
 describe('the license token', () => {
   const payload = { userId: 'u1', planId: 'monthly', licenseKey: 'KEY12345', expiresAt: NOW + 30 * DAY, issuedAt: NOW };
 

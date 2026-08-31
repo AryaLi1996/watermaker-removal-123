@@ -104,11 +104,20 @@ export interface GpuInfo {
  *  Deliberately not the signing secret, which never leaves that process. */
 export interface LicenseConfig {
   verificationUrl: string;
+  /** Which app the service scopes this client's trial and subscription to. */
+  appId?: string;
   gracePeriodDays: number;
   trialDurationDays: number;
   orderPollIntervalMs: number;
   orderPollTimeoutMs: number;
   usingDefaultSigningSecret: boolean;
+}
+
+/** A create-order that did not produce an order. `code` is set only when the
+ *  interface has its own wording for the failure — see `LicenseErrorCode`. */
+export interface OrderError {
+  error: string;
+  code?: string;
 }
 
 export interface OrderStatusResult {
@@ -117,6 +126,9 @@ export interface OrderStatusResult {
   licensed?: boolean;
   state?: LicenseState;
   error?: string;
+  /** Set when the failure is one the interface words for itself — see
+   *  `LicenseErrorCode`. */
+  code?: string;
 }
 
 export interface PaymentHistoryEntry {
@@ -164,7 +176,7 @@ declare global {
 
       paymentPlans?: () => Promise<{ plans: Plan[]; source: 'server' | 'fallback' }>;
       paymentMethods?: (lang: string) => Promise<{ methods: PaymentMethod[]; source: 'server' | 'fallback' }>;
-      paymentCreateOrder?: (planId: PlanId, method: PaymentMethodId) => Promise<Order | { error: string }>;
+      paymentCreateOrder?: (planId: PlanId, method: PaymentMethodId) => Promise<Order | OrderError>;
       paymentOrderStatus?: (orderId: string) => Promise<OrderStatusResult>;
       paymentHistory?: () => Promise<PaymentHistoryEntry[]>;
       paymentOpenExternal?: (url: string) => Promise<boolean>;

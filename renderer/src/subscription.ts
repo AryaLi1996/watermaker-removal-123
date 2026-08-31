@@ -53,8 +53,38 @@ export interface PaymentMethod {
 
 export type LicenseStatus = 'loading' | 'unlicensed' | 'active' | 'grace_period' | 'expired';
 
+/**
+ * A licensing failure the interface has to word differently.
+ *
+ * `app_mismatch` is a license or an order the service scoped to another app on
+ * the same account. Everything else — a timeout, a refused key — reads as
+ * "try again"; this one never resolves by retrying, so it gets its own
+ * message telling the user to activate here instead.
+ */
+export type LicenseErrorCode = 'app_mismatch';
+
+export const APP_MISMATCH: LicenseErrorCode = 'app_mismatch';
+
+/**
+ * How watching an order ended.
+ *
+ * `mismatch` is its own outcome rather than a failure to pay: the payment
+ * went through, but the license it bought was scoped to another app, so the
+ * page must say something other than either "unlocked" or "payment failed".
+ */
+export type OrderOutcome = 'paid' | 'timeout' | 'cancelled' | 'mismatch';
+
+/** The message for a coded failure, or null when the raw reason is all there
+ *  is to say. */
+export function licenseErrorKey(code?: string | null): string | null {
+  return code === APP_MISMATCH ? 'subscription.appMismatch' : null;
+}
+
 export interface LicensePayload {
   userId: string;
+  /** Which app the service issued this for. Absent on tokens minted before
+   *  the service grew the dimension — those are this app's. */
+  appId?: string;
   planId: PlanId;
   licenseKey: string;
   /** Unix seconds. The single source of truth for when access ends. */

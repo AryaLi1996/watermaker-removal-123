@@ -222,6 +222,7 @@
     "payStopWaiting": "Stop waiting",
     "paySuccess": "Payment received. Every feature is unlocked.",
     "payFailed": "Could not start the payment: {reason}",
+    "appMismatch": "This subscription belongs to a different app on your account, so it does not unlock this one. Activate again here, or write to support if you meant to buy it for the watermark remover.",
     "payTimeout": "Still no payment after 10 minutes, so we stopped watching. If you did pay, use Refresh below.",
     "manageHeading": "Your subscription",
     "expiresOn": "Runs until {date}",
