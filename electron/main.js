@@ -274,7 +274,15 @@ function createWindow() {
     // Replaced by the page's own <title> once it loads, which is how the
     // window ends up named in the language the user reads.
     title: app.getName(),
-    titleBarStyle: 'hiddenInset',
+    // macOS only, and deliberately so. `hiddenInset` drops the system title
+    // bar but leaves the close/minimise/zoom buttons floating over the top
+    // left of the page, so the renderer has to keep that corner clear —
+    // renderer/src/titlebar.ts does. Windows and Linux keep their native
+    // frame, where the controls sit outside the web contents and nothing the
+    // app draws can land on top of them. The option is a no-op off macOS
+    // anyway; naming the platform is what stops it being read as a
+    // cross-platform custom title bar that was never built.
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -284,6 +292,19 @@ function createWindow() {
       sandbox: true,
     },
   });
+
+  // Full screen takes the traffic lights away, so the space the top bar holds
+  // open for them has to close again — otherwise the app name sits in a gap
+  // with nothing in it. Pushed rather than polled: there is no CSS media
+  // query for "this window is full screen".
+  const sendFullScreen = () => {
+    if (!win.isDestroyed()) win.webContents.send('window:full-screen', win.isFullScreen());
+  };
+  win.on('enter-full-screen', sendFullScreen);
+  win.on('leave-full-screen', sendFullScreen);
+  // A window restored into full screen is already in it when the page loads,
+  // and fires neither event.
+  win.webContents.on('did-finish-load', sendFullScreen);
 
   if (isDev) {
     win.loadURL('http://localhost:5173');

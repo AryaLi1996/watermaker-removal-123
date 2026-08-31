@@ -163,6 +163,13 @@ declare global {
       installUpdate: () => Promise<boolean>;
       systemInfo: () => Promise<SystemInfo>;
       /**
+       * Whether the window is full screen. Optional: a main process older
+       * than this never sends it, and the top bar's default inset is right
+       * for every platform that has no floating window controls.
+       */
+      onFullScreenChange?: (cb: (isFullScreen: boolean) => void) => void;
+      removeWindowListeners?: () => void;
+      /**
        * Licensing. Optional because a main process older than this feature
        * does not expose them, and the renderer must still start.
        */

@@ -18,6 +18,7 @@ import { normalizeCoordinates, defaultOutputName, formatDuration, mediaUrl, NULL
 import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX } from './errors';
 import type { FriendlyError } from './errors';
 import { BUILT_IN_PRESETS, loadCustomPresets, saveCustomPresets, presetFromCurrent } from './presets';
+import { topbarInset } from './titlebar';
 import type { Preset, PresetParams } from './presets';
 import { useHistory } from './hooks/useHistory';
 import type { JobSettings } from './hooks/useHistory';
@@ -78,6 +79,9 @@ function App() {
   // switch that silently falls back on every run is a switch that lies.
   const [selectedDeepLearning, setDeepLearning] = useState(false);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  // macOS floats the window's own controls over the top-left of the page, and
+  // takes them away again in full screen. See titlebar.ts.
+  const [isFullScreen, setIsFullScreen] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stateLabel, setStateLabel] = useState('');
   const [error, setError] = useState<FriendlyError>({ key: null, raw: '' });
@@ -155,6 +159,11 @@ function App() {
   // is running, and until the answer arrives every method stays on offer.
   useEffect(() => {
     void window.electronAPI.systemInfo().then(setSystemInfo).catch(() => setSystemInfo(null));
+  }, []);
+
+  useEffect(() => {
+    window.electronAPI.onFullScreenChange?.(setIsFullScreen);
+    return () => window.electronAPI.removeWindowListeners?.();
   }, []);
 
   // A downloaded update installs on the user's say-so, never mid-export.
@@ -420,7 +429,10 @@ function App() {
       <div
         className="app-topbar"
         style={{
-          display: 'flex', alignItems: 'center', gap: 16, padding: '0 14px', height: 40,
+          display: 'flex', alignItems: 'center', gap: 16, height: 40,
+          // Right padding is the ordinary one; the left keeps clear of the
+          // window controls macOS floats over this corner.
+          paddingRight: 14, paddingLeft: topbarInset(systemInfo?.platform, isFullScreen),
           background: 'var(--surface)', borderBottom: '1px solid var(--border)',
         }}
       >

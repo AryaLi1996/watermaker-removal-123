@@ -157,6 +157,32 @@ body {
   background: var(--border-strong);
 }
 
+/* ── The top bar as a title bar ────────────────────────────────────────────
+   On macOS the window has no system title bar (`titleBarStyle: 'hiddenInset'`
+   in electron/main.js), so this strip is the only thing at the top of the
+   window — and if it is not draggable, the window cannot be moved at all
+   except by its edges. `drag` makes the whole strip a title bar.
+
+   The exception matters as much as the rule: a control inside a drag region
+   stops responding to the pointer, because the press starts a window move
+   instead of a click. Every interactive thing in the strip is therefore put
+   back with `no-drag`. Missing one does not look broken — the control simply
+   stops working — which is why this is a rule over the element types rather
+   than a class each one has to remember to carry.
+
+   The left padding is set in App.tsx, not here: it depends on the platform
+   and on whether the window is full screen. See renderer/src/titlebar.ts. */
+.app-topbar {
+  -webkit-app-region: drag;
+}
+.app-topbar button,
+.app-topbar select,
+.app-topbar input,
+.app-topbar a,
+.app-topbar [role="button"] {
+  -webkit-app-region: no-drag;
+}
+
 /* ── Narrow windows ────────────────────────────────────────────────────────
    The window minimum is 900×600, so this is not about phones: it is about a
    user dragging the window narrow or working on a small laptop beside other
