@@ -60,6 +60,12 @@ jobs:
       # Every report is written under a path the upload steps below collect:
       # reports/ (JUnit XML), htmlcov/ and coverage.xml (backend coverage),
       # playwright-report/ and test-results/ (E2E), docs/screenshots/.
+      # The deep-learning engine's tests need neither a GPU, a ProPainter
+      # checkout, PyTorch nor the network — they stub the subprocess and pass
+      # the GPU in — so they run on all three runners like everything else and
+      # skip nothing. Nothing extra is installed for them on purpose: a CI job
+      # that pulled a CUDA PyTorch would take longer than the whole suite and
+      # still have no card to run it on.
       - name: Backend tests with coverage
         shell: bash
         working-directory: backend

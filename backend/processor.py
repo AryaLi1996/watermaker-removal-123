@@ -20,6 +20,7 @@ the frames are the same size either way.
 import multiprocessing
 import os
 import shutil
+import sys
 from collections import OrderedDict
 
 import cv2
@@ -33,11 +34,22 @@ _current_pool: 'multiprocessing.Pool | None' = None
 
 
 def terminate() -> None:
-    """Abort any active parallel batch by terminating the worker pool."""
+    """
+    Abort any active batch: the worker pool, and the ProPainter child if the
+    deep engine is the one running. Only one of the two can be in flight, but
+    which one is not worth tracking — both calls are no-ops when idle, and
+    getting it wrong leaves a process holding a GPU after the user cancelled.
+    """
     global _current_pool
     if _current_pool is not None:
         _current_pool.terminate()
         _current_pool = None
+
+    # Imported here rather than at module scope: the deep engine is the
+    # exception, and a cancel must not be the thing that first imports it.
+    loaded = sys.modules.get('propainter_engine')
+    if loaded is not None:
+        loaded.terminate()
 
 
 def opencv_thread_count() -> int:
@@ -79,6 +91,12 @@ TEMPORAL_SEQUENTIAL_FRAME_LIMIT = 1
 # earlier worker has already painted. Sibling of the frames directory so the
 # frame pattern ffmpeg reassembles from stays untouched.
 TEMPORAL_OUTPUT_DIR = 'temporal_out'
+
+# Where the deep engine writes its mask and the frames it produces. Beside the
+# frames directory rather than in it, for the same reason as above: ffmpeg
+# reassembles that directory by filename pattern and must not meet a second
+# copy of every frame.
+DEEP_WORK_DIR = 'propainter'
 
 # How many decoded neighbours each worker keeps. Consecutive frames ask for
 # almost the same neighbours, so even a handful turns most of the reads into
@@ -276,12 +294,76 @@ def _dispatch(
     return results
 
 
+def _sibling_dir(frame_paths: list[str], name: str) -> str:
+    """A directory beside the frames directory, created if it is not there."""
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(frame_paths[0])), name)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _run_deep(
+    frame_paths: list[str],
+    config: dict,
+    width: int,
+    height: int,
+    progress_callback=None,
+    on_notice=None,
+) -> bool:
+    """
+    Hand the batch to ProPainter. True where it did the work, False where the
+    caller should run the optical-flow engine over the same frames instead.
+
+    Every failure here is a fallback, never an error. The deep engine is the
+    one part of this pipeline that depends on a GPU, a separate checkout and a
+    half-gigabyte download, so it has more ways to be unavailable than the
+    rest of the app put together — and none of them are a reason to lose an
+    export the flow engine can still finish. What is *not* acceptable is doing
+    that silently, so each one is reported to the caller for the UI to relay.
+    """
+    import propainter_engine  # noqa: PLC0415 — deliberately deferred, see terminate()
+
+    def notice(key: str, detail: str) -> None:
+        if on_notice:
+            on_notice(key, detail)
+
+    work_dir = _sibling_dir(frame_paths, DEEP_WORK_DIR)
+    requested = config.get('temporalQuality', propainter_engine.DEFAULT_QUALITY)
+
+    try:
+        settings = propainter_engine.inpaint_frames(
+            frame_paths, config, width, height, work_dir,
+            progress_callback=progress_callback,
+        )
+    except propainter_engine.ProPainterError as exc:
+        notice('deep_fallback', str(exc))
+        return False
+    except Exception as exc:
+        # Deliberately broad. Everything past the engine's own errors is still
+        # a reason to run the flow engine rather than to lose the export: a
+        # failed weights download, an unreadable frame, a checkout that moved
+        # mid-job. The class name goes in the notice so a genuine bug in here
+        # is visible rather than disguised as a missing GPU.
+        notice('deep_fallback', f'{type(exc).__name__}: {exc}')
+        return False
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+    # A card too small for the preset the user picked runs the next one down
+    # rather than refusing. That is the right trade, and it is still a
+    # different result from the one they asked for.
+    if settings.name != requested:
+        notice('deep_quality', settings.name)
+    return True
+
+
 def run_batch(
     frame_paths: list[str],
     config: dict,
     width: int,
     height: int,
     progress_callback=None,
+    on_notice=None,
 ) -> int:
     """
     Process every frame with the engine the config names.
@@ -292,6 +374,10 @@ def run_batch(
     :param width: Native video width (pixels).
     :param height: Native video height (pixels).
     :param progress_callback: Optional callable(float 0–100) for progress.
+    :param on_notice: Optional callable(key, detail) for something the user
+        should be told about the run that is not a failure — the deep engine
+        falling back to the flow one, or running at a lower preset than was
+        asked for.
     :returns: How many frames a failure pushed onto the single-frame fill.
         Zero for every engine but the temporal one, and for a temporal run
         where nothing went wrong.
@@ -303,6 +389,13 @@ def run_batch(
         return 0
 
     if config.get('method') == 'temporal':
+        # The learned engine, where the job asked for it and the machine can
+        # carry it. It repaints the frames in place, so a run that succeeds
+        # leaves nothing for the flow engine below to do.
+        if config.get('temporalEngine') == 'deep' and _run_deep(
+                frame_paths, config, width, height, progress_callback, on_notice):
+            return 0
+
         # Written beside the frames, not among them: ffmpeg reassembles the
         # directory by filename pattern and must not meet a second copy.
         out_dir = os.path.join(

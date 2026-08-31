@@ -32,7 +32,13 @@
     "temporalTooltip": "读取每一帧前后的画面并追踪其间的运动，因此水印背后的区域是从真正拍到它的那一帧里还原出来的，而不是凭空推测。质量越高，搜索范围越大、融合越细致，耗时也越长。",
     "temporalPreviewFast": "预览始终以「{quality}」运行，以便尽快出结果；导出仍使用上面选择的质量。",
     "temporalNeedsCpu": "需要至少 4 个处理器核心",
-    "temporalNeedsMemory": "需要至少 4 GB 内存"
+    "temporalNeedsMemory": "需要至少 4 GB 内存",
+    "deepLearning": "深度学习增强",
+    "deepLearningHint": "在 GPU 上运行训练好的模型（ProPainter）。在难处理的镜头上效果更好——固定机位、静止背景，即没有任何一帧能提供被遮挡区域的画面。启动较慢，首次使用需下载约 200 MB 模型文件。",
+    "deepBadge": "GPU",
+    "deepNote": "模型在显卡上运行。若无法运行（没有显卡、显存不足或未安装模型），导出仍会用标准时间修复完成，并给出提示。",
+    "deepDowngrade": "此显卡只能运行「{quality}」档；上面选择的档位超出了它的显存。",
+    "deepPreviewFast": "深度学习引擎的预览始终使用「快速」档。"
   },
   "params": {
     "radius": "修复平滑度（半径 px）",
@@ -79,7 +85,8 @@
     "processing": "正在重建像素…",
     "temporalProcessing": "时间修复处理中，耗时较长…",
     "encoding": "正在编码视频…",
-    "preparingPreview": "正在准备预览…"
+    "preparingPreview": "正在准备预览…",
+    "deepProcessing": "深度学习修复中——需要较长时间…"
   },
   "estimate": {
     "export": "导出：{time}",
@@ -150,5 +157,14 @@
   "notifications": {
     "exportDoneTitle": "导出完成",
     "exportDoneBody": "{name} 已就绪。"
+  },
+  "deep": {
+    "needsGpu": "需要 NVIDIA 显卡",
+    "needsVram": "至少需要 4 GB 显存",
+    "notInstalled": "未安装 ProPainter 模型",
+    "fallbackTitle": "已改用标准时间修复",
+    "fallbackBody": "深度学习引擎无法运行，本次导出改由光流引擎完成。",
+    "qualityTitle": "以「{quality}」档运行",
+    "qualityBody": "显卡显存不足以支持所选档位，已自动降到下一档。"
   }
 }

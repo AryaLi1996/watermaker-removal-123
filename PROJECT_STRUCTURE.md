@@ -72,6 +72,8 @@ STATE:preview_ready:<path>  e.g. STATE:preview_ready:/tmp/abc.png
 STATE:meta:<json>           e.g. STATE:meta:{"width":1920,...}
 STATE:done:<path>           e.g. STATE:done:/Users/joe/Desktop/out.mp4
 STATE:stage:<key>           e.g. STATE:stage:extractingFrames
+STATE:deep_fallback:<why>   the learned engine stood aside; the flow engine ran
+STATE:deep_quality:<preset> the learned engine ran a lower preset than was asked for
 STATE:<string>              a label with no translation; shown as it arrives
 ERROR:<string>              e.g. ERROR:ffmpeg not found
 DEBUG:<string>              logged only, not forwarded to renderer
@@ -158,6 +160,10 @@ backend/
 ├── ff_utils.py       # All FFmpeg/FFprobe subprocess calls
 ├── image_core.py     # OpenCV removal algorithms + mask builder
 ├── temporal_core.py  # Flow-guided temporal inpainting (the `temporal` method)
+├── propainter_engine.py   # ProPainter driven as a subprocess — the learned tier of `temporal`
+├── propainter_weights.py  # The three checkpoints it needs, and fetching them on first use
+├── mask_generator.py      # ROI → the mask PNG ProPainter repaints from
+├── gpu.py            # What this machine offers a CUDA workload (torch, else nvidia-smi)
 ├── processor.py      # multiprocessing.Pool dispatcher; exposes terminate() for SIGTERM cancel
 ├── requirements.txt  # Python dependencies
 └── .venv/            # Virtual environment (not committed)
@@ -203,6 +209,8 @@ All calls use list-form `subprocess.run` (never `shell=True`).
 | `check_temporal_supported()` | Refuses a temporal job below 4 cores or 4 GB, before any work, with the sentence the renderer turns into plain language. An unreadable machine is allowed, never refused |
 | `total_memory_mb()` | Physical memory via `sysconf`, or `GlobalMemoryStatusEx` on Windows; `None` where the platform will not say |
 | `preview_length_for(method, length)` | Caps a temporal preview at 3 seconds — the renderer caps it too, so the control shows the length that will run |
+| `resolve_temporal_engine(config)` | `deep` or `flow`, decided before any work: it changes what the machine has to be capable of, what the status line says and how long the job takes |
+| `temporal_quality_for(config, engine)` | A deep preview runs the quick preset whatever the dial says — the difference between presets there is a resolution the card may not have the memory for |
 
 ### `temporal_core.py` — Temporal Inpainting
 
@@ -224,6 +232,30 @@ The walk stops as soon as every pixel has enough samples, so the reach is a
 limit rather than a cost. Neighbours are fetched through `neighbor_at`, which
 the processor backs with lazy decoding, so frames the walk never needs are
 never read.
+
+### `propainter_engine.py` — the learned tier of temporal fill
+
+ProPainter is a separate program, and this module keeps it that way: it wants
+PyTorch and CUDA that this app does not otherwise carry, and at the wrong
+settings it dies of a GPU allocation — a subprocess dying is a fallback, this
+process dying is a lost export. So the app extracts frames as it always does,
+writes a mask, hands both over, and pastes what comes back over the selection.
+
+| Function | Purpose |
+|---|---|
+| `availability(gpu)` | Whether a run can be started here: checkout, card, video memory. Returns a translation key, not prose — the UI is bilingual |
+| `select_settings(quality, gpu)` | The best preset the card can carry, at or below the one asked for. `None` where even the cheapest will not fit, which is the caller's cue to fall back |
+| `build_command(...)` | A preset becomes flags; the chunk length is clamped to the video so a 30-frame preview does not reserve for 60 |
+| `ProgressMapper` | Turns the child's console output into 0–100. Monotonic, and an unrecognised line moves nothing: the phase bands are the contract, not the strings |
+| `run(command, cwd, ...)` | Drives the child, streams its output, and raises with its own last words — a CUDA out-of-memory line is the most useful thing this module can hand upwards |
+| `terminate()` | Kills the child and its process group, so a cancelled export does not leave something holding the GPU |
+| `composite(...)` | Pastes only the repainted rectangle back, scaled to native resolution and feathered, so the rest of the frame keeps the pixels ffmpeg extracted |
+| `inpaint_frames(...)` | The entry point `processor` calls: check, download weights, write the mask, run, composite |
+
+`gpu.py` answers "how many megabytes can a model allocate" — from `torch.cuda`
+where PyTorch is installed (the same runtime the model will use), otherwise
+from `nvidia-smi` (the only source before it is). Neither answering is an
+ordinary result, not an error.
 
 ### `processor.py` — Parallel Dispatcher
 
@@ -253,6 +285,11 @@ tests/
 │   ├── backend/
 │   │   ├── test_image_core.py          # pytest — mask + the single-frame engines
 │   │   ├── test_temporal_core.py       # pytest — flow fitting, fusion, feathering, fallbacks
+│   │   ├── test_propainter_engine.py   # pytest — presets, downgrade, flags, progress, cancel, composite
+│   │   ├── test_propainter_weights.py  # pytest — what is missing, what is fetched, how a failure reads
+│   │   ├── test_mask_generator.py      # pytest — the mask handed to the model
+│   │   ├── test_gpu.py                 # pytest — the CUDA probe, on a machine with no GPU
+│   │   ├── test_deep_pipeline.py       # pytest — routing, falling back, choosing the engine
 │   └── renderer/
 │       └── utils.test.ts               # 15 vitest tests — all utility functions
 ├── integration/                        # reserved — not yet implemented

@@ -32,7 +32,13 @@
     "temporalTooltip": "Reads the frames either side of each one and follows the motion between them, so the area behind the mark is recovered from a frame that actually shows it rather than guessed at. A higher quality looks further and blends more carefully, and takes longer.",
     "temporalPreviewFast": "Previews always run at {quality} so they come back quickly; the export uses the setting above.",
     "temporalNeedsCpu": "Needs at least 4 processor cores",
-    "temporalNeedsMemory": "Needs at least 4 GB of memory"
+    "temporalNeedsMemory": "Needs at least 4 GB of memory",
+    "deepLearning": "Deep learning enhancement",
+    "deepLearningHint": "Uses a trained model (ProPainter) on the GPU. Better on hard shots — a locked-off camera, a still background — where there is no other frame to recover the area from. Slower to start, and the first run downloads about 200 MB of model files.",
+    "deepBadge": "GPU",
+    "deepNote": "The model runs on the graphics card. If it cannot run — no card, not enough video memory, or the model is not installed — the export still completes using the standard temporal fill, and says so.",
+    "deepDowngrade": "This card runs the {quality} preset; the setting above is beyond its video memory.",
+    "deepPreviewFast": "Previews always run the fast preset on the deep engine."
   },
   "params": {
     "radius": "Smoothness (radius px)",
@@ -79,7 +85,8 @@
     "processing": "Reconstructing pixels…",
     "temporalProcessing": "Temporal fill in progress — this takes longer…",
     "encoding": "Encoding video…",
-    "preparingPreview": "Preparing preview…"
+    "preparingPreview": "Preparing preview…",
+    "deepProcessing": "Deep learning fill in progress — this takes longer…"
   },
   "estimate": {
     "export": "Export: {time}",
@@ -150,5 +157,14 @@
   "notifications": {
     "exportDoneTitle": "Export complete",
     "exportDoneBody": "{name} is ready."
+  },
+  "deep": {
+    "needsGpu": "Needs an NVIDIA graphics card",
+    "needsVram": "Needs at least 4 GB of video memory",
+    "notInstalled": "The ProPainter model is not installed",
+    "fallbackTitle": "Standard temporal fill was used",
+    "fallbackBody": "The deep learning engine could not run, so the export was completed with the optical-flow engine instead.",
+    "qualityTitle": "Ran at the {quality} preset",
+    "qualityBody": "The graphics card did not have the video memory for the setting you picked, so the next one down was used."
   }
 }

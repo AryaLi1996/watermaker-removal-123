@@ -5,6 +5,9 @@ source = .
 omit =
     .venv/*
     */__pycache__/*
+    # An optional third-party checkout, when someone installs it here. It is
+    # not this project's code and its coverage is not this project's business.
+    ProPainter/*
 
 [report]
 show_missing = True

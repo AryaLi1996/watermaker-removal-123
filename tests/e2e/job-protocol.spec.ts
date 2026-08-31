@@ -27,6 +27,7 @@ async function startCollecting(page: Page) {
     api.onJobError((v: string) => events.push({ type: 'error', value: v }));
     api.onJobDone((v: string | null) => events.push({ type: 'done', value: v }));
     api.onTemporalFallback((v: object) => events.push({ type: 'temporal-fallback', value: v }));
+    api.onDeepNotice((v: object) => events.push({ type: 'deep-notice', value: v }));
   });
 }
 
@@ -118,6 +119,32 @@ test.describe('job stdout protocol', () => {
     expect(received.some(
       (e) => e.type === 'state' && String(e.value).includes('temporal_fallback'),
     )).toBe(false);
+  });
+
+  test('what the learned engine did differently arrives on its own channel', async ({ page }) => {
+    // Both notices carry a free-text detail. Through job:state that text
+    // would be shown to the user as the status line.
+    await startCollecting(page);
+    await startJob(page, { scenario: 'deep_notice', outputPath: '/tmp/deep-out.mp4' });
+
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'done'),
+      { timeout: 10_000 },
+    );
+    const received = await events(page);
+    const notices = received.filter((e) => e.type === 'deep-notice').map((e) => e.value);
+
+    expect(notices).toEqual([
+      { kind: 'quality', detail: 'balanced' },
+      { kind: 'fallback', detail: 'CUDA out of memory: tried to allocate 2.00 GiB' },
+    ]);
+    expect(received.some(
+      (e) => e.type === 'state' && String(e.value).includes('deep_'),
+    )).toBe(false);
+    // The stage label still goes to the status line, as any other stage does.
+    expect(received.some(
+      (e) => e.type === 'state' && e.value === 'stage:deepProcessing',
+    )).toBe(true);
   });
 
   test('a finished preview job does not report itself as a completed export', async ({ page }) => {

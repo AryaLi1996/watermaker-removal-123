@@ -14,6 +14,7 @@ A cross-platform desktop application for removing static watermarks from video f
 - **Interactive ROI selector** — drag-to-resize bounding box directly on the video frame via Konva.js canvas
 - **Five removal engines** — Inpainting (TELEA), Gaussian Blur, Solid Fill, Clone Stamp, and Temporal Fill
 - **Temporal fill (beta)** — reconstructs the background from the frames either side using optical flow, for moving backgrounds where a single-frame fill goes soft. Needs 4 CPU cores and 4 GB of memory, and takes 5–10x as long as the other methods; it is greyed out, with the reason, on machines below that
+- **Deep learning enhancement (optional)** — a switch under temporal fill that hands the job to [ProPainter](https://github.com/sczhou/ProPainter) on an NVIDIA GPU, for the locked-off shots where no frame ever shows what is behind the mark. Not bundled: see [docs/deep-learning.md](docs/deep-learning.md). Without it, or if it cannot run, the export still finishes on the optical-flow engine and says so
 - **One-second quick preview** — test your settings on a short clip before committing to a full render
 - **Real-time progress bar** — frame-by-frame progress streamed from the Python backend via IPC
 - **Multi-core processing** — Python `multiprocessing.Pool` saturates all CPU cores automatically

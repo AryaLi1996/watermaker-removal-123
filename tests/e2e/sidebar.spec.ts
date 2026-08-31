@@ -265,3 +265,100 @@ test.describe('Error panel', () => {
     await expect(page.getByTestId('error-panel')).not.toBeVisible();
   });
 });
+
+/**
+ * The deep-learning switch under temporal fill.
+ *
+ * Neither state can be assumed from the machine running the suite — CI has no
+ * graphics card and a developer's may — so `system:info` is stubbed and the
+ * window reloaded, which is the only way to see both branches on one machine.
+ */
+test.describe('Sidebar — deep learning enhancement', () => {
+  async function withGpu(electronApp: ElectronApplication, gpu: object | null) {
+    await electronApp.evaluate(({ ipcMain }, injected) => {
+      ipcMain.removeHandler('system:info');
+      ipcMain.handle('system:info', () => ({
+        platform: process.platform,
+        arch: process.arch,
+        packaged: false,
+        appVersion: '1.1.0',
+        cpuCount: 8,
+        totalMemoryMB: 16384,
+        gpu: injected,
+      }));
+    }, gpu);
+  }
+
+  const BIG_CARD = { available: true, name: 'NVIDIA GeForce RTX 4090', memoryTotalMB: 24564 };
+  const NO_CARD = { available: false, name: '', memoryTotalMB: 0 };
+
+  test('is offered under temporal fill on a machine with a card', async ({ page, electronApp }) => {
+    await withGpu(electronApp, BIG_CARD);
+    await page.reload();
+    await recordStartJob(electronApp);
+    await loadVideo(page, electronApp);
+
+    // It belongs to temporal fill alone: it is that method's second
+    // implementation, not a method of its own.
+    await expect(page.getByTestId('deep-toggle')).toBeHidden();
+    await page.getByTestId('method-temporal').click();
+
+    const toggle = page.getByTestId('deep-toggle').locator('input');
+    await expect(toggle).toBeEnabled();
+    await toggle.check();
+    await expect(page.getByTestId('deep-note')).toBeVisible();
+
+    // And the switch reaches the backend, not just the screen.
+    await page.getByTestId('btn-preview').click();
+    await expect
+      .poll(
+        async () => (await recordedJobs(electronApp)).filter((j) => j.mode === 'preview')[0],
+        { timeout: 5_000 },
+      )
+      .toMatchObject({ method: 'temporal', useDeepLearning: true });
+  });
+
+  test('a card too small for it says which preset will run', async ({ page, electronApp }) => {
+    await withGpu(electronApp, { ...BIG_CARD, memoryTotalMB: 6144 });
+    await page.reload();
+    await stubStartJob(electronApp);
+    await loadVideo(page, electronApp);
+
+    await page.getByTestId('method-temporal').click();
+    await page.getByTestId('deep-toggle').locator('input').check();
+    await page.getByTestId('quality-high').click();
+
+    // Said before the run, not reported after it.
+    await expect(page.getByTestId('deep-downgrade')).toContainText('Fast');
+  });
+
+  test('a machine with no card is told why the switch is off', async ({ page, electronApp }) => {
+    await withGpu(electronApp, NO_CARD);
+    await page.reload();
+    await stubStartJob(electronApp);
+    await loadVideo(page, electronApp);
+
+    await page.getByTestId('method-temporal').click();
+    const toggle = page.getByTestId('deep-toggle').locator('input');
+    await expect(toggle).toBeDisabled();
+    // A disabled control with no reason reads as a bug.
+    await expect(page.getByTestId('deep-reason')).toContainText('NVIDIA');
+  });
+
+  test('a job on such a machine does not claim the deep engine', async ({ page, electronApp }) => {
+    await withGpu(electronApp, NO_CARD);
+    await page.reload();
+    await recordStartJob(electronApp);
+    await loadVideo(page, electronApp);
+
+    await page.getByTestId('method-temporal').click();
+    await page.getByTestId('btn-preview').click();
+
+    await expect
+      .poll(
+        async () => (await recordedJobs(electronApp)).filter((j) => j.mode === 'preview')[0],
+        { timeout: 5_000 },
+      )
+      .toMatchObject({ useDeepLearning: false });
+  });
+});

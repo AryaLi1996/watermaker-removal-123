@@ -67,6 +67,28 @@ backend/.venv/bin/python -m pytest tests/unit/backend -v
 | `test_clone_stamp_oob_raises` | Out-of-bounds source offset raises `ValueError` |
 | `test_apply_removal_routes_inpaint` | `apply_removal` dispatcher calls the right engine |
 
+**Files:** the deep-learning engine — `test_propainter_engine.py`,
+`test_propainter_weights.py`, `test_mask_generator.py`, `test_gpu.py`,
+`test_deep_pipeline.py`
+
+None of these need a GPU, a ProPainter checkout, PyTorch or the network, and
+none of them skip without one. That is deliberate rather than convenient: the
+branches worth testing here are the ones a machine *with* a graphics card would
+never take — the card that is too small, the checkout that is not there, the
+download that fails, the model that runs out of memory mid-job — and each of
+them has to end in a finished export rather than an error.
+
+| Area | What it checks |
+|---|---|
+| Presets and downgrade | A big card gets what was asked for; a small one steps down; one below the smallest preset gets nothing, which is the cue to fall back |
+| Availability | No checkout, no card and a card too small are three different answers, each with its own translation key |
+| The command | A preset becomes flags; the chunk is never longer than the video |
+| Progress | Phases in order, monotonic, and an unrecognised line moves nothing |
+| Running a child | A real subprocess: progress from its output, a failure that carries its own last words, a CUDA out-of-memory message that names the fix, and `terminate()` actually stopping a run in flight |
+| Compositing | The mark goes; the rest of the frame is untouched; a smaller result is scaled back up; a frame-count mismatch is refused; the seam is blended rather than stamped |
+| Weights | Only what is absent is fetched, an interrupted download leaves nothing behind, and a 404 does not read as a network problem |
+| Routing | A deep job reaches the model and the flow engine does not run after it; a failed one still finishes the export, and says why |
+
 **File:** `tests/unit/backend/test_temporal_core.py` — flow-guided temporal inpainting
 
 The scenes are synthetic but not arbitrary: a camera panning over a textured
