@@ -41,6 +41,7 @@ The Node.js process that owns the native window, all IPC handlers, and the Pytho
 electron/
 ├── main.js           # Entry point. BrowserWindow, IPC handlers, Python spawn
 ├── preload.js        # contextBridge — exposes window.electronAPI to the renderer
+├── subscription.js   # The subscription record, read from and written to userData
 └── tsconfig.json     # TypeScript config for the electron/ directory
 ```
 
@@ -59,6 +60,9 @@ electron/
 | `job:meta` | main → renderer | Forward `STATE:meta:<json>` (video metadata) |
 | `job:done` | main → renderer | Forward `STATE:done:<path>` |
 | `job:error` | main → renderer | Forward `ERROR:<msg>` from stdout |
+| `subscription:getStatus` | renderer → main | Read the record, granting the trial on first run |
+| `subscription:subscribe` | renderer → main | Record a (simulated) payment for a plan |
+| `subscription:cancel` | renderer → main | Turn auto-renewal off, keeping the plan |
 
 ### stdout protocol (parsed in `main.js`)
 
@@ -92,6 +96,7 @@ renderer/
 │   ├── App.tsx                     # Root component — layout, state machine, IPC wiring
 │   ├── types.ts                    # Shared TypeScript types
 │   ├── capabilities.ts             # Whether this machine can run the heavier methods
+│   ├── subscription.ts             # Plans, trial arithmetic, and what each tier unlocks
 │   ├── utils.ts                    # Pure utility functions
 │   ├── index.css                   # Global dark theme styles (Tailwind base)
 │   ├── App.css                     # App-shell layout styles
@@ -101,7 +106,12 @@ renderer/
 │       ├── MethodPicker.tsx        # Sidebar: radio group + dynamic method controls
 │       ├── ProgressPanel.tsx       # Progress bar + Cancel button (processing state)
 │       ├── DonePanel.tsx           # Completion view — output path + open button
+│       ├── SubscriptionCard.tsx    # One plan: price, discount, subscribe button
+│       ├── SubscriptionStatusBar.tsx # Bottom bar — plan or trial countdown
+│       ├── PaymentQr.tsx           # The stand-in QR code the payment dialog shows
 │       └── EmptyState.tsx          # Idle state — drop zone / open prompt
+│   └── pages/
+│       └── SubscriptionPage.tsx    # Plan comparison, payment, and managing a plan
 ├── public/
 │   ├── favicon.svg
 │   └── icons.svg

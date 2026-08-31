@@ -19,7 +19,7 @@ test.describe('App launch', () => {
     await expect(page.getByText('MP4 · MKV · MOV · AVI')).toBeVisible();
   });
 
-  test('app title is visible in sidebar', async ({ page }) => {
+  test('app title is visible in the top bar', async ({ page }) => {
     await expect(page.getByText('Watermark Remover')).toBeVisible();
   });
 

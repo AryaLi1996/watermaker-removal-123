@@ -30,6 +30,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateDownloaded: (cb) => ipcRenderer.on('update:downloaded', (_e, v) => cb(v)),
   installUpdate: () => ipcRenderer.invoke('update:install'),
 
+  // Subscription: state is owned by the main process, which persists it
+  subscriptionStatus: () => ipcRenderer.invoke('subscription:getStatus'),
+  subscribe: (plan, paymentMethod) => ipcRenderer.invoke('subscription:subscribe', plan, paymentMethod),
+  cancelAutoRenew: () => ipcRenderer.invoke('subscription:cancel'),
+
   // Host platform
   systemInfo: () => ipcRenderer.invoke('system:info'),
   tempDir: () => ipcRenderer.invoke('system:tempDir'),

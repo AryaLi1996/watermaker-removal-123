@@ -6,6 +6,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const { Readable } = require('stream');
 const system = require('./system');
+const subscription = require('./subscription');
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -392,6 +393,30 @@ ipcMain.handle('system:info', async () => ({
 }));
 ipcMain.handle('system:tempDir', () => system.tempDir());
 ipcMain.handle('system:notify', (_event, title, body) => system.notify(title, body));
+
+// ─── Subscription state ──────────────────────────────────────────
+// The record lives beside the app's other user data. The renderer asks for
+// it rather than keeping its own copy, so the trial is granted once per
+// install however many windows are open.
+function subscriptionDir() {
+  return app.getPath('userData');
+}
+
+ipcMain.handle('subscription:getStatus', () => subscription.getStatus(subscriptionDir()));
+
+// The payment itself is simulated — see SubscriptionPage. This handler is
+// where a real payment provider's confirmation would be verified before the
+// plan is written.
+ipcMain.handle('subscription:subscribe', (_event, plan, paymentMethod) => {
+  try {
+    return subscription.subscribe(subscriptionDir(), plan, paymentMethod);
+  } catch (err) {
+    console.warn('[subscription] refused:', err.message);
+    return null;
+  }
+});
+
+ipcMain.handle('subscription:cancel', () => subscription.setAutoRenew(subscriptionDir(), false));
 
 // ─── Start full processing job ────────────────────────────────────
 ipcMain.handle('job:start', (_event, payload) => {

@@ -14,6 +14,7 @@ import { test as base, expect, _electron as electron } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
 import { SANDBOX_ARGS } from './launch-args';
+import { grantSubscription } from './subscription-state';
 
 
 type ElectronFixtures = {
@@ -52,6 +53,10 @@ export const test = base.extend<ElectronFixtures, ElectronOptions>({
     // Pin the language: the app otherwise follows the host's system locale, so
     // assertions on visible text would depend on the machine running the suite.
     await window.evaluate(() => window.localStorage.setItem('watermark-remover:locale', 'en'));
+    // Pin the subscription too: the features these specs drive — temporal
+    // fill, the longer previews — need a plan, and a trial that had already
+    // run out in this container would silently grey them out.
+    await grantSubscription(electronApp);
     await window.reload();
     // Accept idle state OR any loaded state so shared Electron instances keep working
     await window.waitForSelector(

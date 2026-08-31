@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Subscription** — a subscription screen, reachable from the new top-bar
+  navigation and from the status bar along the bottom of the window.
+  - Four plans, priced off a ¥99 monthly rate: monthly (¥99), quarterly (¥282,
+    5% off), six months (¥534, 10% off) and yearly (¥1009, 15% off). Prices
+    round down to the yuan, so a discount is never quietly shaved.
+  - A **three-day free trial** is granted on first launch and written to disk
+    at once, so a second launch reads the same end date rather than starting
+    over. The bottom bar counts it down, and the countdown re-derives every
+    minute — a trial that runs out while the app is open takes effect without
+    a restart.
+  - **WeChat Pay and Alipay** are offered, and clicking a plan opens a payment
+    dialog with a QR code. The payment is simulated: the code encodes nothing,
+    the dialog says so in words, and confirming it writes the plan. A real
+    provider replaces the confirm handler and nothing else.
+  - Temporal fill, the deep-learning engine and previews longer than a second
+    need a plan. Without one they are greyed out with the reason on the
+    control, the same way a machine that cannot run them greys them out — a
+    selection made while subscribed is read through the entitlement rather
+    than overwritten, so it comes back intact on renewal.
+  - Auto-renewal can be cancelled from the page. The plan itself keeps running
+    to the date that was paid for.
+  - The record is kept by the main process in the app's user-data directory,
+    so it survives a restart. It is not a security boundary: entitlement
+    checking belongs on a server, alongside the real payment integration.
 - **Temporal Fill (beta)** — a fifth removal method that reconstructs the
   watermark region from the frames around it rather than from the frame it is
   in. Where the background moves, the pixels behind a static mark are usually
