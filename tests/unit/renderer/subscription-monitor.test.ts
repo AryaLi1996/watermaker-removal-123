@@ -1,0 +1,422 @@
+/**
+ * The subscription state machine, driven against a stub of the license
+ * service.
+ *
+ * The interesting cases are the ones a running app makes hard to reach: a
+ * service that cannot be answered, a trial this device already used, a clock
+ * wound backwards, an order that settles while the app watches.
+ */
+import { createRequire } from 'module';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const require = createRequire(import.meta.url);
+const { SubscriptionMonitor } = require('../../../electron/subscription-monitor.js');
+const token = require('../../../electron/license-token.js');
+const secureStore = require('../../../electron/secure-store.js');
+const deviceIdModule = require('../../../electron/device-id.js');
+
+const NOW_MS = 1_800_000_000_000;
+const NOW = Math.floor(NOW_MS / 1000);
+const DAY = 86400;
+
+type Route = string;
+/** A stub service: routes it answers, and what it was asked. */
+function stubService(routes: Record<Route, unknown | ((body?: unknown) => unknown)>) {
+  const calls: { method: string; path: string; body?: unknown }[] = [];
+  const request = vi.fn(async (method: string, routePath: string, body?: unknown) => {
+    calls.push({ method, path: routePath, body });
+    const key = routePath.split('?')[0];
+    if (!(key in routes)) throw new Error(`unreachable: ${routePath}`);
+    const answer = routes[key];
+    return typeof answer === 'function' ? (answer as (b?: unknown) => unknown)(body) : answer;
+  });
+  return { request, calls };
+}
+
+/** A service nothing can reach — every call rejects, as offline does. */
+function offlineService() {
+  return vi.fn(async () => { throw new Error('ENOTFOUND'); });
+}
+
+let dir: string;
+
+function makeMonitor(request: unknown, nowMs = NOW_MS) {
+  return new SubscriptionMonitor({ userDataDir: dir, request, now: () => nowMs });
+}
+
+beforeEach(() => {
+  dir = mkdtempSync(path.join(tmpdir(), 'monitor-'));
+  deviceIdModule.resetCache();
+  secureStore.resetCache();
+});
+
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+  vi.restoreAllMocks();
+});
+
+describe('the trial', () => {
+  it('takes the service\'s answer for a device that already used one', async () => {
+    // The whole reason the trial lives on the server: this machine cannot be
+    // given a second one by reinstalling.
+    const { request } = stubService({
+      'trial/status': { trialUsed: true, trialStart: NOW - 2 * DAY, trialEnd: NOW + DAY, trialDurationDays: 3 },
+    });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+
+    const { trial } = monitor.getState();
+    expect(trial.used).toBe(true);
+    expect(trial.active).toBe(true);
+    expect(trial.source).toBe('server');
+    expect(trial.msRemaining).toBe(DAY * 1000);
+  });
+
+  it('activates one for a device the service has never seen', async () => {
+    const { request, calls } = stubService({
+      'trial/status': { trialUsed: false, trialStart: null, trialEnd: null, trialDurationDays: 3 },
+      'trial/activate': { success: true, trialStart: NOW, trialEnd: NOW + 3 * DAY, trialDurationDays: 3 },
+    });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+
+    expect(calls.map((c) => c.path.split('?')[0])).toContain('trial/activate');
+    expect(monitor.getState().trial.active).toBe(true);
+    expect(monitor.getState().trial.durationDays).toBe(3);
+  });
+
+  it('reports one the service says has run out', async () => {
+    const { request } = stubService({
+      'trial/status': { trialUsed: true, trialStart: NOW - 10 * DAY, trialEnd: NOW - 7 * DAY, trialDurationDays: 3 },
+    });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+
+    expect(monitor.getState().trial.used).toBe(true);
+    expect(monitor.getState().trial.active).toBe(false);
+    expect(monitor.getState().trial.msRemaining).toBe(0);
+  });
+
+  it('starts a local trial when the first launch is also offline', async () => {
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+
+    const { trial } = monitor.getState();
+    expect(trial.active).toBe(true);
+    expect(trial.source).toBe('local');
+    expect(trial.msRemaining).toBe(3 * DAY * 1000);
+  });
+
+  it('reuses the local record on a later offline launch rather than granting another', async () => {
+    await makeMonitor(offlineService()).initialize();
+    secureStore.resetCache();
+
+    const later = makeMonitor(offlineService(), NOW_MS + 2 * DAY * 1000);
+    await later.initialize();
+    // One day left of the original three — not a fresh three.
+    expect(later.getState().trial.msRemaining).toBe(DAY * 1000);
+  });
+
+  it('prefers the service\'s dates over the local copy once it can reach it', async () => {
+    await makeMonitor(offlineService()).initialize();
+    secureStore.resetCache();
+
+    const { request } = stubService({
+      'trial/status': { trialUsed: true, trialStart: NOW - 5 * DAY, trialEnd: NOW - 2 * DAY, trialDurationDays: 3 },
+    });
+    const online = makeMonitor(request);
+    await online.initialize();
+
+    // The service knows this device's trial ended; the local record said
+    // otherwise, and loses.
+    expect(online.getState().trial.active).toBe(false);
+    expect(online.getState().trial.source).toBe('server');
+  });
+
+  it('caches the service\'s trial length instead of trusting its own constant', async () => {
+    const { request } = stubService({
+      'trial/status': { trialUsed: false, trialStart: null, trialEnd: null, trialDurationDays: 7 },
+      'trial/activate': { success: true, trialStart: NOW, trialEnd: NOW + 7 * DAY, trialDurationDays: 7 },
+    });
+    await makeMonitor(request).initialize();
+    secureStore.resetCache();
+
+    const offline = makeMonitor(offlineService());
+    await offline.initialize();
+    expect(offline.getState().trial.durationDays).toBe(7);
+  });
+});
+
+describe('a stored license', () => {
+  const licenseToken = (expiresAt: number) => token.createToken({
+    userId: 'u1', planId: 'annual', licenseKey: 'KEY12345', expiresAt, issuedAt: NOW,
+  });
+
+  function storeToken(value: string) {
+    writeFileSync(path.join(dir, 'license.enc'), secureStore.encrypt(dir, value));
+  }
+
+  it('is active when it has not expired', async () => {
+    storeToken(licenseToken(NOW + 30 * DAY));
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+
+    expect(monitor.getState().status).toBe('active');
+    expect(monitor.getState().payload.planId).toBe('annual');
+    expect(monitor.isLicensedNow()).toBe(true);
+  });
+
+  it('keeps working through the grace period with no network at all', async () => {
+    storeToken(licenseToken(NOW - DAY));
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+
+    expect(monitor.getState().status).toBe('grace_period');
+    expect(monitor.isLicensedNow()).toBe(true);
+  });
+
+  it('stops once the grace period is over', async () => {
+    storeToken(licenseToken(NOW - 30 * DAY));
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+
+    expect(monitor.getState().status).toBe('expired');
+    expect(monitor.isLicensedNow()).toBe(false);
+  });
+
+  it('ignores a token signed by someone else', async () => {
+    storeToken(token.createToken({ userId: 'u', planId: 'annual', licenseKey: 'K', expiresAt: NOW + DAY }, 'forged'));
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+
+    expect(monitor.getState().status).toBe('unlicensed');
+  });
+
+  it('withholds access when the clock has been wound back', async () => {
+    storeToken(licenseToken(NOW + 30 * DAY));
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+    expect(monitor.getState().status).toBe('active');
+
+    // Same machine, same token, a year earlier on the clock.
+    secureStore.resetCache();
+    const rewound = makeMonitor(offlineService(), NOW_MS - 365 * DAY * 1000);
+    await rewound.initialize();
+    expect(rewound.getState().status).toBe('expired');
+  });
+
+  it('tolerates a small backwards step, which is NTP rather than tampering', async () => {
+    storeToken(licenseToken(NOW + 30 * DAY));
+    await makeMonitor(offlineService()).initialize();
+
+    secureStore.resetCache();
+    const nudged = makeMonitor(offlineService(), NOW_MS - 30_000);
+    await nudged.initialize();
+    expect(nudged.getState().status).toBe('active');
+  });
+});
+
+describe('buying a plan', () => {
+  const paidToken = token.createToken({
+    userId: 'u1', planId: 'quarterly', licenseKey: 'KEY12345', expiresAt: NOW + 90 * DAY, issuedAt: NOW,
+  });
+
+  it('creates an order against the anonymous user id', async () => {
+    const { request, calls } = stubService({
+      'trial/status': { trialUsed: false, trialStart: null, trialEnd: null },
+      'trial/activate': { success: true, trialStart: NOW, trialEnd: NOW + 3 * DAY },
+      'create-order': { orderId: 'o-1', presentAs: 'embedded', redirectUrl: 'https://pay.example/o-1' },
+    });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+
+    const order = await monitor.createOrder('quarterly', 'wechat_pay');
+    expect(order.orderId).toBe('o-1');
+
+    const created = calls.find((c) => c.path === 'create-order');
+    expect(created?.body).toMatchObject({ planId: 'quarterly', method: 'wechat_pay' });
+    // The id is generated locally and reused, so a person's orders and
+    // licence can be found again without an account.
+    expect((created?.body as { userId: string }).userId).toBe(monitor.getUserId());
+  });
+
+  it('refuses a payment method the service does not have', async () => {
+    const monitor = makeMonitor(offlineService());
+    expect((await monitor.createOrder('monthly', 'bitcoin')).error).toMatch(/unknown payment method/);
+  });
+
+  it('adopts the licence the moment the order reports paid', async () => {
+    const { request } = stubService({
+      'trial/status': { trialUsed: false, trialStart: null, trialEnd: null },
+      'trial/activate': { success: true, trialStart: NOW, trialEnd: NOW + 3 * DAY },
+      'order-status': { status: 'paid', token: paidToken },
+    });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+    expect(monitor.isLicensedNow()).toBe(false);
+
+    const result = await monitor.orderStatus('o-1');
+    expect(result.licensed).toBe(true);
+    expect(monitor.getState().status).toBe('active');
+    expect(monitor.getState().payload.planId).toBe('quarterly');
+  });
+
+  it('survives a restart, because the token was stored', async () => {
+    const { request } = stubService({
+      'trial/status': { trialUsed: false, trialStart: null, trialEnd: null },
+      'trial/activate': { success: true, trialStart: NOW, trialEnd: NOW + 3 * DAY },
+      'order-status': { status: 'paid', token: paidToken },
+    });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+    await monitor.orderStatus('o-1');
+
+    secureStore.resetCache();
+    const restarted = makeMonitor(offlineService());
+    await restarted.initialize();
+    expect(restarted.getState().status).toBe('active');
+  });
+
+  it('stays unlicensed while the order is still pending', async () => {
+    const { request } = stubService({
+      'trial/status': { trialUsed: false, trialStart: null, trialEnd: null },
+      'trial/activate': { success: true, trialStart: NOW, trialEnd: NOW + 3 * DAY },
+      'order-status': { status: 'pending' },
+    });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+
+    expect((await monitor.orderStatus('o-1')).status).toBe('pending');
+    expect(monitor.isLicensedNow()).toBe(false);
+  });
+
+  it('refuses a token the service could not have signed', async () => {
+    const { request } = stubService({
+      'trial/status': { trialUsed: false, trialStart: null, trialEnd: null },
+      'trial/activate': { success: true, trialStart: NOW, trialEnd: NOW + 3 * DAY },
+      'order-status': {
+        status: 'paid',
+        token: token.createToken({ userId: 'u', planId: 'annual', licenseKey: 'K', expiresAt: NOW + DAY }, 'forged'),
+      },
+    });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+
+    expect((await monitor.orderStatus('o-1')).licensed).toBe(false);
+    expect(monitor.isLicensedNow()).toBe(false);
+  });
+});
+
+describe('plans and payment methods', () => {
+  it('take the service\'s figures when it answers', async () => {
+    const { request } = stubService({
+      plans: { plans: [{ id: 'monthly', price: 88, currency: 'cny' }] },
+      'payment-methods': { methods: [{ id: 'alipay', name: '支付宝', enabled: true }] },
+    });
+    const monitor = makeMonitor(request);
+
+    const plans = await monitor.getPlans();
+    expect(plans.source).toBe('server');
+    expect(plans.plans[0].price).toBe(88);
+
+    const methods = await monitor.getPaymentMethods('zh-CN');
+    expect(methods.methods[0].id).toBe('alipay');
+  });
+
+  it('fall back to the built-in prices offline, and say so', async () => {
+    const monitor = makeMonitor(offlineService());
+    const { plans, source } = await monitor.getPlans();
+    expect(source).toBe('fallback');
+    expect(plans).toHaveLength(4);
+  });
+
+  it('offer no payment method rather than one that would fail at checkout', async () => {
+    const monitor = makeMonitor(offlineService());
+    expect((await monitor.getPaymentMethods()).methods).toEqual([]);
+  });
+});
+
+describe('refreshing', () => {
+  it('exchanges the stored key for a token that expires later', async () => {
+    const first = token.createToken({ userId: 'u1', planId: 'monthly', licenseKey: 'KEY12345', expiresAt: NOW + DAY, issuedAt: NOW });
+    const renewed = token.createToken({ userId: 'u1', planId: 'monthly', licenseKey: 'KEY12345', expiresAt: NOW + 31 * DAY, issuedAt: NOW });
+    writeFileSync(path.join(dir, 'license.enc'), secureStore.encrypt(dir, first));
+
+    const { request, calls } = stubService({
+      'trial/status': { trialUsed: false, trialStart: null, trialEnd: null },
+      'trial/activate': { success: true, trialStart: NOW, trialEnd: NOW + 3 * DAY },
+      '': (body: unknown) => {
+        expect(body).toMatchObject({ licenseKey: 'KEY12345' });
+        return { valid: true, token: renewed };
+      },
+    });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+    expect(monitor.getState().daysRemaining).toBe(1);
+
+    await monitor.refresh();
+    expect(monitor.getState().daysRemaining).toBe(31);
+    expect(calls.some((c) => c.path === '')).toBe(true);
+
+    // And the renewed token is what a restart reads.
+    secureStore.resetCache();
+    const restarted = makeMonitor(offlineService());
+    await restarted.initialize();
+    expect(restarted.getState().daysRemaining).toBe(31);
+  });
+
+  it('leaves the stored licence alone when the service cannot be reached', async () => {
+    const stored = token.createToken({ userId: 'u1', planId: 'monthly', licenseKey: 'KEY12345', expiresAt: NOW + 10 * DAY, issuedAt: NOW });
+    writeFileSync(path.join(dir, 'license.enc'), secureStore.encrypt(dir, stored));
+
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+    const before = monitor.getState().status;
+
+    const result = await monitor.refresh();
+    expect(result.success).toBe(false);
+    // A network failure is not an expiry.
+    expect(monitor.getState().status).toBe(before);
+    expect(readFileSync(path.join(dir, 'license.enc')).length).toBeGreaterThan(0);
+  });
+
+  it('has nothing to refresh without a licence', async () => {
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+    expect((await monitor.refresh()).success).toBe(false);
+  });
+});
+
+describe('signing out', () => {
+  it('removes the token and drops back to unlicensed', async () => {
+    const stored = token.createToken({ userId: 'u1', planId: 'monthly', licenseKey: 'K1234567', expiresAt: NOW + DAY, issuedAt: NOW });
+    writeFileSync(path.join(dir, 'license.enc'), secureStore.encrypt(dir, stored));
+
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+    await monitor.deactivate();
+
+    expect(monitor.getState().status).toBe('unlicensed');
+    secureStore.resetCache();
+    const restarted = makeMonitor(offlineService());
+    await restarted.initialize();
+    expect(restarted.getState().status).toBe('unlicensed');
+  });
+});
+
+describe('state changes', () => {
+  it('are pushed, so the window does not have to poll for them', async () => {
+    const { request } = stubService({
+      'trial/status': { trialUsed: true, trialStart: NOW, trialEnd: NOW + DAY, trialDurationDays: 3 },
+    });
+    const monitor = makeMonitor(request);
+    const seen: string[] = [];
+    monitor.on('state-change', (s: { status: string }) => seen.push(s.status));
+
+    await monitor.initialize();
+    expect(seen.length).toBeGreaterThan(0);
+  });
+});

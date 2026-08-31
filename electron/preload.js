@@ -30,15 +30,39 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateDownloaded: (cb) => ipcRenderer.on('update:downloaded', (_e, v) => cb(v)),
   installUpdate: () => ipcRenderer.invoke('update:install'),
 
-  // Subscription: state is owned by the main process, which persists it
-  subscriptionStatus: () => ipcRenderer.invoke('subscription:getStatus'),
-  subscribe: (plan, paymentMethod) => ipcRenderer.invoke('subscription:subscribe', plan, paymentMethod),
-  cancelAutoRenew: () => ipcRenderer.invoke('subscription:cancel'),
+  // Licensing: the state machine lives in the main process, which owns the
+  // token and talks to the shared license service (docs/LICENSE_SERVICE.md).
+  licenseState: () => ipcRenderer.invoke('license:getState'),
+  licenseActivate: (licenseKey) => ipcRenderer.invoke('license:activate', licenseKey),
+  licenseDeactivate: () => ipcRenderer.invoke('license:deactivate'),
+  licenseRefresh: () => ipcRenderer.invoke('license:refresh'),
+  licenseConfig: () => ipcRenderer.invoke('license:getConfig'),
+  // Pushed whenever the trial, a payment or a background refresh changes it.
+  onLicenseState: (cb) => ipcRenderer.on('license:state-changed', (_e, v) => cb(v)),
+
+  // Payment: plans and methods come from the service, which is the only
+  // place prices and availability are decided.
+  paymentPlans: () => ipcRenderer.invoke('payment:getPlans'),
+  paymentMethods: (lang) => ipcRenderer.invoke('payment:getMethods', lang),
+  paymentCreateOrder: (planId, method) => ipcRenderer.invoke('payment:createOrder', planId, method),
+  paymentOrderStatus: (orderId) => ipcRenderer.invoke('payment:orderStatus', orderId),
+  paymentHistory: () => ipcRenderer.invoke('payment:history'),
+  // A checkout page belongs to the payment provider: it opens in the system
+  // browser, or in a plain child window for the methods that show a QR code.
+  paymentOpenExternal: (url) => ipcRenderer.invoke('payment:openExternal', url),
+  paymentOpenEmbedded: (url) => ipcRenderer.invoke('payment:openEmbedded', url),
+  paymentCloseEmbedded: () => ipcRenderer.invoke('payment:closeEmbedded'),
+  onPaymentWindowClosed: (cb) => ipcRenderer.on('payment:window-closed', () => cb()),
 
   // Host platform
   systemInfo: () => ipcRenderer.invoke('system:info'),
   tempDir: () => ipcRenderer.invoke('system:tempDir'),
   notify: (title, body) => ipcRenderer.invoke('system:notify', title, body),
+
+  removeLicenseListeners: () => {
+    ipcRenderer.removeAllListeners('license:state-changed');
+    ipcRenderer.removeAllListeners('payment:window-closed');
+  },
 
   // Remove all listeners (call on component unmount)
   removeJobListeners: () => {

@@ -55,7 +55,7 @@ const PREVIEW_SECOND_OPTIONS = [
 
 function App() {
   const { t, locale, setLocale } = useTranslation();
-  const subscription = useSubscription();
+  const subscription = useSubscription(locale);
   const [screen, setScreen] = useState<Screen>('editor');
   const [appState, setAppState] = useState<AppState>('empty');
   const [inputPath, setInputPath] = useState<string | null>(null);
@@ -683,16 +683,22 @@ function App() {
 
       {screen === 'subscription' && (
         <SubscriptionPage
-          status={subscription.status}
-          onSubscribe={subscription.subscribe}
-          onCancelAutoRenew={subscription.cancelAutoRenew}
+          state={subscription.state}
+          plans={subscription.plans}
+          plansAreFallback={subscription.plansAreFallback}
+          methods={subscription.methods}
+          trialMsRemaining={subscription.trialMsRemaining}
+          createOrder={subscription.createOrder}
+          watchOrder={subscription.watchOrder}
+          refresh={subscription.refresh}
         />
       )}
 
       {screen === 'settings' && <SettingsPage systemInfo={systemInfo} />}
 
       <SubscriptionStatusBar
-        status={subscription.status}
+        state={subscription.state}
+        trialMsRemaining={subscription.trialMsRemaining}
         loading={subscription.loading}
         onOpen={() => setScreen('subscription')}
       />

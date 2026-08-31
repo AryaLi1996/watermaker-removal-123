@@ -1,12 +1,14 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, nativeTheme, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, nativeTheme, net, protocol, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const { Readable } = require('stream');
 const system = require('./system');
-const subscription = require('./subscription');
+const { SubscriptionMonitor } = require('./subscription-monitor');
+const { createRequest } = require('./license-request');
+const { LICENSE_CONFIG, usingDefaultSigningSecret } = require('./license-config');
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -413,29 +415,92 @@ ipcMain.handle('system:info', async () => ({
 ipcMain.handle('system:tempDir', () => system.tempDir());
 ipcMain.handle('system:notify', (_event, title, body) => system.notify(title, body));
 
-// ─── Subscription state ──────────────────────────────────────────
-// The record lives beside the app's other user data. The renderer asks for
-// it rather than keeping its own copy, so the trial is granted once per
-// install however many windows are open.
-function subscriptionDir() {
-  return app.getPath('userData');
+// ─── Subscription: the shared license service ────────────────────
+// Licensing lives with the service described in docs/LICENSE_SERVICE.md —
+// one Lambda over three DynamoDB tables, shared with the other app on the
+// same account. This process holds the state machine (docs, and
+// subscription-monitor.js) and the renderer asks it, so the trial is
+// resolved once per launch however many windows are open.
+let monitor = null;
+
+function getMonitor() {
+  if (!monitor) {
+    monitor = new SubscriptionMonitor({
+      userDataDir: app.getPath('userData'),
+      request: createRequest(net),
+    });
+    // The renderer does not poll for expiry: a trial running out, a payment
+    // settling or a background refresh all push the new state.
+    monitor.on('state-change', (state) => send('license:state-changed', state));
+  }
+  return monitor;
 }
 
-ipcMain.handle('subscription:getStatus', () => subscription.getStatus(subscriptionDir()));
+ipcMain.handle('license:getState', () => getMonitor().getState());
+ipcMain.handle('license:activate', (_event, licenseKey) => getMonitor().activate(licenseKey));
+ipcMain.handle('license:deactivate', () => getMonitor().deactivate());
+ipcMain.handle('license:refresh', () => getMonitor().refresh());
+ipcMain.handle('license:getConfig', () => ({
+  // Enough for the renderer to explain itself, and nothing secret: the
+  // signing secret stays in this process.
+  verificationUrl: LICENSE_CONFIG.verificationUrl,
+  gracePeriodDays: LICENSE_CONFIG.gracePeriodDays,
+  trialDurationDays: LICENSE_CONFIG.trial.durationDays,
+  orderPollIntervalMs: LICENSE_CONFIG.orderPollIntervalMs,
+  orderPollTimeoutMs: LICENSE_CONFIG.orderPollTimeoutMs,
+  usingDefaultSigningSecret,
+}));
 
-// The payment itself is simulated — see SubscriptionPage. This handler is
-// where a real payment provider's confirmation would be verified before the
-// plan is written.
-ipcMain.handle('subscription:subscribe', (_event, plan, paymentMethod) => {
-  try {
-    return subscription.subscribe(subscriptionDir(), plan, paymentMethod);
-  } catch (err) {
-    console.warn('[subscription] refused:', err.message);
-    return null;
-  }
+ipcMain.handle('payment:getPlans', () => getMonitor().getPlans());
+ipcMain.handle('payment:getMethods', (_event, lang) => getMonitor().getPaymentMethods(lang));
+ipcMain.handle('payment:createOrder', (_event, planId, method) => getMonitor().createOrder(planId, method));
+ipcMain.handle('payment:orderStatus', (_event, orderId) => getMonitor().orderStatus(orderId));
+ipcMain.handle('payment:history', () => getMonitor().paymentHistory());
+
+// Checkout pages are the provider's, not ours, so they are never loaded into
+// the app's own window: `external` opens the system browser, and `embedded`
+// gets a plain child window with no preload and no node access — it shows a
+// QR code and must not be able to reach anything of ours.
+let paymentWindow = null;
+
+function closePaymentWindow() {
+  if (paymentWindow && !paymentWindow.isDestroyed()) paymentWindow.close();
+  paymentWindow = null;
+}
+
+ipcMain.handle('payment:openExternal', async (_event, url) => {
+  if (!/^https:\/\//i.test(String(url || ''))) return false;
+  await shell.openExternal(url);
+  return true;
 });
 
-ipcMain.handle('subscription:cancel', () => subscription.setAutoRenew(subscriptionDir(), false));
+ipcMain.handle('payment:openEmbedded', (_event, url) => {
+  if (!/^https:\/\//i.test(String(url || ''))) return false;
+  closePaymentWindow();
+  paymentWindow = new BrowserWindow({
+    width: 480,
+    height: 720,
+    parent: targetWindow() ?? undefined,
+    modal: false,
+    title: app.getName(),
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#18181b' : '#fafafa',
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  paymentWindow.on('closed', () => {
+    paymentWindow = null;
+    // The renderer keeps polling either way — the window closing is not the
+    // same as the payment failing — but it should stop showing a dialog for
+    // a window that is no longer there.
+    send('payment:window-closed');
+  });
+  void paymentWindow.loadURL(url);
+  return true;
+});
+
+ipcMain.handle('payment:closeEmbedded', () => {
+  closePaymentWindow();
+  return true;
+});
 
 // ─── Start full processing job ────────────────────────────────────
 ipcMain.handle('job:start', (_event, payload) => {
@@ -587,6 +652,24 @@ app.whenReady().then(() => {
   // package.json's `name` is the npm one — lower case and hyphenated — so
   // without this the app introduces itself as "smoothvoice-watermark-remover".
   app.setName(PRODUCT_NAME);
+
+  // The signing secret is in public source, so a build still using it can
+  // have its license tokens forged offline. The service prints the matching
+  // warning on its side; this is the client half.
+  if (usingDefaultSigningSecret) {
+    console.warn(
+      '[license] LICENSE_SIGNING_SECRET is not set — this build verifies license '
+      + 'tokens with the public default from license-config.js. Tokens can be forged '
+      + 'offline. Set it to the same private value as the deployed service before '
+      + 'accepting real payments.',
+    );
+  }
+
+  // Resolving the trial talks to the service, so it is deliberately not
+  // awaited: an unreachable service must not hold up the window.
+  void getMonitor().initialize().catch((err) => {
+    console.warn('[license] could not initialise:', err.message);
+  });
   protocol.handle(MEDIA_SCHEME, handleMediaRequest);
   createWindow();
   initAutoUpdate();
@@ -602,6 +685,8 @@ app.on('window-all-closed', () => {
 
 // Stop any running job and clean up preview temp files when the app quits.
 app.on('before-quit', () => {
+  if (monitor) monitor.stop();
+  closePaymentWindow();
   if (currentJob) {
     currentJob.cancelled = true;
     currentJob.child.kill('SIGTERM');

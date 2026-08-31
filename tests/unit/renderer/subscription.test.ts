@@ -1,180 +1,71 @@
 /**
- * Unit tests for the subscription domain: what each plan costs, what state a
- * stored record is in at a given moment, and what that state unlocks.
+ * The renderer's side of the subscription: what a license state unlocks, what
+ * it is called, and how it is formatted.
+ *
+ * Deliberately thin. The dates, the prices and the token all belong to the
+ * main process and the license service — anything this file could assert
+ * about them would be a second opinion, which is how two answers start to
+ * disagree.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  applyPurchase,
   entitlementsFor,
+  formatPrice,
   formatRemaining,
-  isPaidPlan,
-  MONTHLY_PRICE,
-  planById,
-  planDiscountKey,
+  isLicensed,
+  LOADING_STATE,
+  PLAN_ORDER,
+  planBadgeKey,
   planNameKey,
-  planPriceKey,
-  PLANS,
-  priceFor,
+  planTaglineKey,
   remainingParts,
-  startTrial,
+  serviceLang,
   statusNameKey,
-  statusOf,
-  TRIAL_DAYS,
-  type Subscription,
+  type LicenseState,
+  type LicenseStatus,
+  type Plan,
+  type TrialState,
 } from '../../../renderer/src/subscription';
 import { collectKeys, setLocale, t } from '../../../renderer/src/i18n';
 import en from '../../../renderer/src/i18n/en.json';
 
 const DAY = 24 * 60 * 60 * 1000;
-const NOW = Date.parse('2026-03-01T12:00:00.000Z');
 
-describe('plans', () => {
-  it('prices every plan off the monthly rate at its discount', () => {
-    expect(MONTHLY_PRICE).toBe(99);
-    expect(planById('monthly').price).toBe(99);
-    expect(planById('quarterly').price).toBe(282);
-    expect(planById('halfyear').price).toBe(534);
-    expect(planById('yearly').price).toBe(1009);
-  });
-
-  it('rounds a price down to the yuan', () => {
-    // 99 × 12 × 0.85 is 1009.80: charging 1010 would be more than the
-    // advertised 15% off, and the card is specified to read 1009.
-    expect(priceFor(12, 0.85)).toBe(1009);
-    expect(priceFor(1, 1)).toBe(99);
-  });
-
-  it('offers four plans, cheapest commitment first', () => {
-    expect(PLANS.map((p) => p.id)).toEqual(['monthly', 'quarterly', 'halfyear', 'yearly']);
-    expect(PLANS.map((p) => p.months)).toEqual([1, 3, 6, 12]);
-  });
-
-  it('badges the quarterly plan as the recommended one', () => {
-    expect(planById('quarterly').badgeKey).toBe('subscription.badgePopular');
-    expect(planById('monthly').badgeKey).toBeNull();
-  });
-
-  it('works out what a discounted plan costs per month', () => {
-    expect(planById('yearly').monthlyEquivalent).toBeCloseTo(84.1, 1);
-    expect(planById('yearly').monthlyEquivalent).toBeLessThan(MONTHLY_PRICE);
-  });
-
-  it('names every plan in both languages', () => {
-    for (const plan of PLANS) {
-      for (const locale of ['en', 'zh'] as const) {
-        setLocale(locale);
-        for (const key of [planNameKey(plan.id), planDiscountKey(plan.id), planPriceKey(plan.id)]) {
-          expect(t(key, { price: plan.price }), `${key} in ${locale}`).not.toContain('subscription.');
-        }
-      }
-    }
-  });
-
-  it('defines every subscription string it renders', () => {
-    // The page reads keys built from a plan id; a missing one would surface
-    // to the user as the key itself.
-    const keys = collectKeys(en);
-    for (const plan of PLANS) {
-      for (const key of [planNameKey(plan.id), planDiscountKey(plan.id), planPriceKey(plan.id)]) {
-        expect(keys, key).toContain(key);
-      }
-    }
-    expect(keys).toContain('subscription.barTrial');
-    expect(keys).toContain('subscription.paySuccess');
-  });
+const trial = (over: Partial<TrialState> = {}): TrialState => ({
+  used: false, active: false, start: null, end: null, msRemaining: 0, durationDays: 3, source: 'none', ...over,
 });
 
-describe('the trial', () => {
-  it('runs for three days from the first launch', () => {
-    const trial = startTrial(NOW);
-    expect(trial.plan).toBe('trial');
-    expect(Date.parse(trial.endDate) - Date.parse(trial.startDate)).toBe(TRIAL_DAYS * DAY);
-    expect(trial.autoRenew).toBe(false);
-  });
-
-  it('reports as running, with time left, while it lasts', () => {
-    const status = statusOf(startTrial(NOW), NOW + DAY);
-    expect(status.trialing).toBe(true);
-    expect(status.subscribed).toBe(false);
-    expect(status.expired).toBe(false);
-    expect(status.msRemaining).toBe(2 * DAY);
-  });
-
-  it('reports as run out once the end date passes, with nothing to write back', () => {
-    const trial = startTrial(NOW);
-    const status = statusOf(trial, NOW + 4 * DAY);
-    expect(status.plan).toBe('none');
-    expect(status.trialing).toBe(false);
-    expect(status.expired).toBe(true);
-    expect(status.msRemaining).toBe(0);
-    // The record itself is untouched: expiry is a fact about the date.
-    expect(trial.plan).toBe('trial');
-  });
+const state = (status: LicenseStatus, over: Partial<LicenseState> = {}): LicenseState => ({
+  ...LOADING_STATE, status, trial: trial(), ...over,
 });
 
-describe('buying a plan', () => {
-  it('runs from now for as many months as the plan covers', () => {
-    const bought = applyPurchase(null, 'quarterly', NOW);
-    expect(bought.plan).toBe('quarterly');
-    expect(bought.autoRenew).toBe(true);
-    expect(bought.endDate).toBe(new Date('2026-06-01T12:00:00.000Z').toISOString());
+describe('what a state unlocks', () => {
+  it('counts the grace period as licensed, so an outage does not lock anyone out', () => {
+    expect(isLicensed('active')).toBe(true);
+    expect(isLicensed('grace_period')).toBe(true);
+    expect(isLicensed('expired')).toBe(false);
+    expect(isLicensed('unlicensed')).toBe(false);
+    expect(isLicensed('loading')).toBe(false);
   });
 
-  it('replaces a trial rather than adding to it', () => {
-    const bought = applyPurchase(startTrial(NOW), 'monthly', NOW);
-    expect(bought.endDate).toBe(new Date('2026-04-01T12:00:00.000Z').toISOString());
+  it('unlocks the paid features for a license', () => {
+    const limits = entitlementsFor(state('active'));
+    expect(limits.temporalFill).toBe(true);
+    expect(limits.deepLearning).toBe(true);
+    expect(limits.maxPreviewSeconds).toBe(Infinity);
+    expect(limits.batchLimit).toBe(Infinity);
   });
 
-  it('carries over the days left on a paid plan when renewing early', () => {
-    const monthly = applyPurchase(null, 'monthly', NOW);
-    // Renew a fortnight in: the remaining two weeks must not be lost.
-    const renewed = applyPurchase(monthly, 'monthly', NOW + 14 * DAY);
-    expect(Date.parse(renewed.endDate)).toBeGreaterThan(Date.parse(monthly.endDate));
-    expect(renewed.endDate).toBe(new Date('2026-05-01T12:00:00.000Z').toISOString());
+  it('keeps them through the grace period', () => {
+    expect(entitlementsFor(state('grace_period')).temporalFill).toBe(true);
   });
 
-  it('starts from today when the previous plan has already run out', () => {
-    const expired: Subscription = applyPurchase(null, 'monthly', NOW - 90 * DAY);
-    const renewed = applyPurchase(expired, 'monthly', NOW);
-    expect(renewed.endDate).toBe(new Date('2026-04-01T12:00:00.000Z').toISOString());
-  });
-
-  it('reports as subscribed for the plan that was bought', () => {
-    const status = statusOf(applyPurchase(null, 'yearly', NOW), NOW + 30 * DAY);
-    expect(status.plan).toBe('yearly');
-    expect(status.subscribed).toBe(true);
-    expect(status.autoRenew).toBe(true);
-    expect(isPaidPlan(status.plan)).toBe(true);
-  });
-});
-
-describe('reading a record', () => {
-  it('treats no record at all as nothing running', () => {
-    const status = statusOf(null, NOW);
-    expect(status.plan).toBe('none');
-    expect(status.expired).toBe(false);
-    expect(status.subscribed).toBe(false);
-  });
-
-  it('treats an unreadable end date as run out rather than as forever', () => {
-    const broken: Subscription = { plan: 'yearly', startDate: 'x', endDate: 'not a date', autoRenew: true };
-    expect(statusOf(broken, NOW).subscribed).toBe(false);
-    expect(statusOf(broken, NOW).expired).toBe(true);
-  });
-
-  it('keeps the plan running after auto-renewal is cancelled', () => {
-    const bought = applyPurchase(null, 'halfyear', NOW);
-    const status = statusOf({ ...bought, autoRenew: false }, NOW + DAY);
-    expect(status.subscribed).toBe(true);
-    expect(status.autoRenew).toBe(false);
-  });
-});
-
-describe('entitlements', () => {
-  it('withholds the paid features from a trial and from nobody at all', () => {
-    for (const record of [startTrial(NOW), null]) {
-      const limits = entitlementsFor(statusOf(record, NOW));
+  it('withholds them from a trial, and from no subscription at all', () => {
+    // The trial buys time to evaluate the basics rather than a preview of
+    // the paid features — one constant changes that.
+    for (const s of [state('unlicensed', { trial: trial({ used: true, active: true }) }), state('unlicensed'), state('expired')]) {
+      const limits = entitlementsFor(s);
       expect(limits.temporalFill).toBe(false);
       expect(limits.deepLearning).toBe(false);
       expect(limits.maxPreviewSeconds).toBe(1);
@@ -182,17 +73,86 @@ describe('entitlements', () => {
     }
   });
 
-  it('unlocks them for a paid plan', () => {
-    const limits = entitlementsFor(statusOf(applyPurchase(null, 'monthly', NOW), NOW));
-    expect(limits.temporalFill).toBe(true);
-    expect(limits.deepLearning).toBe(true);
-    expect(limits.maxPreviewSeconds).toBe(Infinity);
-    expect(limits.batchLimit).toBe(Infinity);
+  it('withholds them while the state is still being read', () => {
+    expect(entitlementsFor(LOADING_STATE).temporalFill).toBe(false);
+  });
+});
+
+describe('naming the state', () => {
+  beforeEach(() => setLocale('en'));
+
+  it('names the plan while it is running', () => {
+    const licensed = state('active', {
+      payload: { userId: 'u', planId: 'annual', licenseKey: 'K', expiresAt: 0, issuedAt: 0 },
+    });
+    expect(statusNameKey(licensed)).toBe('subscription.planYearly');
+    expect(t(statusNameKey(licensed))).toBe('Yearly');
   });
 
-  it('takes them away again the moment a plan runs out', () => {
-    const bought = applyPurchase(null, 'monthly', NOW);
-    expect(entitlementsFor(statusOf(bought, NOW + 60 * DAY)).temporalFill).toBe(false);
+  it('distinguishes the grace period from an expiry', () => {
+    expect(statusNameKey(state('grace_period'))).toBe('subscription.statusGrace');
+    expect(statusNameKey(state('expired'))).toBe('subscription.statusExpired');
+  });
+
+  it('names the trial while it runs, and after it has been used', () => {
+    expect(statusNameKey(state('unlicensed', { trial: trial({ used: true, active: true }) })))
+      .toBe('subscription.statusTrial');
+    expect(statusNameKey(state('unlicensed', { trial: trial({ used: true, active: false }) })))
+      .toBe('subscription.statusTrialEnded');
+  });
+
+  it('says nothing definite before the first answer arrives', () => {
+    expect(statusNameKey(LOADING_STATE)).toBe('subscription.statusLoading');
+  });
+
+  it('falls back to "not subscribed" for a device with no trial record', () => {
+    expect(statusNameKey(state('unlicensed'))).toBe('subscription.statusNone');
+  });
+});
+
+describe('plan labels', () => {
+  it('name and describe every plan the service offers, in both languages', () => {
+    for (const id of PLAN_ORDER) {
+      for (const locale of ['en', 'zh'] as const) {
+        setLocale(locale);
+        expect(t(planNameKey(id)), `${id} in ${locale}`).not.toContain('subscription.');
+        expect(t(planTaglineKey(id)), `${id} tagline in ${locale}`).not.toContain('subscription.');
+      }
+    }
+  });
+
+  it('badges the recommended plans and leaves the entry one plain', () => {
+    expect(planBadgeKey('monthly')).toBeNull();
+    expect(planBadgeKey('quarterly')).toBe('subscription.badgePopular');
+    expect(planBadgeKey('annual')).toBe('subscription.badgeBest');
+  });
+
+  it('defines every key the page builds from a plan id', () => {
+    const keys = collectKeys(en);
+    for (const id of PLAN_ORDER) {
+      expect(keys, planNameKey(id)).toContain(planNameKey(id));
+      expect(keys, planTaglineKey(id)).toContain(planTaglineKey(id));
+    }
+  });
+});
+
+describe('prices', () => {
+  const plan = (over: Partial<Plan>): Pick<Plan, 'price' | 'currency'> =>
+    ({ price: 99, currency: 'cny', ...over }) as Plan;
+
+  it('render yuan with the symbol people expect', () => {
+    expect(formatPrice(plan({}), 'zh')).toBe('¥99');
+    expect(formatPrice(plan({}), 'en')).toBe('¥99');
+  });
+
+  it('render another currency the service might be configured with', () => {
+    // The client hardcodes no amount, so it must not hardcode one currency
+    // either: a re-configured service should not need a client release.
+    expect(formatPrice(plan({ price: 14, currency: 'usd' }), 'en')).toContain('14');
+  });
+
+  it('survive a currency code that means nothing', () => {
+    expect(formatPrice(plan({ price: 5, currency: 'zzz' }), 'en')).toContain('5');
   });
 });
 
@@ -215,13 +175,9 @@ describe('the countdown', () => {
   });
 });
 
-describe('naming the state', () => {
-  beforeEach(() => setLocale('en'));
-
-  it('names a paid plan, a trial and an ended one', () => {
-    expect(statusNameKey(statusOf(applyPurchase(null, 'yearly', NOW), NOW))).toBe('subscription.planYearly');
-    expect(statusNameKey(statusOf(startTrial(NOW), NOW))).toBe('subscription.statusTrial');
-    expect(statusNameKey(statusOf(startTrial(NOW), NOW + 5 * DAY))).toBe('subscription.statusExpired');
-    expect(statusNameKey(statusOf(null, NOW))).toBe('subscription.statusNone');
+describe('talking to the service', () => {
+  it('sends the language tag it localises payment methods by', () => {
+    expect(serviceLang('zh')).toBe('zh-CN');
+    expect(serviceLang('en')).toBe('en-US');
   });
 });

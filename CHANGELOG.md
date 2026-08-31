@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Subscriptions are now held by the shared license service**, not by this
+  app. The plans, the free trial, the orders and the licence itself live with
+  the Lambda + DynamoDB service documented in
+  [`docs/LICENSE_SERVICE.md`](docs/LICENSE_SERVICE.md), which this app shares
+  with SootheVoice rather than deploying its own. Nothing here provisions
+  infrastructure: the client points at the deployed endpoint, which may be
+  either the Lambda Function URL or an API Gateway stage in front of the same
+  function.
+  - **Payment is real.** Buying a plan creates an order with the service,
+    opens the provider's checkout — the system browser, or a separate window
+    for the methods that show a QR code — and then waits. The app no longer
+    decides that a payment succeeded: the provider's webhook tells the
+    service, and the app finds out by polling the order. The simulated "I
+    have paid" button is gone, along with the drawn QR code.
+  - **Prices come from the service** and round half-up, so the plans are
+    ¥99 / ¥282 / ¥535 / ¥1010 — previously ¥534 and ¥1009, because this app
+    rounded down. Plan ids follow it too: `semi_annual` and `annual` were
+    `halfyear` and `yearly`.
+  - **The free trial is per machine, not per install.** It is keyed by a
+    hardware-derived device id held by the service, so reinstalling no longer
+    grants another three days. A first launch with no network still starts a
+    trial locally, and the service adopts it on the next sync.
+  - **A licence survives being offline.** The signed token is stored
+    encrypted and machine-bound, and stays valid for three days past expiry —
+    a grace period, so an unreachable service or a flight cannot lock someone
+    out of what they paid for. The status bar keeps prompting to renew
+    throughout it. A clock wound backwards is detected and withholds access.
+  - **There is no auto-renewal to cancel**: the service takes one-off
+    payments and extends the expiry, so buying again adds to the current end
+    date. The cancel-auto-renewal switch has gone with the concept.
 - **The app is now SmoothVoice Watermark Remover** — 舒音水印去除 in Chinese.
   The name follows the interface language everywhere it is shown in the app,
   including the window title, which the page sets from the active locale. The
