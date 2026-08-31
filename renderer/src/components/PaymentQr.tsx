@@ -62,7 +62,9 @@ export default function PaymentQr({ seed, color, size = 148 }: PaymentQrProps) {
       viewBox={`0 0 ${MODULES} ${MODULES}`}
       role="img"
       aria-hidden="true"
-      style={{ background: '#fff', borderRadius: 6, padding: 4, boxSizing: 'content-box' }}
+      // White whatever the theme: a payment code is read by a camera, and
+      // the quiet zone around it is part of the format, not decoration.
+      style={{ background: '#ffffff', borderRadius: 6, padding: 4, boxSizing: 'content-box' }}
     >
       {cells.map(({ x, y }) => (
         <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} fill={color} />

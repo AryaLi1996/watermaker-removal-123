@@ -76,34 +76,34 @@ export default function SubscriptionPage({ status, onSubscribe, onCancelAutoRene
   return (
     <div
       data-testid="subscription-page"
-      style={{ flex: 1, overflowY: 'auto', background: '#18181b', padding: '28px 32px 40px' }}
+      style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)', padding: '28px 32px 40px' }}
     >
       <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
         {/* Header: what is running right now */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <h1 style={{ color: '#f4f4f5', fontSize: 20, fontWeight: 600 }}>💎 {t('subscription.heading')}</h1>
-          <p data-testid="subscription-status" style={{ color: '#a1a1aa', fontSize: 12 }}>
+          <h1 style={{ color: 'var(--text)', fontSize: 20, fontWeight: 600 }}>💎 {t('subscription.heading')}</h1>
+          <p data-testid="subscription-status" style={{ color: 'var(--text-muted)', fontSize: 12 }}>
             {t('subscription.statusLabel')}: {t(statusNameKey(status))}
             {status.msRemaining > 0 && ` (${formatRemaining(status.msRemaining, t)})`}
           </p>
-          <p style={{ color: '#71717a', fontSize: 12 }}>{t('subscription.subheading')}</p>
+          <p style={{ color: 'var(--text-faint)', fontSize: 12 }}>{t('subscription.subheading')}</p>
         </div>
 
         {/* A trial that has run out is the one moment this page has to explain itself. */}
         {status.expired && !status.subscribed && (
           <div
             data-testid="trial-ended"
-            style={{ background: '#27272a', border: '1px solid #3f3f46', borderRadius: 8, padding: '12px 14px' }}
+            style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px' }}
           >
-            <p style={{ color: '#f4f4f5', fontSize: 12, fontWeight: 500 }}>{t('subscription.trialEndedTitle')}</p>
-            <p style={{ color: '#a1a1aa', fontSize: 11, marginTop: 4 }}>{t('subscription.trialEndedBody')}</p>
+            <p style={{ color: 'var(--text)', fontSize: 12, fontWeight: 500 }}>{t('subscription.trialEndedTitle')}</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 4 }}>{t('subscription.trialEndedBody')}</p>
           </div>
         )}
 
         {confirmed && (
           <div
             data-testid="subscribe-success"
-            style={{ background: '#052e16', border: '1px solid #15803d', borderRadius: 8, padding: '10px 14px', color: '#86efac', fontSize: 12 }}
+            style={{ background: 'var(--success-bg)', border: '1px solid var(--success-border)', borderRadius: 8, padding: '10px 14px', color: 'var(--success-text)', fontSize: 12 }}
           >
             {t('subscription.paySuccess')}
           </div>
@@ -130,7 +130,7 @@ export default function SubscriptionPage({ status, onSubscribe, onCancelAutoRene
 
         {/* Payment method */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
             {t('subscription.paymentHeading')}
           </p>
           <div style={{ display: 'flex', gap: 10 }}>
@@ -144,8 +144,8 @@ export default function SubscriptionPage({ status, onSubscribe, onCancelAutoRene
                   onClick={() => setMethod(id)}
                   style={{
                     background: active ? METHOD_COLOR[id] : 'transparent',
-                    border: `1px solid ${active ? METHOD_COLOR[id] : '#3f3f46'}`,
-                    borderRadius: 6, padding: '6px 16px', color: active ? '#fff' : '#d4d4d8',
+                    border: `1px solid ${active ? METHOD_COLOR[id] : 'var(--border)'}`,
+                    borderRadius: 6, padding: '6px 16px', color: active ? 'var(--accent-contrast)' : 'var(--text-secondary)',
                     fontSize: 12, cursor: 'pointer',
                   }}
                 >
@@ -154,16 +154,16 @@ export default function SubscriptionPage({ status, onSubscribe, onCancelAutoRene
               );
             })}
           </div>
-          <p style={{ color: '#71717a', fontSize: 11 }}>{t('subscription.paymentHint')}</p>
+          <p style={{ color: 'var(--text-faint)', fontSize: 11 }}>{t('subscription.paymentHint')}</p>
         </div>
 
         {/* What the money buys */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
             {t('subscription.benefitsHeading')}
           </p>
           {BENEFITS.map((key) => (
-            <p key={key} style={{ color: '#d4d4d8', fontSize: 12 }}>· {t(key)}</p>
+            <p key={key} style={{ color: 'var(--text-secondary)', fontSize: 12 }}>· {t(key)}</p>
           ))}
         </div>
 
@@ -171,14 +171,14 @@ export default function SubscriptionPage({ status, onSubscribe, onCancelAutoRene
         {isPaidPlan(status.plan) && (
           <div
             data-testid="manage-subscription"
-            style={{ background: '#27272a', border: '1px solid #3f3f46', borderRadius: 8, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}
+            style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}
           >
-            <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+            <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
               {t('subscription.manageHeading')}
             </p>
-            <p style={{ color: '#f4f4f5', fontSize: 13 }}>{t(planNameKey(status.plan))}</p>
-            <p style={{ color: '#a1a1aa', fontSize: 11 }}>{t('subscription.expiresOn', { date: endDate })}</p>
-            <p style={{ color: status.autoRenew ? '#a5b4fc' : '#71717a', fontSize: 11 }}>
+            <p style={{ color: 'var(--text)', fontSize: 13 }}>{t(planNameKey(status.plan))}</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('subscription.expiresOn', { date: endDate })}</p>
+            <p style={{ color: status.autoRenew ? 'var(--accent-emphasis)' : 'var(--text-faint)', fontSize: 11 }}>
               {t(status.autoRenew ? 'subscription.autoRenewOn' : 'subscription.autoRenewOff')}
             </p>
             {status.autoRenew ? (
@@ -187,14 +187,14 @@ export default function SubscriptionPage({ status, onSubscribe, onCancelAutoRene
                 onClick={() => { void cancelRenewal(); }}
                 style={{
                   alignSelf: 'flex-start', marginTop: 4, background: 'transparent',
-                  border: '1px solid #3f3f46', borderRadius: 6, padding: '5px 14px',
-                  color: '#d4d4d8', fontSize: 11, cursor: 'pointer',
+                  border: '1px solid var(--border)', borderRadius: 6, padding: '5px 14px',
+                  color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer',
                 }}
               >
                 {t('subscription.cancelAutoRenew')}
               </button>
             ) : cancelled && (
-              <p data-testid="auto-renew-cancelled" style={{ color: '#71717a', fontSize: 11 }}>
+              <p data-testid="auto-renew-cancelled" style={{ color: 'var(--text-faint)', fontSize: 11 }}>
                 {t('subscription.autoRenewCancelled')}
               </p>
             )}
@@ -202,14 +202,14 @@ export default function SubscriptionPage({ status, onSubscribe, onCancelAutoRene
         )}
 
         {/* FAQ and the refund policy */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid #27272a', paddingTop: 16 }}>
-          <p style={{ color: '#a1a1aa', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid var(--surface)', paddingTop: 16 }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
             ❓ {t('subscription.faqHeading')}
           </p>
           {FAQ.map(({ q, a }) => (
             <details key={q}>
-              <summary style={{ color: '#d4d4d8', fontSize: 12, cursor: 'pointer', padding: '4px 0' }}>{t(q)}</summary>
-              <p style={{ color: '#71717a', fontSize: 11, paddingBottom: 6 }}>{t(a)}</p>
+              <summary style={{ color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer', padding: '4px 0' }}>{t(q)}</summary>
+              <p style={{ color: 'var(--text-faint)', fontSize: 11, paddingBottom: 6 }}>{t(a)}</p>
             </details>
           ))}
         </div>
@@ -223,19 +223,19 @@ export default function SubscriptionPage({ status, onSubscribe, onCancelAutoRene
           aria-modal="true"
           aria-label={t('subscription.payTitle')}
           style={{
-            position: 'fixed', inset: 0, background: 'rgba(9,9,11,0.8)', display: 'flex',
+            position: 'fixed', inset: 0, background: 'var(--overlay)', display: 'flex',
             alignItems: 'center', justifyContent: 'center', zIndex: 50,
           }}
         >
           <div
             style={{
-              background: '#27272a', border: '1px solid #3f3f46', borderRadius: 10,
+              background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
               padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center',
               gap: 12, minWidth: 280,
             }}
           >
-            <p style={{ color: '#f4f4f5', fontSize: 14, fontWeight: 500 }}>{t('subscription.payTitle')}</p>
-            <p data-testid="payment-summary" style={{ color: '#a1a1aa', fontSize: 12 }}>
+            <p style={{ color: 'var(--text)', fontSize: 14, fontWeight: 500 }}>{t('subscription.payTitle')}</p>
+            <p data-testid="payment-summary" style={{ color: 'var(--text-muted)', fontSize: 12 }}>
               {t('subscription.paySummary', {
                 plan: t(planNameKey(paying.id)),
                 price: paying.price,
@@ -243,7 +243,7 @@ export default function SubscriptionPage({ status, onSubscribe, onCancelAutoRene
               })}
             </p>
             <PaymentQr seed={`${paying.id}:${method}`} color={METHOD_COLOR[method]} />
-            <p style={{ color: '#71717a', fontSize: 10, maxWidth: 240, textAlign: 'center' }}>
+            <p style={{ color: 'var(--text-faint)', fontSize: 10, maxWidth: 240, textAlign: 'center' }}>
               {t('subscription.paySimulated')}
             </p>
             <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
@@ -251,8 +251,8 @@ export default function SubscriptionPage({ status, onSubscribe, onCancelAutoRene
                 data-testid="payment-cancel"
                 onClick={() => setPaying(null)}
                 style={{
-                  background: 'transparent', border: '1px solid #3f3f46', borderRadius: 6,
-                  padding: '6px 16px', color: '#a1a1aa', fontSize: 12, cursor: 'pointer',
+                  background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
+                  padding: '6px 16px', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer',
                 }}
               >
                 {t('subscription.payCancel')}
@@ -261,8 +261,8 @@ export default function SubscriptionPage({ status, onSubscribe, onCancelAutoRene
                 data-testid="payment-confirm"
                 onClick={() => { void confirmPayment(); }}
                 style={{
-                  background: '#6366f1', border: 'none', borderRadius: 6, padding: '6px 16px',
-                  color: '#fff', fontSize: 12, fontWeight: 500, cursor: 'pointer',
+                  background: 'var(--accent)', border: 'none', borderRadius: 6, padding: '6px 16px',
+                  color: 'var(--accent-contrast)', fontSize: 12, fontWeight: 500, cursor: 'pointer',
                 }}
               >
                 {t('subscription.payConfirm')}

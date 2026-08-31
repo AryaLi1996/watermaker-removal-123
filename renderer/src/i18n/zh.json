@@ -1,7 +1,21 @@
 {
   "app": {
-    "title": "视频水印去除工具",
+    "name": "舒音水印去除",
     "language": "语言"
+  },
+  "settings": {
+    "nav": "设置",
+    "heading": "设置",
+    "appearance": "外观设置",
+    "appearanceHint": "选择应用的外观，“跟随系统”将随系统设置变化。",
+    "theme": "主题",
+    "theme_light": "亮色",
+    "theme_dark": "暗色",
+    "theme_system": "跟随系统",
+    "themeFollowing": "当前跟随系统：{resolved}",
+    "about": "关于",
+    "aboutName": "舒音水印去除",
+    "version": "版本 {version}"
   },
   "file": {
     "load": "加载视频",

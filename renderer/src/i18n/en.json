@@ -1,7 +1,21 @@
 {
   "app": {
-    "title": "Watermark Remover",
+    "name": "SmoothVoice Watermark Remover",
     "language": "Language"
+  },
+  "settings": {
+    "nav": "Settings",
+    "heading": "Settings",
+    "appearance": "Appearance",
+    "appearanceHint": "Choose how the app looks. \"System\" follows your computer.",
+    "theme": "Theme",
+    "theme_light": "Light",
+    "theme_dark": "Dark",
+    "theme_system": "System",
+    "themeFollowing": "Following your system: {resolved}",
+    "about": "About",
+    "aboutName": "SmoothVoice Watermark Remover",
+    "version": "Version {version}"
   },
   "file": {
     "load": "Load video",

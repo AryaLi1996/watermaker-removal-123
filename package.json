@@ -1,7 +1,7 @@
 {
-  "name": "watermark-remover",
+  "name": "smoothvoice-watermark-remover",
   "version": "1.1.0",
-  "description": "Desktop video watermark removal tool",
+  "description": "SmoothVoice desktop video watermark removal tool",
   "author": "pandac.in",
   "main": "electron/main.js",
   "scripts": {
@@ -38,9 +38,9 @@
     "wait-on": "^9.0.4"
   },
   "build": {
-    "appId": "com.watermark-remover.app",
-    "productName": "Watermark Remover",
-    "copyright": "Copyright \u00a9 2026 pandac.in",
+    "appId": "com.smoothvoice.watermark-remover",
+    "productName": "SmoothVoice Watermark Remover",
+    "copyright": "Copyright © 2026 pandac.in",
     "directories": {
       "buildResources": "build",
       "output": "release"

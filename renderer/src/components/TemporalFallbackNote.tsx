@@ -25,11 +25,11 @@ export default function TemporalFallbackNote({ report }: { report: TemporalFallb
     <p
       data-testid="temporal-fallback-note"
       style={{
-        background: '#422006',
-        border: '1px solid #a16207',
+        background: 'var(--warn-bg)',
+        border: '1px solid var(--warn-border)',
         borderRadius: 4,
         padding: '6px 8px',
-        color: '#fde68a',
+        color: 'var(--warn-text)',
         fontSize: 11,
         lineHeight: 1.5,
       }}

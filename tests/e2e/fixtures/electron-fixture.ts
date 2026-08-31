@@ -53,6 +53,11 @@ export const test = base.extend<ElectronFixtures, ElectronOptions>({
     // Pin the language: the app otherwise follows the host's system locale, so
     // assertions on visible text would depend on the machine running the suite.
     await window.evaluate(() => window.localStorage.setItem('watermark-remover:locale', 'en'));
+    // Pin the theme for the same reason: without a stored preference the app
+    // follows the runner's system setting, so the docs screenshots — and
+    // anything a future test asserts about colour — would depend on the
+    // machine. tests/e2e/settings.spec.ts clears it to test the default.
+    await window.evaluate(() => window.localStorage.setItem('theme-preference', 'dark'));
     // Pin the subscription too: the features these specs drive — temporal
     // fill, the longer previews — need a plan, and a trial that had already
     // run out in this container would silently grey them out.

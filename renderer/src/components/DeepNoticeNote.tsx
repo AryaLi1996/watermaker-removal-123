@@ -30,11 +30,11 @@ export default function DeepNoticeNote({ notice }: { notice: DeepNotice | null }
     <div
       data-testid="deep-notice"
       style={{
-        background: fallback ? '#422006' : '#1e1b4b',
-        border: `1px solid ${fallback ? '#a16207' : '#312e81'}`,
+        background: fallback ? 'var(--warn-bg)' : 'var(--note-bg)',
+        border: `1px solid ${fallback ? 'var(--warn-border)' : 'var(--accent-soft)'}`,
         borderRadius: 4,
         padding: '6px 8px',
-        color: fallback ? '#fde68a' : '#c7d2fe',
+        color: fallback ? 'var(--warn-text)' : 'var(--accent-soft-text)',
         fontSize: 11,
         lineHeight: 1.5,
       }}

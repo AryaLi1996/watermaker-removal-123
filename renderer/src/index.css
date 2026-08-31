@@ -1,5 +1,120 @@
 @import "tailwindcss";
 
+/* Tailwind v4 takes its dark-variant configuration from CSS, not a config
+   file: this points `dark:` at the class ThemeProvider sets, rather than the
+   media query, so the in-app choice wins over the system one. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Theme ────────────────────────────────────────────────────────────────
+   Every colour in the app comes from one of these. `:root` carries the light
+   theme; `.dark` overrides it. ThemeProvider puts exactly one of those two
+   classes on <html>, so a token always resolves — including before React has
+   mounted, because index.html sets the class from storage first.
+
+   The names say what a colour is for, not what it looks like: a component
+   asking for `--text-muted` gets something readable in either theme, which is
+   the whole point of routing them through here.
+
+   The canvas tokens are the deliberate exception. The video preview sits on
+   black in both themes — a light surround changes how the footage reads, and
+   judging a watermark against it is the one thing this app is for — so those
+   tokens are the same in both blocks rather than flipping with the rest. */
+:root {
+  /* Surfaces */
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --surface-translucent: rgba(255, 255, 255, 0.88);
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --overlay: rgba(63, 63, 70, 0.55);
+
+  /* Text, most prominent first */
+  --text: #18181b;
+  --text-secondary: #3f3f46;
+  --text-muted: #52525b;
+  --text-faint: #71717a;
+  --text-disabled: #a1a1aa;
+
+  /* Accent */
+  --accent: #6366f1;
+  --accent-contrast: #ffffff;
+  --accent-soft: #e0e7ff;
+  --accent-soft-text: #312e81;
+  --accent-link: #4f46e5;
+  --accent-emphasis: #4338ca;
+  --accent-disabled-bg: #e0e7ff;
+  --accent-disabled-text: #a5b4fc;
+  --note-bg: #eef2ff;
+  --note-border: #c7d2fe;
+
+  /* States */
+  --warn-bg: #fefce8;
+  --warn-border: #facc15;
+  --warn-text: #854d0e;
+  --success-bg: #f0fdf4;
+  --success-border: #86efac;
+  --success-text: #15803d;
+  --danger-bg: #fef2f2;
+  --danger-border: #fecaca;
+  --danger-text: #b91c1c;
+  --danger-action: #dc2626;
+  --info-bg: #f1f5f9;
+  --info-border: #cbd5e1;
+  --info-text: #334155;
+
+  /* The video canvas and what sits on it — the same in both themes. */
+  --canvas-bg: #000000;
+  --canvas-text: #52525b;
+  --canvas-line: #3f3f46;
+  --canvas-mark: #ffffff;
+}
+
+.dark {
+  --bg: #18181b;
+  --surface: #27272a;
+  --surface-translucent: rgba(39, 39, 42, 0.85);
+  --border: #3f3f46;
+  --border-strong: #52525b;
+  --overlay: rgba(9, 9, 11, 0.8);
+
+  --text: #f4f4f5;
+  --text-secondary: #d4d4d8;
+  --text-muted: #a1a1aa;
+  --text-faint: #71717a;
+  --text-disabled: #52525b;
+
+  --accent: #6366f1;
+  --accent-contrast: #ffffff;
+  --accent-soft: #312e81;
+  --accent-soft-text: #e0e7ff;
+  --accent-link: #818cf8;
+  --accent-emphasis: #a5b4fc;
+  --accent-disabled-bg: #312e81;
+  --accent-disabled-text: #4338ca;
+  --note-bg: #1e1b4b;
+  --note-border: #312e81;
+
+  --warn-bg: #422006;
+  --warn-border: #a16207;
+  --warn-text: #fde68a;
+  --success-bg: #14532d;
+  --success-border: #16a34a;
+  --success-text: #86efac;
+  --danger-bg: #450a0a;
+  --danger-border: #b91c1c;
+  --danger-text: #fca5a5;
+  --danger-action: #f87171;
+  --info-bg: #1e293b;
+  --info-border: #334155;
+  --info-text: #cbd5e1;
+
+  --canvas-bg: #000000;
+  --canvas-text: #52525b;
+  --canvas-line: #3f3f46;
+  --canvas-mark: #ffffff;
+}
+
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -7,8 +122,8 @@
 }
 
 body {
-  background: #18181b;
-  color: #f4f4f5;
+  background: var(--bg);
+  color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
   font-size: 13px;
   line-height: 1.5;
@@ -25,21 +140,21 @@ body {
 }
 
 /* ── Scrollbars ────────────────────────────────────────────────────────────
-   The sidebar scrolls on short windows; the default light scrollbar cuts a
-   bright stripe through a dark app. */
+   The sidebar scrolls on short windows; a scrollbar that ignores the theme
+   cuts a stripe of the wrong colour through the app. */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #18181b;
+  background: var(--bg);
 }
 ::-webkit-scrollbar-thumb {
-  background: #3f3f46;
+  background: var(--border);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #52525b;
+  background: var(--border-strong);
 }
 
 /* ── Narrow windows ────────────────────────────────────────────────────────
@@ -56,7 +171,7 @@ body {
     min-width: 0 !important;
     max-height: 45vh;
     border-right: none;
-    border-bottom: 1px solid #3f3f46;
+    border-bottom: 1px solid var(--border);
     padding: 16px !important;
   }
   .app-canvas {

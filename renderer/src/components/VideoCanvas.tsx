@@ -4,6 +4,11 @@
  *
  * All coordinates exposed via onROIChange are in canvas pixels.
  * The parent is responsible for normalizing to video pixels.
+ *
+ * The selection is drawn in literal white rather than a theme token, for two
+ * reasons: Konva paints into a canvas, where a CSS variable is not a colour
+ * anything can resolve, and the box is read against the video frame, which is
+ * the same footage on the same black surround in either theme.
  */
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Stage, Layer, Image as KonvaImage, Rect, Transformer } from 'react-konva';
@@ -92,7 +97,7 @@ export default function VideoCanvas({
   }, []);
 
   return (
-    <div style={{ background: '#000', display: 'inline-block' }}>
+    <div style={{ background: 'var(--canvas-bg)', display: 'inline-block' }}>
       <Stage width={stageW} height={stageH}>
         <Layer>
           {image && (

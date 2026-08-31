@@ -29,8 +29,8 @@ export default function SubscriptionCard({ plan, subscribed, current, onSubscrib
         display: 'flex',
         flexDirection: 'column',
         gap: 6,
-        background: current ? '#312e81' : '#27272a',
-        border: `1px solid ${current || featured ? '#6366f1' : '#3f3f46'}`,
+        background: current ? 'var(--accent-soft)' : 'var(--surface)',
+        border: `1px solid ${current || featured ? 'var(--accent)' : 'var(--border)'}`,
         borderRadius: 10,
         padding: '18px 16px 16px',
       }}
@@ -38,35 +38,40 @@ export default function SubscriptionCard({ plan, subscribed, current, onSubscrib
       {plan.badgeKey && (
         <span
           style={{
-            position: 'absolute', top: -9, left: 16, background: featured ? '#6366f1' : '#3f3f46',
-            color: '#fff', fontSize: 10, borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap',
+            position: 'absolute', top: -9, left: 16,
+            // The recommended plan's badge is the accent itself; the others
+            // are the quiet version of it, which stays readable in a light
+            // theme where a plain border colour would not.
+            background: featured ? 'var(--accent)' : 'var(--accent-soft)',
+            color: featured ? 'var(--accent-contrast)' : 'var(--accent-soft-text)',
+            fontSize: 10, borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap',
           }}
         >
           {t(plan.badgeKey)}
         </span>
       )}
 
-      <p style={{ color: '#f4f4f5', fontSize: 13, fontWeight: 500 }}>{t(planNameKey(plan.id))}</p>
-      <p style={{ color: '#f4f4f5', fontSize: 20, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+      <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 500 }}>{t(planNameKey(plan.id))}</p>
+      <p style={{ color: 'var(--text)', fontSize: 20, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
         {t(planPriceKey(plan.id), { price: plan.price })}
       </p>
-      <p style={{ color: plan.multiplier < 1 ? '#a5b4fc' : '#71717a', fontSize: 11 }}>
+      <p style={{ color: plan.multiplier < 1 ? 'var(--accent-emphasis)' : 'var(--text-faint)', fontSize: 11 }}>
         {t(planDiscountKey(plan.id))}
       </p>
       {plan.multiplier < 1 && (
-        <p style={{ color: '#71717a', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
+        <p style={{ color: 'var(--text-faint)', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
           {t('subscription.equivalent', { price: plan.monthlyEquivalent })}
         </p>
       )}
-      <p style={{ color: '#a1a1aa', fontSize: 11 }}>{t(planTaglineKey(plan.id))}</p>
+      <p style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t(planTaglineKey(plan.id))}</p>
 
       <button
         data-testid={`subscribe-${plan.id}`}
         onClick={() => onSubscribe(plan)}
         style={{
-          marginTop: 'auto', background: featured || current ? '#6366f1' : 'transparent',
-          border: `1px solid ${featured || current ? '#6366f1' : '#3f3f46'}`, borderRadius: 6,
-          padding: '7px 0', color: featured || current ? '#fff' : '#d4d4d8', fontSize: 12,
+          marginTop: 'auto', background: featured || current ? 'var(--accent)' : 'transparent',
+          border: `1px solid ${featured || current ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6,
+          padding: '7px 0', color: featured || current ? 'var(--accent-contrast)' : 'var(--text-secondary)', fontSize: 12,
           fontWeight: 500, cursor: 'pointer',
         }}
       >

@@ -20,7 +20,16 @@ test.describe('App launch', () => {
   });
 
   test('app title is visible in the top bar', async ({ page }) => {
-    await expect(page.getByText('Watermark Remover')).toBeVisible();
+    await expect(page.getByText('SmoothVoice Watermark Remover')).toBeVisible();
+  });
+
+  test('names the window after the app', async ({ page, electronApp }) => {
+    // The fixture pins English, so this is the English brand name.
+    await expect(page).toHaveTitle('SmoothVoice Watermark Remover');
+    // And the process introduces itself the same way to the OS — the menu
+    // bar and the About dialog read app.getName(), not package.json's `name`.
+    const name = await electronApp.evaluate(({ app }) => app.getName());
+    expect(name).toBe('SmoothVoice Watermark Remover');
   });
 
   test('export and preview buttons are not present in idle state', async ({ page }) => {

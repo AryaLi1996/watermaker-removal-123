@@ -1,4 +1,4 @@
-# Watermark Remover — User Guide
+# SmoothVoice Watermark Remover — User Guide
 
 This guide walks you through using the app from start to finish.
 

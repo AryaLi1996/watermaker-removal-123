@@ -269,6 +269,16 @@ confirmed. The fourth is the app with the pieces wired together: the trial in
 the bottom bar, the navigation, and a purchase that survives a remount. `tests/e2e/subscription.spec.ts` drives the same flow through the
 real IPC handlers.
 
+**File:** `renderer/src/theme/ThemeProvider.test.tsx` — the appearance theme
+
+Covers what the theme starts as, what it writes to storage, and the class it
+puts on `<html>`; that "system" follows `prefers-color-scheme` live and an
+explicit choice ignores it; that the media-query listener is dropped on
+unmount; and that an environment with no `matchMedia` at all still starts in
+light rather than throwing. `tests/e2e/settings.spec.ts` drives the same
+switch through the real app, including that the page actually repaints and
+that the choice survives a reload.
+
 **File:** `tests/unit/renderer/utils.test.ts`
 
 | Test group | Tests | What is checked |
@@ -326,7 +336,7 @@ npm run test:e2e:debug
 |---|---|
 | Window opens and reaches idle state | `[data-testid="empty-state"]` is visible |
 | Correct prompt text | "Click to browse for a video file" |
-| Sidebar title | "Watermark Remover" |
+| Top bar title | "SmoothVoice Watermark Remover" |
 | Export/Preview hidden in idle state | Buttons absent before file load |
 | Window minimum size | ≥ 900×600 via `BrowserWindow.getSize()` |
 | Context isolation enabled | `nodeIntegration = false` via `getWebPreferences()` |

@@ -102,7 +102,7 @@ a Python venv, to prove the frozen backend is doing the work.
 npm run dist
 ```
 
-Output: `release/Watermark Remover-1.0.0-<arch>.dmg` — `arm64` on an Apple
+Output: `release/SmoothVoice Watermark Remover-1.0.0-<arch>.dmg` — `arm64` on an Apple
 silicon Mac, `x64` on an Intel one. Building locally gives you your own
 machine's architecture only; both are produced in CI (below).
 
@@ -113,7 +113,7 @@ runner's `ffmpeg`, and both are architecture-specific native executables — an
 therefore has to happen on a machine of that architecture.
 
 The DMG contains a drag-to-Applications installer. The app bundle is at
-`release/mac[-arm64]/Watermark Remover.app`.
+`release/mac[-arm64]/SmoothVoice Watermark Remover.app`.
 
 #### Code signing (required for distribution outside App Store)
 
@@ -153,7 +153,7 @@ Add to `package.json` `build` section:
 npm run dist
 ```
 
-Output: `dist/Watermark Remover Setup 1.0.0.exe`
+Output: `dist/SmoothVoice Watermark Remover Setup 1.0.0.exe`
 
 #### Code signing (optional but prevents SmartScreen warnings)
 
@@ -171,13 +171,13 @@ npm run dist
 npm run dist
 ```
 
-Output: `dist/Watermark Remover-1.0.0.AppImage`
+Output: `dist/SmoothVoice Watermark Remover-1.0.0.AppImage`
 
 AppImages are self-contained and run on any modern distro without installation. Users may need to `chmod +x` the file before running:
 
 ```bash
-chmod +x "Watermark Remover-1.0.0.AppImage"
-./"Watermark Remover-1.0.0.AppImage"
+chmod +x "SmoothVoice Watermark Remover-1.0.0.AppImage"
+./"SmoothVoice Watermark Remover-1.0.0.AppImage"
 ```
 
 ---
@@ -273,11 +273,11 @@ npm run dist -- --mac --win --linux
 
 # 5. Create a GitHub Release
 gh release create v1.1.0 \
-  --title "Watermark Remover v1.1.0" \
+  --title "SmoothVoice Watermark Remover v1.1.0" \
   --notes-file CHANGELOG.md \
-  "dist/Watermark Remover-1.1.0.dmg" \
-  "dist/Watermark Remover Setup 1.1.0.exe" \
-  "dist/Watermark Remover-1.1.0.AppImage"
+  "dist/SmoothVoice Watermark Remover-1.1.0.dmg" \
+  "dist/SmoothVoice Watermark Remover Setup 1.1.0.exe" \
+  "dist/SmoothVoice Watermark Remover-1.1.0.AppImage"
 ```
 
 > **Requires:** [GitHub CLI](https://cli.github.com/) (`brew install gh`, then `gh auth login`)

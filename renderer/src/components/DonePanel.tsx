@@ -53,17 +53,17 @@ export default function DonePanel({
     <div data-testid="done-panel" className="flex flex-col gap-3 pt-2">
       {/* Success banner */}
       <div style={{
-        background: '#14532d',
-        border: '1px solid #16a34a',
+        background: 'var(--success-bg)',
+        border: '1px solid var(--success-border)',
         borderRadius: 6,
         padding: '8px 12px',
-        color: '#86efac',
+        color: 'var(--success-text)',
         fontSize: 13,
       }}>
         ✓ {t('status.exportComplete')}
       </div>
 
-      <p style={{ color: '#a1a1aa', fontSize: 11, wordBreak: 'break-all' }}>{filename}</p>
+      <p style={{ color: 'var(--text-muted)', fontSize: 11, wordBreak: 'break-all' }}>{filename}</p>
 
       <TemporalFallbackNote report={temporalFallback} />
       <DeepNoticeNote notice={deepNotice} />
@@ -73,10 +73,10 @@ export default function DonePanel({
         onClick={onReveal}
         style={{
           background: 'transparent',
-          border: '1px solid #3f3f46',
+          border: '1px solid var(--border)',
           borderRadius: 6,
           padding: '6px 12px',
-          color: '#d4d4d8',
+          color: 'var(--text-secondary)',
           fontSize: 12,
           cursor: 'pointer',
         }}
@@ -90,13 +90,13 @@ export default function DonePanel({
           onClick={onReset}
           style={{
             background: 'transparent', border: 'none', padding: 0,
-            color: '#52525b', fontSize: 11, cursor: 'pointer', textAlign: 'left',
+            color: 'var(--text-disabled)', fontSize: 11, cursor: 'pointer', textAlign: 'left',
           }}
         >
           {t('actions.dismiss')}
         </button>
       ) : (
-        <p style={{ color: '#52525b', fontSize: 11 }}>
+        <p style={{ color: 'var(--text-disabled)', fontSize: 11 }}>
           {t('status.returningIn', { seconds: countdown })}
         </p>
       )}
