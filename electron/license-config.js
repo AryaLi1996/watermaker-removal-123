@@ -24,6 +24,33 @@
  */
 const DEFAULT_SIGNING_SECRET = 'ruanjian-dev-signing-secret-v1-change-in-production';
 
+/**
+ * Which application this client is, as far as the license service is
+ * concerned.
+ *
+ * The service holds one set of tables for every app on the account, so a
+ * subscription and a device trial are only this app's if every request says
+ * whose they are. Without the dimension a plan bought in SootheVoice
+ * satisfies this app and a trial spent there arrives here already used —
+ * which is what docs/LICENSE_SERVICE.md listed as the cost of sharing.
+ *
+ * `smoothvoice` and not `shuyin`: this app's rows already exist in the
+ * service's tables without an appId, and the migration stamps exactly that
+ * value onto them. It is also the value the service falls back to for a
+ * request that carries none, so an upgraded client and an old one still
+ * resolve to the same subscription. Renaming the id here would strand every
+ * license bought before this change.
+ */
+const DEFAULT_APP_ID = 'smoothvoice';
+
+/**
+ * `LICENSE_APP_ID` is the main process's name for it; `VITE_APP_ID` is
+ * accepted too so a build that sets the renderer's copy does not end up with
+ * the two halves disagreeing about which app they are.
+ */
+const APP_ID = String(process.env.LICENSE_APP_ID || process.env.VITE_APP_ID || DEFAULT_APP_ID).trim()
+  || DEFAULT_APP_ID;
+
 /** The deployed Function URL from the infrastructure doc. */
 const DEFAULT_LICENSE_URL = 'https://5pmjnezmzrbjw2tjmnzpt232xy0duvyr.lambda-url.us-east-1.on.aws/';
 
@@ -102,6 +129,10 @@ function fallbackPlans() {
 const PAYMENT_METHODS = ['wechat_pay', 'alipay', 'douyin_pay', 'card'];
 
 const LICENSE_CONFIG = {
+  /** Which app the service should scope this client's trial, orders and
+   *  license to. Sent on every route. */
+  appId: APP_ID,
+
   /** Function URL or API Gateway stage — both work, see the note above. */
   verificationUrl: process.env.LICENSE_URL || DEFAULT_LICENSE_URL,
   signingSecret: process.env.LICENSE_SIGNING_SECRET || DEFAULT_SIGNING_SECRET,
@@ -134,6 +165,8 @@ const usingDefaultSigningSecret = LICENSE_CONFIG.signingSecret === DEFAULT_SIGNI
 module.exports = {
   DEFAULT_SIGNING_SECRET,
   DEFAULT_LICENSE_URL,
+  DEFAULT_APP_ID,
+  APP_ID,
   PLAN_TIERS,
   PAYMENT_METHODS,
   FALLBACK_BASE_MONTHLY_PRICE,

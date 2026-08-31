@@ -10,9 +10,12 @@
  * remaining time visibly moves, while the state behind it is unchanged.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { OrderError } from '../types';
 import {
+  APP_MISMATCH,
   entitlementsFor,
   LOADING_STATE,
+  type OrderOutcome,
   type Entitlements,
   type LicenseState,
   type Order,
@@ -36,9 +39,9 @@ export interface UseSubscription {
   methods: PaymentMethod[];
   /** Milliseconds left on the trial, recomputed as the clock moves. */
   trialMsRemaining: number;
-  createOrder: (planId: PlanId, method: PaymentMethodId) => Promise<Order | { error: string }>;
+  createOrder: (planId: PlanId, method: PaymentMethodId) => Promise<Order | OrderError>;
   /** Poll one order until it is paid, the user gives up, or time runs out. */
-  watchOrder: (orderId: string, signal: { cancelled: boolean }) => Promise<'paid' | 'timeout' | 'cancelled'>;
+  watchOrder: (orderId: string, signal: { cancelled: boolean }) => Promise<OrderOutcome>;
   refresh: () => Promise<void>;
 }
 
@@ -107,7 +110,9 @@ export function useSubscription(locale: string): UseSubscription {
     return api.paymentCreateOrder(planId, method);
   }, []);
 
-  const watchOrder = useCallback(async (orderId: string, signal: { cancelled: boolean }) => {
+  const watchOrder = useCallback(async (
+    orderId: string, signal: { cancelled: boolean },
+  ): Promise<OrderOutcome> => {
     const api = window.electronAPI;
     const config = (await api.licenseConfig?.()) ?? { orderPollIntervalMs: 3000, orderPollTimeoutMs: 600_000 };
     const deadline = Date.now() + config.orderPollTimeoutMs;
@@ -115,6 +120,11 @@ export function useSubscription(locale: string): UseSubscription {
     while (Date.now() < deadline) {
       if (signal.cancelled) return 'cancelled';
       const result = await api.paymentOrderStatus?.(orderId);
+      // Paid, but the token the service issued is another app's. The money
+      // is not lost — it bought a license the service scoped elsewhere — so
+      // this stops the wait with a distinct outcome rather than claiming the
+      // features are unlocked when they are not.
+      if (result && result.status === 'paid' && result.code === APP_MISMATCH) return 'mismatch';
       if (result && result.status === 'paid') {
         // The main process adopts the token and pushes the new state; this
         // only has to report that the wait is over.

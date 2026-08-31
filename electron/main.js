@@ -444,6 +444,10 @@ ipcMain.handle('license:getConfig', () => ({
   // Enough for the renderer to explain itself, and nothing secret: the
   // signing secret stays in this process.
   verificationUrl: LICENSE_CONFIG.verificationUrl,
+  // Which app the service scopes this client's trial and subscription to.
+  // Worth surfacing: a build with the wrong one looks exactly like a build
+  // whose subscription vanished.
+  appId: LICENSE_CONFIG.appId,
   gracePeriodDays: LICENSE_CONFIG.gracePeriodDays,
   trialDurationDays: LICENSE_CONFIG.trial.durationDays,
   orderPollIntervalMs: LICENSE_CONFIG.orderPollIntervalMs,

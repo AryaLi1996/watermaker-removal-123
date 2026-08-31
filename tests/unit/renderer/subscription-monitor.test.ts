@@ -13,7 +13,8 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { SubscriptionMonitor } = require('../../../electron/subscription-monitor.js');
+const { SubscriptionMonitor, APP_MISMATCH } = require('../../../electron/subscription-monitor.js');
+const { APP_ID } = require('../../../electron/license-config.js');
 const token = require('../../../electron/license-token.js');
 const secureStore = require('../../../electron/secure-store.js');
 const deviceIdModule = require('../../../electron/device-id.js');
@@ -307,6 +308,128 @@ describe('buying a plan', () => {
 
     expect((await monitor.orderStatus('o-1')).licensed).toBe(false);
     expect(monitor.isLicensedNow()).toBe(false);
+  });
+});
+
+describe('which app the licence is for', () => {
+  /**
+   * The service holds one set of tables for every app on the account. Without
+   * an appId on the request a trial spent in the sibling app arrives here
+   * already used, and a plan bought there unlocks this one — which is exactly
+   * what the shared-service note in docs/LICENSE_SERVICE.md listed as the
+   * cost. These tests pin the dimension onto every call that decides an
+   * entitlement.
+   */
+  const routes = {
+    'trial/status': { trialUsed: false, trialStart: null, trialEnd: null },
+    'trial/activate': { success: true, trialStart: NOW, trialEnd: NOW + 3 * DAY },
+    'create-order': { orderId: 'o-1', presentAs: 'external', redirectUrl: 'https://pay.example/o-1' },
+    'order-status': { status: 'pending' },
+    'payment-history': { orders: [] },
+    plans: { plans: [{ id: 'monthly', price: 99, currency: 'cny' }] },
+    'payment-methods': { methods: [] },
+    '': { valid: false },
+  };
+
+  const queried = (call: { path: string }) => new URLSearchParams(call.path.split('?')[1] ?? '');
+
+  it('names itself on every read the service scopes', async () => {
+    const { request, calls } = stubService(routes);
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+    await monitor.createOrder('monthly', 'alipay');
+    await monitor.orderStatus('o-1');
+    await monitor.paymentHistory();
+    await monitor.getPlans();
+    await monitor.getPaymentMethods('zh-CN');
+    await monitor.activate('KEY12345');
+
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      const appId = call.method === 'GET'
+        ? queried(call).get('appId')
+        : (call.body as { appId?: string }).appId;
+      expect(appId, `${call.method} ${call.path}`).toBe(APP_ID);
+    }
+  });
+
+  it('keeps the other query parameters intact while adding it', async () => {
+    const { request, calls } = stubService(routes);
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+    await monitor.orderStatus('o 1');
+
+    const status = queried(calls.find((c) => c.path.startsWith('trial/status'))!);
+    expect(status.get('deviceId')).toBe(monitor.getDeviceId());
+
+    // Escaped once, by URLSearchParams — not concatenated twice.
+    const order = queried(calls.find((c) => c.path.startsWith('order-status'))!);
+    expect(order.get('orderId')).toBe('o 1');
+    expect(order.get('userId')).toBe(monitor.getUserId());
+  });
+
+  it('refuses a licence the service issued for another app', async () => {
+    // It verifies — same account, same signing secret — so nothing but the
+    // appId stops it unlocking this app off a sibling app's purchase.
+    const { request } = stubService({
+      ...routes,
+      'order-status': {
+        status: 'paid',
+        token: token.createToken({
+          userId: 'u1', appId: 'soothevoice', planId: 'annual', licenseKey: 'KEY12345',
+          expiresAt: NOW + 365 * DAY, issuedAt: NOW,
+        }),
+      },
+    });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+
+    const result = await monitor.orderStatus('o-1');
+    expect(result.licensed).toBe(false);
+    expect(result.code).toBe(APP_MISMATCH);
+    expect(monitor.isLicensedNow()).toBe(false);
+  });
+
+  it('honours a token from before the service had an appId', async () => {
+    // Every licence bought before this change carries none. Reading that as a
+    // mismatch would sign out every existing subscriber on upgrade.
+    const { request } = stubService({
+      ...routes,
+      'order-status': {
+        status: 'paid',
+        token: token.createToken({
+          userId: 'u1', planId: 'annual', licenseKey: 'KEY12345', expiresAt: NOW + 365 * DAY, issuedAt: NOW,
+        }),
+      },
+    });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+
+    expect((await monitor.orderStatus('o-1')).licensed).toBe(true);
+    expect(monitor.getState().status).toBe('active');
+  });
+
+  it('ignores a stored token belonging to another app, rather than honouring it', async () => {
+    writeFileSync(
+      path.join(dir, 'license.enc'),
+      secureStore.encrypt(dir, token.createToken({
+        userId: 'u1', appId: 'soothevoice', planId: 'annual', licenseKey: 'KEY12345',
+        expiresAt: NOW + 365 * DAY, issuedAt: NOW,
+      })),
+    );
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+
+    expect(monitor.getState().status).toBe('unlicensed');
+    expect((await monitor.refresh()).code).toBe(APP_MISMATCH);
+  });
+
+  it('reports the service refusing a request for the wrong app', async () => {
+    const { request } = stubService({ ...routes, 'create-order': { error: 'appId mismatch' } });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+
+    expect((await monitor.createOrder('monthly', 'alipay')).code).toBe(APP_MISMATCH);
   });
 });
 

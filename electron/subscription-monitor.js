@@ -24,7 +24,7 @@ const { randomUUID } = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const { LICENSE_CONFIG, fallbackPlans, PAYMENT_METHODS } = require('./license-config');
+const { LICENSE_CONFIG, APP_ID, fallbackPlans, PAYMENT_METHODS } = require('./license-config');
 const { verifyToken, buildLicenseState, isLicensed } = require('./license-token');
 const secureStore = require('./secure-store');
 const { getDeviceId } = require('./device-id');
@@ -33,6 +33,48 @@ const TOKEN_FILE = 'license.enc';
 const TRIAL_FILE = 'trial.enc';
 const TS_FILE = '.license_ts';
 const ANON_ID_FILE = '.anon_id';
+
+/**
+ * The one error the caller has to be able to tell apart.
+ *
+ * Every other failure here is a network or a wrong key, and reads the same to
+ * the user: try again. A license or an order belonging to another app is
+ * different — retrying will never fix it, and the honest instruction is to
+ * activate again on this app.
+ */
+const APP_MISMATCH = 'app_mismatch';
+
+/**
+ * Whether a service reply is about this app at all.
+ *
+ * Two shapes count. A reply that names an `appId` other than ours is one the
+ * service scoped elsewhere; an error mentioning `appId` is one it refused for
+ * the same reason. Anything else is somebody else's problem to report.
+ */
+function isAppMismatch(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (typeof data.appId === 'string' && data.appId && data.appId !== APP_ID) return true;
+  return typeof data.error === 'string' && /appid/i.test(data.error);
+}
+
+/**
+ * Whether a verified token was issued for this app.
+ *
+ * A token minted before the appId dimension existed carries none, and is this
+ * app's by definition — its rows are the ones the migration stamps with our
+ * appId. Reading an absent appId as a mismatch would sign out every existing
+ * subscriber the moment this build ships.
+ */
+function tokenIsOurs(payload) {
+  const appId = payload && payload.appId;
+  return typeof appId !== 'string' || appId === '' || appId === APP_ID;
+}
+
+/** A query string with `appId` always on it, escaped once and in one place. */
+function query(params) {
+  const search = new URLSearchParams({ ...params, appId: APP_ID });
+  return search.toString();
+}
 
 /** No trial known yet — the shape the renderer can always read. */
 const NO_TRIAL = {
@@ -207,6 +249,22 @@ class SubscriptionMonitor extends EventEmitter {
     };
   }
 
+  /**
+   * The stored token's payload, if it is this app's to honour.
+   *
+   * A token for another app verifies here — same account, same signing secret
+   * — so nothing but the appId stops it unlocking this one.
+   */
+  _storedPayload() {
+    const token = this._loadToken();
+    const payload = token ? verifyToken(token) : null;
+    if (payload && !tokenIsOurs(payload)) {
+      console.warn(`[license] ignoring a stored token issued for ${payload.appId}, not ${APP_ID}`);
+      return null;
+    }
+    return payload;
+  }
+
   // ── Startup ─────────────────────────────────────────────────────────────
   async initialize() {
     // Runs whether or not this device has ever been licensed: the trial is
@@ -216,8 +274,7 @@ class SubscriptionMonitor extends EventEmitter {
     this._startTrialTimer();
 
     const nowSeconds = this._nowSeconds();
-    const token = this._loadToken();
-    const payload = token ? verifyToken(token) : null;
+    const payload = this._storedPayload();
 
     if (payload && this._clockTampered(nowSeconds)) {
       // Not deleted: the license may well be real, and the clock may be
@@ -285,7 +342,7 @@ class SubscriptionMonitor extends EventEmitter {
 
     try {
       const status = await this._request(
-        'GET', `trial/status?deviceId=${encodeURIComponent(deviceId)}`, undefined, LICENSE_CONFIG.startupTimeoutMs,
+        'GET', `trial/status?${query({ deviceId })}`, undefined, LICENSE_CONFIG.startupTimeoutMs,
       );
       if (status.error) throw new Error(status.error);
 
@@ -296,7 +353,7 @@ class SubscriptionMonitor extends EventEmitter {
       }
 
       const activated = await this._request(
-        'POST', 'trial/activate', { deviceId }, LICENSE_CONFIG.startupTimeoutMs,
+        'POST', 'trial/activate', { deviceId, appId: APP_ID }, LICENSE_CONFIG.startupTimeoutMs,
       );
       if (activated.error) throw new Error(activated.error);
       const rec = this._recordFromServer(activated.trialStart, activated.trialEnd, activated.trialDurationDays);
@@ -328,9 +385,13 @@ class SubscriptionMonitor extends EventEmitter {
     if (!key) return { success: false, error: 'licenseKey required' };
 
     try {
-      const data = await this._request('POST', '', { licenseKey: key });
+      const data = await this._request('POST', '', { licenseKey: key, appId: APP_ID });
       if (!data.valid || !data.token) {
-        return { success: false, error: data.error || 'License key not accepted' };
+        return {
+          success: false,
+          code: isAppMismatch(data) ? APP_MISMATCH : undefined,
+          error: data.error || 'License key not accepted',
+        };
       }
       return this._adoptToken(data.token);
     } catch (err) {
@@ -345,6 +406,16 @@ class SubscriptionMonitor extends EventEmitter {
       // Either the service is signing with a different secret than this build
       // carries, or something rewrote the response.
       return { success: false, error: 'The license token did not verify' };
+    }
+    if (!tokenIsOurs(payload)) {
+      // A token the service scoped to another app. It verifies — same account,
+      // same signing secret — so only the appId tells them apart, and adopting
+      // it would licence this app off someone else's purchase.
+      return {
+        success: false,
+        code: APP_MISMATCH,
+        error: `This license belongs to ${payload.appId}, not ${APP_ID}`,
+      };
     }
     const nowSeconds = this._nowSeconds();
     this._saveToken(token);
@@ -377,11 +448,24 @@ class SubscriptionMonitor extends EventEmitter {
 
     const token = this._loadToken();
     const payload = token ? verifyToken(token) : null;
+    if (payload && !tokenIsOurs(payload)) {
+      return {
+        success: false,
+        code: APP_MISMATCH,
+        error: `This license belongs to ${payload.appId}, not ${APP_ID}`,
+      };
+    }
     if (!payload || !payload.licenseKey) return { success: false, error: 'no license to refresh' };
 
     try {
-      const data = await this._request('POST', '', { licenseKey: payload.licenseKey });
-      if (!data.valid || !data.token) return { success: false, error: data.error || 'not accepted' };
+      const data = await this._request('POST', '', { licenseKey: payload.licenseKey, appId: APP_ID });
+      if (!data.valid || !data.token) {
+        return {
+          success: false,
+          code: isAppMismatch(data) ? APP_MISMATCH : undefined,
+          error: data.error || 'not accepted',
+        };
+      }
       return this._adoptToken(data.token);
     } catch (err) {
       return { success: false, error: err.message };
@@ -398,7 +482,7 @@ class SubscriptionMonitor extends EventEmitter {
    */
   async getPlans() {
     try {
-      const data = await this._request('GET', 'plans');
+      const data = await this._request('GET', `plans?${query({})}`);
       if (Array.isArray(data.plans) && data.plans.length) {
         return { plans: data.plans, source: 'server' };
       }
@@ -417,7 +501,7 @@ class SubscriptionMonitor extends EventEmitter {
    */
   async getPaymentMethods(lang = 'zh-CN') {
     try {
-      const data = await this._request('GET', `payment-methods?lang=${encodeURIComponent(lang)}`);
+      const data = await this._request('GET', `payment-methods?${query({ lang })}`);
       if (Array.isArray(data.methods)) return { methods: data.methods, source: 'server' };
       throw new Error(data.error || 'no methods');
     } catch {
@@ -431,7 +515,11 @@ class SubscriptionMonitor extends EventEmitter {
     }
     const userId = this.getUserId();
     try {
-      return await this._request('POST', 'create-order', { planId, method, userId });
+      // The service stores the appId on the order, which is how the payment
+      // webhook knows which app's license to issue when it settles — long
+      // after this process has stopped watching.
+      const data = await this._request('POST', 'create-order', { planId, method, userId, appId: APP_ID });
+      return isAppMismatch(data) ? { ...data, code: APP_MISMATCH } : data;
     } catch (err) {
       return { error: err.message };
     }
@@ -446,14 +534,15 @@ class SubscriptionMonitor extends EventEmitter {
   async orderStatus(orderId) {
     const userId = this.getUserId();
     try {
-      const data = await this._request(
-        'GET', `order-status?orderId=${encodeURIComponent(orderId)}&userId=${encodeURIComponent(userId)}`,
-      );
+      const data = await this._request('GET', `order-status?${query({ orderId, userId })}`);
       if (data.status === 'paid' && data.token) {
         const adopted = this._adoptToken(data.token);
-        return { ...data, licensed: adopted.success, state: this._state };
+        // A token that was not adopted carries the reason with it: the renderer
+        // has to word "paid, but for another app" differently from "paid".
+        const refusal = adopted.success ? null : { code: adopted.code, error: adopted.error };
+        return { ...data, licensed: adopted.success, ...refusal, state: this._state };
       }
-      return data;
+      return isAppMismatch(data) ? { ...data, code: APP_MISMATCH } : data;
     } catch (err) {
       return { error: err.message };
     }
@@ -462,7 +551,7 @@ class SubscriptionMonitor extends EventEmitter {
   async paymentHistory() {
     const userId = this.getUserId();
     try {
-      const data = await this._request('GET', `payment-history?userId=${encodeURIComponent(userId)}`);
+      const data = await this._request('GET', `payment-history?${query({ userId })}`);
       return Array.isArray(data.orders) ? data.orders : [];
     } catch {
       return [];
@@ -477,4 +566,7 @@ class SubscriptionMonitor extends EventEmitter {
   }
 }
 
-module.exports = { SubscriptionMonitor, NO_TRIAL, TOKEN_FILE, TRIAL_FILE, TS_FILE, ANON_ID_FILE };
+module.exports = {
+  SubscriptionMonitor, NO_TRIAL, APP_MISMATCH, isAppMismatch, tokenIsOurs,
+  TOKEN_FILE, TRIAL_FILE, TS_FILE, ANON_ID_FILE,
+};
