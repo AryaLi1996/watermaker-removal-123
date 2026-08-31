@@ -253,21 +253,35 @@ greyed out; an unknown or older main process keeps it), that everything the
 method puts on screen is translated in both languages, and that a change of
 quality counts as an edit worth undoing.
 
-**Files:** `tests/unit/renderer/subscription.test.ts`,
-`tests/unit/renderer/subscription-store.test.ts`,
+**Files:** `tests/unit/renderer/license-service.test.ts`,
+`tests/unit/renderer/subscription-monitor.test.ts`,
+`tests/unit/renderer/subscription.test.ts`,
 `renderer/src/pages/SubscriptionPage.test.tsx`,
-`renderer/src/App.subscription.test.tsx` — the subscription
+`renderer/src/App.subscription.test.tsx` — licensing
 
-The first covers the prices each plan works out to, the three-day trial and
-how it reads once it has run out, renewing early without losing the days
-already paid for, and what each tier unlocks. The second covers the record the
-main process keeps: a trial granted exactly once, a purchase that survives a
-restart, a damaged file that starts over rather than refusing to load, and
-cancelling auto-renewal without cancelling the plan. The third renders the
-page — the four cards, the QR dialog, and that nothing is bought until it is
-confirmed. The fourth is the app with the pieces wired together: the trial in
-the bottom bar, the navigation, and a purchase that survives a remount. `tests/e2e/subscription.spec.ts` drives the same flow through the
-real IPC handlers.
+The first covers the pieces that decide whether someone is licensed with no
+network: token verification (including a forged signature and a swapped
+payload), the grace period, the device id that survives a reinstall, and the
+encrypted store refusing a file that was edited or came from another machine.
+
+The second drives the state machine against a stub of the licence service —
+the cases a running app makes hard to reach: a service that cannot be
+answered, a trial this device already used, a clock wound backwards, an order
+that settles while the app watches, a refresh that fails without dropping the
+stored licence.
+
+The third covers what the renderer decides for itself, which is deliberately
+little: what a state unlocks, what it is called, and how prices and countdowns
+are formatted. The fourth renders the page against the payment flow — an order
+created, a checkout opened, and the app waiting rather than asking the user
+whether they paid. The fifth is the app with the pieces wired together: the
+bottom bar, the gating, and a state pushed from the main process taking
+effect.
+
+`tests/e2e/subscription.spec.ts` drives the same flow through the real IPC
+surface. No test reaches the real licence service: the fixtures point
+`LICENSE_URL` at a dead port and inject the licence and payment answers, so a
+suite run cannot write a runner's device id into the shared production tables.
 
 **File:** `renderer/src/theme/ThemeProvider.test.tsx` — the appearance theme
 

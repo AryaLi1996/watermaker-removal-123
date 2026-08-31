@@ -1,30 +1,39 @@
 /**
- * The strip along the bottom of the window: what the subscription is, and how
- * long it has left.
+ * The strip along the bottom of the window: what the license is, and how long
+ * it has left.
  *
  * It is the only place the trial countdown is visible while the user is
  * working, so it stays put on every screen rather than only on the
  * subscription page.
  */
-import { formatRemaining, statusNameKey, type SubscriptionStatus } from '../subscription';
+import { formatRemaining, statusNameKey, type LicenseState } from '../subscription';
 import { useTranslation } from '../hooks/useTranslation';
 
 interface SubscriptionStatusBarProps {
-  status: SubscriptionStatus;
-  /** True before the record has been read, so the bar shows nothing rather
-   *  than briefly claiming the user has not subscribed. */
+  state: LicenseState;
+  /** Milliseconds left on the trial, ticking in the renderer. */
+  trialMsRemaining: number;
+  /** True before the main process has answered, so the bar says nothing
+   *  rather than briefly claiming the user has no license. */
   loading: boolean;
-  /** Opens the subscription page. Hidden while a plan is running. */
+  /** Opens the subscription page. Hidden only while a plan is running
+   *  normally — the grace period keeps prompting. */
   onOpen: () => void;
 }
 
-export default function SubscriptionStatusBar({ status, loading, onOpen }: SubscriptionStatusBarProps) {
+export default function SubscriptionStatusBar({ state, trialMsRemaining, loading, onOpen }: SubscriptionStatusBarProps) {
   const { t } = useTranslation();
+  // Not `isLicensed`: the grace period still unlocks the features, but it is
+  // precisely when a renewal prompt is worth showing — hiding it there would
+  // let someone run out the grace period without ever being told.
+  const settled = state.status === 'active';
 
   const label = () => {
-    if (status.subscribed) return t('subscription.barSubscribed', { plan: t(statusNameKey(status)) });
-    if (status.trialing) return t('subscription.barTrial', { remaining: formatRemaining(status.msRemaining, t) });
-    return t(status.expired ? 'subscription.barExpired' : 'subscription.barNone');
+    if (state.status === 'active') return t('subscription.barSubscribed', { plan: t(statusNameKey(state)) });
+    if (state.status === 'grace_period') return t('subscription.barGrace', { days: state.graceDaysLeft });
+    if (state.trial.active) return t('subscription.barTrial', { remaining: formatRemaining(trialMsRemaining, t) });
+    if (state.trial.used || state.status === 'expired') return t('subscription.barExpired');
+    return t('subscription.barNone');
   };
 
   return (
@@ -37,11 +46,16 @@ export default function SubscriptionStatusBar({ status, loading, onOpen }: Subsc
     >
       <span
         data-testid="subscription-bar-label"
-        style={{ color: status.subscribed ? 'var(--accent-emphasis)' : 'var(--text-muted)', fontSize: 11 }}
+        style={{
+          color: settled ? 'var(--accent-emphasis)'
+            : state.status === 'grace_period' ? 'var(--warn-text)'
+            : 'var(--text-muted)',
+          fontSize: 11,
+        }}
       >
         {loading ? '' : label()}
       </span>
-      {!loading && !status.subscribed && (
+      {!loading && !settled && (
         <button
           data-testid="status-bar-subscribe"
           onClick={onOpen}

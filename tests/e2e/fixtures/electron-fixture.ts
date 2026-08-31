@@ -39,6 +39,13 @@ export const test = base.extend<ElectronFixtures, ElectronOptions>({
         env: {
           ...process.env,
           NODE_ENV: 'test',
+          // Point licensing at a port nothing listens on. The suite must not
+          // reach the real service: doing so would write this runner's device
+          // id into the shared production trial table, and make the tests
+          // depend on what that service says. Every spec stubs the licence
+          // and payment IPC it needs (fixtures/subscription-state.ts); this
+          // makes the unstubbed calls fail fast instead of going out.
+          LICENSE_URL: 'http://127.0.0.1:9/',
         },
       });
       await use(app);
@@ -58,9 +65,9 @@ export const test = base.extend<ElectronFixtures, ElectronOptions>({
     // anything a future test asserts about colour — would depend on the
     // machine. tests/e2e/settings.spec.ts clears it to test the default.
     await window.evaluate(() => window.localStorage.setItem('theme-preference', 'dark'));
-    // Pin the subscription too: the features these specs drive — temporal
-    // fill, the longer previews — need a plan, and a trial that had already
-    // run out in this container would silently grey them out.
+    // Pin the licence too: the features these specs drive — temporal fill,
+    // the longer previews — need one, and what the shared service would say
+    // about this machine is not something a test should depend on.
     await grantSubscription(electronApp);
     await window.reload();
     // Accept idle state OR any loaded state so shared Electron instances keep working

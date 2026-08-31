@@ -1,24 +1,41 @@
 /**
- * E2E: the subscription, through the real IPC handlers and the record the
- * main process keeps on disk.
+ * E2E: the licence, through the real IPC surface.
  *
- * The record lives in the app's user-data directory, so these tests clear it
- * between cases the way a fresh install would be — otherwise the first
- * purchase decides every test after it.
+ * The licence service itself is not reached — the fixtures point LICENSE_URL
+ * at a dead port and each test injects the state and the payment answers it
+ * needs. What is being tested is this app: that it reads the state it is
+ * given, gates the right features on it, and drives a payment to the point
+ * where the service takes over.
  */
 import { test, expect } from './fixtures/electron-fixture';
-import { clearSubscription } from './fixtures/subscription-state';
+import {
+  LICENSED_STATE, TRIAL_STATE, paymentCalls, setLicenseState, stubPayments,
+} from './fixtures/subscription-state';
 import type { ElectronApplication, Page } from '@playwright/test';
 
 test.use({ appTag: 'subscription' });
 
-/**
- * Put the app back to a first launch. The fixture grants a plan so the other
- * specs can drive the paid features (see fixtures/subscription-state.ts);
- * these tests are about the trial, so they take it away again.
- */
-async function resetSubscription(electronApp: ElectronApplication, page: Page) {
-  await clearSubscription(electronApp);
+const PLANS = [
+  { id: 'monthly', period: 'month', durationDays: 30, discountPercent: 0, price: 99, priceUSD: 14, originalPrice: 99, originalPriceUSD: 14, currency: 'cny' },
+  { id: 'quarterly', period: 'quarter', durationDays: 90, discountPercent: 5, price: 282, priceUSD: 40, originalPrice: 297, originalPriceUSD: 42, currency: 'cny' },
+  { id: 'semi_annual', period: 'half_year', durationDays: 180, discountPercent: 10, price: 535, priceUSD: 76, originalPrice: 594, originalPriceUSD: 85, currency: 'cny' },
+  { id: 'annual', period: 'year', durationDays: 365, discountPercent: 15, price: 1010, priceUSD: 144, originalPrice: 1188, originalPriceUSD: 170, currency: 'cny' },
+];
+
+const METHODS = [
+  { id: 'wechat_pay', enabled: true, name: 'WeChat Pay', icon: '微', color: '#07c160' },
+  { id: 'card', enabled: true, name: 'Bank Card', icon: '💳', color: null },
+];
+
+const ORDER = {
+  orderId: 'e2e-order-1', planId: 'quarterly', method: 'wechat_pay', status: 'pending',
+  amount: 28200, currency: 'cny', createdAt: 0,
+  presentAs: 'embedded', redirectUrl: 'https://checkout.example/e2e-order-1',
+};
+
+/** Put the app in a given licence state and reload into it. */
+async function asState(electronApp: ElectronApplication, page: Page, state: unknown) {
+  await setLicenseState(electronApp, state);
   await page.reload();
   await expect(page.getByTestId('status-bar')).toBeVisible();
 }
@@ -42,34 +59,15 @@ async function loadVideo(page: Page, electronApp: ElectronApplication) {
   await expect(page.getByTestId('btn-export')).toBeVisible({ timeout: 10_000 });
 }
 
-/** Walk a plan through the simulated payment dialog. */
-async function buy(page: Page, plan: string, method: 'wechat' | 'alipay' = 'wechat') {
-  await page.getByTestId('nav-subscription').click();
-  await page.getByTestId(`pay-${method}`).click();
-  await page.getByTestId(`subscribe-${plan}`).click();
-  await expect(page.getByTestId('payment-qr')).toBeVisible();
-  await page.getByTestId('payment-confirm').click();
-  await expect(page.getByTestId('subscribe-success')).toBeVisible();
-}
-
-test.beforeEach(async ({ electronApp, page }) => {
-  await resetSubscription(electronApp, page);
-});
-
-test.describe('the free trial', () => {
-  test('starts on first launch and is reported in the bottom bar', async ({ page }) => {
-    // Three days, counting down. Whether the first read lands on "3 days
-    // 00:00" or has already ticked into "2 days 23:59" depends on how the
-    // grant and the render fall in the same millisecond, so the assertion is
-    // on the shape of the countdown rather than on which side of that it is.
-    await expect(page.getByTestId('subscription-bar-label'))
-      .toHaveText(/free trial \([23] days \d{2}:\d{2} left\)/);
+test.describe('on a free trial', () => {
+  test.beforeEach(async ({ electronApp, page }) => {
+    await stubPayments(electronApp, { plans: PLANS, methods: METHODS });
+    await asState(electronApp, page, TRIAL_STATE);
   });
 
-  test('does not restart itself on the next launch', async ({ page }) => {
-    const first = await page.getByTestId('subscription-bar-label').textContent();
-    await page.reload();
-    await expect(page.getByTestId('subscription-bar-label')).toHaveText(first!);
+  test('counts the trial down in the bottom bar', async ({ page }) => {
+    await expect(page.getByTestId('subscription-bar-label')).toHaveText(/free trial \([12] days \d{2}:\d{2} left\)/);
+    await expect(page.getByTestId('status-bar-subscribe')).toBeVisible();
   });
 
   test('caps previews at one second, and says why', async ({ page, electronApp }) => {
@@ -90,62 +88,137 @@ test.describe('the free trial', () => {
 });
 
 test.describe('the subscription page', () => {
-  test('lists the four plans at their discounted prices', async ({ page }) => {
+  test.beforeEach(async ({ electronApp, page }) => {
+    await stubPayments(electronApp, { plans: PLANS, methods: METHODS });
+    await asState(electronApp, page, TRIAL_STATE);
+  });
+
+  test('shows the plans and prices the service returned', async ({ page }) => {
     await page.getByTestId('nav-subscription').click();
 
     await expect(page.getByTestId('plan-monthly')).toContainText('¥99/month');
     await expect(page.getByTestId('plan-quarterly')).toContainText('¥282/quarter');
-    await expect(page.getByTestId('plan-halfyear')).toContainText('¥534/6 months');
-    await expect(page.getByTestId('plan-yearly')).toContainText('¥1009/year');
+    await expect(page.getByTestId('plan-semi_annual')).toContainText('¥535/6 months');
+    await expect(page.getByTestId('plan-annual')).toContainText('¥1010/year');
+  });
+
+  test('offers the payment methods the service says are usable', async ({ page }) => {
+    await page.getByTestId('nav-subscription').click();
+
+    await expect(page.getByTestId('pay-wechat_pay')).toContainText('WeChat Pay');
+    await expect(page.getByTestId('pay-card')).toContainText('Bank Card');
+    // The first one the service listed is selected, not a hardcoded default.
+    await expect(page.getByTestId('pay-wechat_pay')).toHaveAttribute('aria-pressed', 'true');
   });
 
   test('opens from the bottom bar too', async ({ page }) => {
     await page.getByTestId('status-bar-subscribe').click();
     await expect(page.getByTestId('subscription-page')).toBeVisible();
   });
+});
 
-  test('shows a payment code, and charges nothing until it is confirmed', async ({ page }) => {
+test.describe('paying', () => {
+  test('creates an order, opens the checkout, and waits for the service', async ({ page, electronApp }) => {
+    await stubPayments(electronApp, {
+      plans: PLANS,
+      methods: METHODS,
+      order: ORDER,
+      // Pending first, then paid: what polling an order that settles looks like.
+      statuses: [{ status: 'pending' }, { status: 'paid', licensed: true, state: LICENSED_STATE }],
+    });
+    await asState(electronApp, page, TRIAL_STATE);
+
+    await page.getByTestId('nav-subscription').click();
+    await page.getByTestId('subscribe-quarterly').click();
+
+    // The app waits rather than asking the user whether they paid.
+    await expect(page.getByTestId('payment-dialog')).toBeVisible();
+    await expect(page.getByTestId('subscribe-success')).toBeVisible({ timeout: 30_000 });
+
+    const calls = await paymentCalls(electronApp);
+    // A QR-code method gets its own window; the checkout URL is the
+    // provider's and is never loaded into the app's own window.
+    expect(calls.opened).toContain(`embedded:${ORDER.redirectUrl}`);
+    expect(calls.statusCalls).toBeGreaterThan(1);
+  });
+
+  test('opens the system browser for a method that presents there', async ({ page, electronApp }) => {
+    await stubPayments(electronApp, {
+      plans: PLANS,
+      methods: METHODS,
+      order: { ...ORDER, method: 'card', presentAs: 'external' },
+      statuses: [{ status: 'paid', licensed: true, state: LICENSED_STATE }],
+    });
+    await asState(electronApp, page, TRIAL_STATE);
+
+    await page.getByTestId('nav-subscription').click();
+    await page.getByTestId('pay-card').click();
+    await page.getByTestId('subscribe-quarterly').click();
+    await expect(page.getByTestId('subscribe-success')).toBeVisible({ timeout: 30_000 });
+
+    const calls = await paymentCalls(electronApp);
+    expect(calls.opened).toContain(`external:${ORDER.redirectUrl}`);
+  });
+
+  test('says what went wrong when the order cannot be created', async ({ page, electronApp }) => {
+    await stubPayments(electronApp, {
+      plans: PLANS, methods: METHODS, order: { error: 'payment method not available' },
+    });
+    await asState(electronApp, page, TRIAL_STATE);
+
     await page.getByTestId('nav-subscription').click();
     await page.getByTestId('subscribe-monthly').click();
-    await expect(page.getByTestId('payment-dialog')).toBeVisible();
-    await expect(page.getByTestId('payment-summary')).toContainText('¥99');
 
-    await page.getByTestId('payment-cancel').click();
-    await expect(page.getByTestId('payment-dialog')).toBeHidden();
-    await expect(page.getByTestId('subscription-bar-label')).toContainText('free trial');
+    await expect(page.getByTestId('subscribe-error')).toContainText('payment method not available');
+    expect((await paymentCalls(electronApp)).opened).toEqual([]);
   });
 });
 
-test.describe('a paid plan', () => {
-  test('replaces the trial in the bottom bar and survives a restart', async ({ page }) => {
-    await buy(page, 'quarterly', 'alipay');
-
-    await expect(page.getByTestId('subscription-bar-label')).toHaveText('Subscription: Quarterly');
-    await expect(page.getByTestId('status-bar-subscribe')).toBeHidden();
-
-    await page.reload();
-    await expect(page.getByTestId('subscription-bar-label')).toHaveText('Subscription: Quarterly');
+test.describe('with a licence in force', () => {
+  test.beforeEach(async ({ electronApp, page }) => {
+    await stubPayments(electronApp, { plans: PLANS, methods: METHODS });
+    await asState(electronApp, page, LICENSED_STATE);
   });
 
-  test('lifts the preview cap the free tier imposes', async ({ page, electronApp }) => {
-    await buy(page, 'yearly');
-    await page.getByTestId('nav-editor').click();
+  test('names the plan in the bar and drops the prompt', async ({ page }) => {
+    await expect(page.getByTestId('subscription-bar-label')).toHaveText('Subscription: Yearly');
+    await expect(page.getByTestId('status-bar-subscribe')).toBeHidden();
+  });
+
+  test('lifts the preview cap and unlocks temporal fill', async ({ page, electronApp }) => {
     await loadVideo(page, electronApp);
 
     await expect(page.getByTestId('preview-locked')).toBeHidden();
     await page.getByTestId('preview-seconds').selectOption('5');
     await expect(page.getByTestId('preview-seconds')).toHaveValue('5');
+    await expect(page.getByTestId('method-temporal')).toBeEnabled();
   });
 
-  test('can have its auto-renewal cancelled without losing the plan', async ({ page }) => {
-    await buy(page, 'halfyear');
+  test('shows the plan, its end date, and that nothing renews itself', async ({ page }) => {
+    await page.getByTestId('nav-subscription').click();
 
-    await expect(page.getByTestId('manage-subscription')).toContainText('Auto-renewal is on');
-    await page.getByTestId('cancel-auto-renew').click();
+    const panel = page.getByTestId('manage-subscription');
+    await expect(panel).toContainText('Yearly');
+    await expect(panel).toContainText('Runs until');
+    await expect(panel).toContainText('nothing renews automatically');
+  });
+});
 
-    await expect(page.getByTestId('auto-renew-cancelled')).toBeVisible();
-    await expect(page.getByTestId('manage-subscription')).toContainText('Auto-renewal is off');
-    // The plan itself is untouched — it runs to the date that was paid for.
-    await expect(page.getByTestId('subscription-bar-label')).toHaveText('Subscription: 6 months');
+test.describe('in the grace period', () => {
+  test('keeps the features working but still asks for a renewal', async ({ page, electronApp }) => {
+    await stubPayments(electronApp, { plans: PLANS, methods: METHODS });
+    await asState(electronApp, page, {
+      ...LICENSED_STATE,
+      status: 'grace_period',
+      daysRemaining: 0,
+      graceDaysLeft: 2,
+    });
+
+    await expect(page.getByTestId('subscription-bar-label')).toContainText('2 days of grace');
+    // The prompt stays: the grace period is the last chance to notice.
+    await expect(page.getByTestId('status-bar-subscribe')).toBeVisible();
+
+    await loadVideo(page, electronApp);
+    await expect(page.getByTestId('method-temporal')).toBeEnabled();
   });
 });

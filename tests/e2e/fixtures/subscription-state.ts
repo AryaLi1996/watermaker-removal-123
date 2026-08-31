@@ -1,56 +1,100 @@
 /**
- * Put the app's subscription into a known state before a spec runs.
+ * Put the app's licence into a known state before a spec runs.
  *
- * Pinned for the same reason the language is: a run's editor features would
- * otherwise depend on how long ago the container's user-data directory was
- * created. The specs that exercise temporal fill, the deep engine and the
- * longer previews are testing what a subscriber sees, so every fixture grants
- * a plan; tests/e2e/subscription.spec.ts clears it again to test the trial.
+ * Pinned for the same reason the language and the theme are: a run's editor
+ * features would otherwise depend on what the shared licence service happens
+ * to say about the machine the suite is running on.
  *
- * The record is written straight to the file the main process reads. Modules
- * are pulled in with `require`, not `import()`: the body of an
- * `electronApp.evaluate` runs through an eval in the main process, which has
- * no host callback for a dynamic import — one throws "A dynamic import
- * callback was not specified" and fails every spec that uses the fixture.
- * `process.mainModule` is the fallback for an eval scope that turns out not to
- * carry `require`, since a wrong guess here costs a whole CI run.
+ * The state is injected by replacing the `license:getState` IPC handler
+ * rather than by writing a licence file. A real licence file would have to
+ * carry a token signed with the deployment's secret and encrypted with a key
+ * bound to this machine — reproducing both in a test would mean reproducing
+ * the security properties they exist for.
  */
 import type { ElectronApplication } from '@playwright/test';
 
-/** The record as it is written. A year is longer than any spec runs for. */
-function paidRecord(now: number) {
-  return {
-    plan: 'yearly',
-    startDate: new Date(now).toISOString(),
-    endDate: new Date(now + 365 * 24 * 60 * 60 * 1000).toISOString(),
-    autoRenew: true,
-  };
+/** A trial in progress: the state a fresh install is in. */
+export const TRIAL_STATE = {
+  status: 'unlicensed',
+  payload: null,
+  expiresAt: null,
+  daysRemaining: 0,
+  graceDaysLeft: 0,
+  trial: {
+    used: true,
+    active: true,
+    start: null,
+    end: null,
+    msRemaining: 2 * 24 * 60 * 60 * 1000,
+    durationDays: 3,
+    source: 'server',
+  },
+};
+
+/** A paid plan in force — what the editor specs need to reach the features. */
+export const LICENSED_STATE = {
+  status: 'active',
+  payload: { userId: 'e2e-user', planId: 'annual', licenseKey: 'E2E-TEST-KEY', expiresAt: 4_102_444_800, issuedAt: 0 },
+  expiresAt: '2100-01-01T00:00:00.000Z',
+  daysRemaining: 365,
+  graceDaysLeft: 0,
+  trial: { ...TRIAL_STATE.trial, active: false },
+};
+
+/** Replace what the renderer is told about the licence. */
+export async function setLicenseState(electronApp: ElectronApplication, state: unknown) {
+  await electronApp.evaluate(({ ipcMain }, injected) => {
+    ipcMain.removeHandler('license:getState');
+    ipcMain.handle('license:getState', () => injected);
+  }, state);
 }
 
-/** Write a year-long plan into the record the main process reads. */
+/** The editor specs run as a subscriber: that is the state in which the
+ *  features they drive exist at all. */
 export async function grantSubscription(electronApp: ElectronApplication) {
-  await electronApp.evaluate(({ app }, record) => {
-    // See the note above: `require`, with mainModule as the fallback.
-    const load = typeof require === 'function'
-      ? require
-      : (id: string) => process.mainModule!.require(id);
-    const fs = load('fs');
-    const path = load('path');
-    const dir = app.getPath('userData');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'subscription.json'), JSON.stringify(record));
-  }, paidRecord(Date.now()));
+  await setLicenseState(electronApp, LICENSED_STATE);
 }
 
-/** Remove it, so the next load grants a fresh trial the way a first run does. */
-export async function clearSubscription(electronApp: ElectronApplication) {
-  await electronApp.evaluate(({ app }) => {
-    // See the note above: `require`, with mainModule as the fallback.
-    const load = typeof require === 'function'
-      ? require
-      : (id: string) => process.mainModule!.require(id);
-    const fs = load('fs');
-    const path = load('path');
-    fs.rmSync(path.join(app.getPath('userData'), 'subscription.json'), { force: true });
-  });
+/** Stub the payment routes, so no spec talks to the real service. */
+export async function stubPayments(
+  electronApp: ElectronApplication,
+  options: { plans?: unknown[]; methods?: unknown[]; order?: unknown; statuses?: unknown[] } = {},
+) {
+  await electronApp.evaluate(({ ipcMain, app }, opts) => {
+    const store = app as unknown as { __payments: { opened: string[]; statusCalls: number } };
+    store.__payments = { opened: [], statusCalls: 0 };
+
+    for (const channel of [
+      'payment:getPlans', 'payment:getMethods', 'payment:createOrder',
+      'payment:orderStatus', 'payment:openExternal', 'payment:openEmbedded',
+    ]) {
+      ipcMain.removeHandler(channel);
+    }
+
+    ipcMain.handle('payment:getPlans', () => ({ plans: opts.plans ?? [], source: 'server' }));
+    ipcMain.handle('payment:getMethods', () => ({ methods: opts.methods ?? [], source: 'server' }));
+    ipcMain.handle('payment:createOrder', () => opts.order);
+    ipcMain.handle('payment:orderStatus', () => {
+      const statuses = (opts.statuses ?? []) as unknown[];
+      const index = Math.min(store.__payments.statusCalls, statuses.length - 1);
+      store.__payments.statusCalls += 1;
+      return statuses[index];
+    });
+    // The checkout page is never actually opened in a test: record the URL
+    // instead, which is the part worth asserting.
+    ipcMain.handle('payment:openExternal', (_e: unknown, url: string) => {
+      store.__payments.opened.push(`external:${url}`);
+      return true;
+    });
+    ipcMain.handle('payment:openEmbedded', (_e: unknown, url: string) => {
+      store.__payments.opened.push(`embedded:${url}`);
+      return true;
+    });
+  }, options);
+}
+
+/** What `stubPayments` recorded. */
+export function paymentCalls(electronApp: ElectronApplication) {
+  return electronApp.evaluate(({ app }) =>
+    (app as unknown as { __payments: { opened: string[]; statusCalls: number } }).__payments);
 }

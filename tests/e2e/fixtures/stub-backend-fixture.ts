@@ -33,6 +33,13 @@ export const test = base.extend<Fixtures, Options>({
         env: {
           ...process.env,
           NODE_ENV: 'test',
+          // Point licensing at a port nothing listens on. The suite must not
+          // reach the real service: doing so would write this runner's device
+          // id into the shared production trial table, and make the tests
+          // depend on what that service says. Every spec stubs the licence
+          // and payment IPC it needs (fixtures/subscription-state.ts); this
+          // makes the unstubbed calls fail fast instead of going out.
+          LICENSE_URL: 'http://127.0.0.1:9/',
           WATERMARK_PYTHON: process.env.PYTHON_BIN || 'python3',
           WATERMARK_BACKEND: path.join(__dirname, 'fake_backend.py'),
         },
@@ -49,7 +56,7 @@ export const test = base.extend<Fixtures, Options>({
     await window.evaluate(() => window.localStorage.setItem('watermark-remover:locale', 'en'));
     // Pin the theme — see electron-fixture.ts for why.
     await window.evaluate(() => window.localStorage.setItem('theme-preference', 'dark'));
-    // Pin the subscription — see electron-fixture.ts for why.
+    // Pin the licence — see electron-fixture.ts for why.
     await grantSubscription(electronApp);
     await window.reload();
     await window.waitForLoadState('domcontentloaded');

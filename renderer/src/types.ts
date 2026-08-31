@@ -1,7 +1,7 @@
 /**
  * Type declarations for window.electronAPI (provided by preload.js).
  */
-import type { PaidPlanId, PaymentMethod, Subscription } from './subscription';
+import type { LicenseState, Order, PaymentMethod, PaymentMethodId, Plan, PlanId } from './subscription';
 
 export interface ROI {
   x: number;
@@ -100,6 +100,36 @@ export interface GpuInfo {
   memoryTotalMB: number;
 }
 
+/** What the main process will tell the renderer about the license setup.
+ *  Deliberately not the signing secret, which never leaves that process. */
+export interface LicenseConfig {
+  verificationUrl: string;
+  gracePeriodDays: number;
+  trialDurationDays: number;
+  orderPollIntervalMs: number;
+  orderPollTimeoutMs: number;
+  usingDefaultSigningSecret: boolean;
+}
+
+export interface OrderStatusResult {
+  status?: 'pending' | 'paid' | 'failed' | 'expired';
+  token?: string;
+  licensed?: boolean;
+  state?: LicenseState;
+  error?: string;
+}
+
+export interface PaymentHistoryEntry {
+  orderId: string;
+  planId: PlanId;
+  method: PaymentMethodId;
+  status: string;
+  amount: number;
+  currency: string;
+  createdAt: number;
+  paidAt?: number;
+}
+
 declare global {
   interface Window {
     electronAPI: {
@@ -120,10 +150,27 @@ declare global {
       onUpdateDownloaded: (cb: (version: string | null) => void) => void;
       installUpdate: () => Promise<boolean>;
       systemInfo: () => Promise<SystemInfo>;
-      /** Absent from a main process older than the subscription feature. */
-      subscriptionStatus?: () => Promise<Subscription | null>;
-      subscribe?: (plan: PaidPlanId, paymentMethod: PaymentMethod) => Promise<Subscription | null>;
-      cancelAutoRenew?: () => Promise<Subscription | null>;
+      /**
+       * Licensing. Optional because a main process older than this feature
+       * does not expose them, and the renderer must still start.
+       */
+      licenseState?: () => Promise<LicenseState>;
+      licenseActivate?: (licenseKey: string) => Promise<{ success: boolean; error?: string }>;
+      licenseDeactivate?: () => Promise<{ success: boolean }>;
+      licenseRefresh?: () => Promise<{ success: boolean; error?: string }>;
+      licenseConfig?: () => Promise<LicenseConfig>;
+      onLicenseState?: (cb: (state: LicenseState) => void) => void;
+      removeLicenseListeners?: () => void;
+
+      paymentPlans?: () => Promise<{ plans: Plan[]; source: 'server' | 'fallback' }>;
+      paymentMethods?: (lang: string) => Promise<{ methods: PaymentMethod[]; source: 'server' | 'fallback' }>;
+      paymentCreateOrder?: (planId: PlanId, method: PaymentMethodId) => Promise<Order | { error: string }>;
+      paymentOrderStatus?: (orderId: string) => Promise<OrderStatusResult>;
+      paymentHistory?: () => Promise<PaymentHistoryEntry[]>;
+      paymentOpenExternal?: (url: string) => Promise<boolean>;
+      paymentOpenEmbedded?: (url: string) => Promise<boolean>;
+      paymentCloseEmbedded?: () => Promise<boolean>;
+      onPaymentWindowClosed?: (cb: () => void) => void;
       tempDir: () => Promise<string>;
       notify: (title: string, body: string) => Promise<boolean>;
       removeJobListeners: () => void;

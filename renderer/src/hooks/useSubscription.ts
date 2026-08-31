@@ -1,126 +1,155 @@
 /**
- * The subscription, read against the clock and kept current.
+ * The license, as the interface uses it.
  *
- * The record itself belongs to the main process, which persists it. This hook
- * asks for it once, re-reads it after every change, and re-derives the status
- * every minute so a trial that runs out while the app is open takes effect
- * without a restart.
+ * The state machine is in the main process; this hook reads it, listens for
+ * the pushes it sends when the trial runs out or a payment settles, and wraps
+ * the payment calls. Nothing about expiry is computed here — one place
+ * deciding that is what keeps the answer consistent.
  *
- * A main process that has no subscription handlers — an older build, or a
- * renderer running outside Electron in tests — falls back to localStorage, so
- * the UI is never left with nothing to show.
+ * The countdown is the exception: it re-renders on a timer so the trial's
+ * remaining time visibly moves, while the state behind it is unchanged.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  applyPurchase,
   entitlementsFor,
-  startTrial,
-  statusOf,
+  LOADING_STATE,
   type Entitlements,
-  type PaidPlanId,
+  type LicenseState,
+  type Order,
   type PaymentMethod,
-  type Subscription,
-  type SubscriptionStatus,
+  type PaymentMethodId,
+  type Plan,
+  type PlanId,
 } from '../subscription';
 
-/** How often the countdown and the expiry check are re-derived. */
+/** How often the trial countdown is redrawn. */
 export const TICK_MS = 60_000;
 
-const STORAGE_KEY = 'watermark-remover:subscription';
-
-function readLocal(): Subscription | null {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Subscription) : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeLocal(record: Subscription): Subscription {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(record));
-  } catch {
-    // The change still applies for this session.
-  }
-  return record;
-}
-
-/** The main process where it has the handlers, localStorage where it does not. */
-const backend = {
-  status(): Promise<Subscription | null> {
-    const api = window.electronAPI;
-    if (api?.subscriptionStatus) return api.subscriptionStatus();
-    return Promise.resolve(readLocal() ?? writeLocal(startTrial()));
-  },
-  subscribe(plan: PaidPlanId, method: PaymentMethod): Promise<Subscription | null> {
-    const api = window.electronAPI;
-    if (api?.subscribe) return api.subscribe(plan, method);
-    return Promise.resolve(writeLocal(applyPurchase(readLocal(), plan)));
-  },
-  cancel(): Promise<Subscription | null> {
-    const api = window.electronAPI;
-    if (api?.cancelAutoRenew) return api.cancelAutoRenew();
-    const current = readLocal();
-    return Promise.resolve(current ? writeLocal({ ...current, autoRenew: false }) : null);
-  },
-};
-
 export interface UseSubscription {
-  /** The stored record, or null before the first read has come back. */
-  record: Subscription | null;
-  status: SubscriptionStatus;
+  state: LicenseState;
   entitlements: Entitlements;
-  /** True until the first read resolves, so the UI can hold off on "not subscribed". */
+  /** True until the main process has answered for the first time. */
   loading: boolean;
-  subscribe: (plan: PaidPlanId, method: PaymentMethod) => Promise<void>;
-  cancelAutoRenew: () => Promise<void>;
+  /** The plans, from the service — or the offline fallback, which says so. */
+  plans: Plan[];
+  plansAreFallback: boolean;
+  methods: PaymentMethod[];
+  /** Milliseconds left on the trial, recomputed as the clock moves. */
+  trialMsRemaining: number;
+  createOrder: (planId: PlanId, method: PaymentMethodId) => Promise<Order | { error: string }>;
+  /** Poll one order until it is paid, the user gives up, or time runs out. */
+  watchOrder: (orderId: string, signal: { cancelled: boolean }) => Promise<'paid' | 'timeout' | 'cancelled'>;
   refresh: () => Promise<void>;
 }
 
-export function useSubscription(): UseSubscription {
-  const [record, setRecord] = useState<Subscription | null>(null);
+export function useSubscription(locale: string): UseSubscription {
+  // The state and when it was read, together: the countdown is derived from
+  // both, so keeping them in one value is what stops them disagreeing.
+  const [reading, setReading] = useState<{ state: LicenseState; readAt: number }>(
+    { state: LOADING_STATE, readAt: 0 },
+  );
   const [loading, setLoading] = useState(true);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [plansAreFallback, setPlansAreFallback] = useState(false);
+  const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [now, setNow] = useState(() => Date.now());
 
-  const refresh = useCallback(async () => {
-    try {
-      setRecord(await backend.status());
-    } catch {
-      // A handler that threw leaves the previous answer in place rather than
-      // downgrading a paying user to "not subscribed" on one bad call.
-    } finally {
-      setLoading(false);
-      setNow(Date.now());
-    }
+  const applyState = useCallback((next: LicenseState) => {
+    const at = Date.now();
+    setReading({ state: next, readAt: at });
+    setNow(at);
   }, []);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    const api = window.electronAPI;
+    let cancelled = false;
 
-  // The countdown moves and, at the end of it, the status changes. Both come
-  // from re-reading the same stored dates against a newer clock.
+    void api.licenseState?.()
+      .then((s) => { if (!cancelled && s) applyState(s); })
+      .catch(() => {
+        // Leave the loading state showing rather than claiming "not
+        // subscribed" on one failed call.
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    api.onLicenseState?.((s) => { if (!cancelled) applyState(s); });
+    return () => {
+      cancelled = true;
+      api.removeLicenseListeners?.();
+    };
+  }, [applyState]);
+
+  // Plans and methods come from the service, and the method list is
+  // localised there, so it is re-fetched when the language changes.
+  useEffect(() => {
+    let cancelled = false;
+    void window.electronAPI.paymentPlans?.()
+      .then((res) => {
+        if (cancelled || !res) return;
+        setPlans(res.plans);
+        setPlansAreFallback(res.source === 'fallback');
+      })
+      .catch(() => {});
+    void window.electronAPI.paymentMethods?.(locale === 'zh' ? 'zh-CN' : 'en-US')
+      .then((res) => { if (!cancelled && res) setMethods(res.methods); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [locale]);
+
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(timer);
   }, []);
 
-  const subscribe = useCallback(async (plan: PaidPlanId, method: PaymentMethod) => {
-    const next = await backend.subscribe(plan, method);
-    if (next) {
-      setRecord(next);
-      setNow(Date.now());
+  const createOrder = useCallback(async (planId: PlanId, method: PaymentMethodId) => {
+    const api = window.electronAPI;
+    if (!api.paymentCreateOrder) return { error: 'payment is not available in this build' };
+    return api.paymentCreateOrder(planId, method);
+  }, []);
+
+  const watchOrder = useCallback(async (orderId: string, signal: { cancelled: boolean }) => {
+    const api = window.electronAPI;
+    const config = (await api.licenseConfig?.()) ?? { orderPollIntervalMs: 3000, orderPollTimeoutMs: 600_000 };
+    const deadline = Date.now() + config.orderPollTimeoutMs;
+
+    while (Date.now() < deadline) {
+      if (signal.cancelled) return 'cancelled';
+      const result = await api.paymentOrderStatus?.(orderId);
+      if (result && result.status === 'paid') {
+        // The main process adopts the token and pushes the new state; this
+        // only has to report that the wait is over.
+        if (result.state) applyState(result.state);
+        return 'paid';
+      }
+      await new Promise((resolve) => setTimeout(resolve, config.orderPollIntervalMs));
     }
-  }, []);
+    return 'timeout';
+  }, [applyState]);
 
-  const cancelAutoRenew = useCallback(async () => {
-    const next = await backend.cancel();
-    if (next) setRecord(next);
-  }, []);
+  const refresh = useCallback(async () => {
+    await window.electronAPI.licenseRefresh?.().catch(() => {});
+    const next = await window.electronAPI.licenseState?.().catch(() => null);
+    if (next) applyState(next);
+  }, [applyState]);
 
-  const status = useMemo(() => statusOf(record, now), [record, now]);
-  const entitlements = useMemo(() => entitlementsFor(status), [status]);
+  const { state } = reading;
+  const entitlements = useMemo(() => entitlementsFor(state), [state]);
 
-  return { record, status, entitlements, loading, subscribe, cancelAutoRenew, refresh };
+  // What the main process reported, less however long ago it reported it —
+  // so the countdown moves every minute without it having to push a state.
+  const elapsed = reading.readAt === 0 ? 0 : now - reading.readAt;
+  const trialMsRemaining = Math.max(0, state.trial.msRemaining - elapsed);
+
+  return {
+    state,
+    entitlements,
+    loading,
+    plans,
+    plansAreFallback,
+    methods,
+    trialMsRemaining,
+    createOrder,
+    watchOrder,
+    refresh,
+  };
 }

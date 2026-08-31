@@ -41,7 +41,12 @@ The Node.js process that owns the native window, all IPC handlers, and the Pytho
 electron/
 ├── main.js           # Entry point. BrowserWindow, IPC handlers, Python spawn
 ├── preload.js        # contextBridge — exposes window.electronAPI to the renderer
-├── subscription.js   # The subscription record, read from and written to userData
+├── subscription-monitor.js # Licence state machine, trial, order polling
+├── license-config.js # Endpoint, grace period, offline plan prices
+├── license-token.js  # Token verification, and what an expiry means today
+├── license-request.js# The HTTP call to the licence service, with its timeout
+├── device-id.js      # Hardware-derived device id, for the per-machine trial
+├── secure-store.js   # Machine-bound AES-256-GCM for the licence and trial files
 └── tsconfig.json     # TypeScript config for the electron/ directory
 ```
 
@@ -60,9 +65,13 @@ electron/
 | `job:meta` | main → renderer | Forward `STATE:meta:<json>` (video metadata) |
 | `job:done` | main → renderer | Forward `STATE:done:<path>` |
 | `job:error` | main → renderer | Forward `ERROR:<msg>` from stdout |
-| `subscription:getStatus` | renderer → main | Read the record, granting the trial on first run |
-| `subscription:subscribe` | renderer → main | Record a (simulated) payment for a plan |
-| `subscription:cancel` | renderer → main | Turn auto-renewal off, keeping the plan |
+| `license:getState` | renderer → main | The licence + trial state machine's current state |
+| `license:activate` / `:deactivate` / `:refresh` | renderer → main | Enter a licence key, sign out, re-check |
+| `license:getConfig` | renderer → main | Endpoint and cadences (never the signing secret) |
+| `license:state-changed` | main → renderer | Pushed when the trial, a payment or a refresh changes it |
+| `payment:getPlans` / `:getMethods` | renderer → main | From the licence service, which owns prices |
+| `payment:createOrder` / `:orderStatus` / `:history` | renderer → main | The order flow |
+| `payment:openExternal` / `:openEmbedded` / `:closeEmbedded` | renderer → main | The provider's checkout page |
 
 ### stdout protocol (parsed in `main.js`)
 
@@ -96,7 +105,7 @@ renderer/
 │   ├── App.tsx                     # Root component — layout, state machine, IPC wiring
 │   ├── types.ts                    # Shared TypeScript types
 │   ├── capabilities.ts             # Whether this machine can run the heavier methods
-│   ├── subscription.ts             # Plans, trial arithmetic, and what each tier unlocks
+│   ├── subscription.ts             # Licence shapes, what each state unlocks, formatting
 │   ├── index.css                   # Theme tokens (light + dark) and global styles
 │   ├── utils.ts                    # Pure utility functions
 │   ├── test-setup.ts               # Vitest global setup (@testing-library/jest-dom)
@@ -107,7 +116,6 @@ renderer/
 │   │   ├── DonePanel.tsx           # Completion view — output path + open button
 │   │   ├── SubscriptionCard.tsx    # One plan: price, discount, subscribe button
 │   │   ├── SubscriptionStatusBar.tsx # Bottom bar — plan or trial countdown
-│   │   ├── PaymentQr.tsx           # The stand-in QR code the payment dialog shows
 │   │   ├── ThemePicker.tsx         # Light / dark / follow-the-system
 │   │   └── EmptyState.tsx          # Idle state — drop zone / open prompt
 │   ├── pages/
