@@ -87,7 +87,12 @@ test.describe('on a free trial', () => {
     await loadVideo(page, electronApp);
 
     const temporal = page.getByTestId('method-temporal');
-    await expect(temporal).toBeEnabled();
+    // Not `toBeEnabled`: temporal fill also needs four cores and 4 GB, and a
+    // runner may have neither — a different reason, checked in sidebar.spec.
+    // What the allowance decides is that neither the subscription nor a spent
+    // allowance is what stands in the way.
+    await expect(temporal).not.toContainText('Needs a subscription');
+    await expect(temporal).not.toContainText('trial runs');
     await expect(page.getByTestId('temporal-uses-left')).toHaveText('3 left');
   });
 
