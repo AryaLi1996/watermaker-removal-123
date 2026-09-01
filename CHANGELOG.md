@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Temporal fill keeps hard edges sharp.** A caption, a logo or black text
+  behind the mark used to come back as a soft grey ramp, and the repaired
+  patch read as smoother than the picture around it. Four changes, all in the
+  `balanced` and `high` settings:
+  - The affine motion model is now re-solved with the flow vectors it explains
+    worst held down. Least squares answers to the square of every error, so
+    the few wild vectors an estimator produces where the brightness steps used
+    to tilt the whole model — which was then extrapolated across the entire
+    selection. This is the bulk of the improvement.
+  - A fused pixel is now a *chosen* sample rather than an average of several.
+    The median is kept, but only as the reference for picking the candidate
+    nearest it, so the patch keeps the frequency content the footage had.
+  - A candidate read from beside an edge in its own frame counts for less,
+    since that is where a sub-pixel model error becomes a whole pixel of
+    colour error.
+  - The feather ramp narrows where an edge crosses the seam, instead of
+    turning a crisp boundary into a gradient.
+
+  Measured on a synthetic caption pan: `high` goes from 27.6dB to 34.5dB PSNR
+  for about 10% more time, and `balanced` from 19.4dB to 28.7dB — better than
+  the *old* `high` managed, at about two thirds of its cost. `balanced` now
+  computes its flow at full resolution, which is most of that and costs about
+  a millisecond a frame. `fast` is unchanged: it exists for the preview.
+
 - **Subscriptions are now held by the shared license service**, not by this
   app. The plans, the free trial, the orders and the licence itself live with
   the Lambda + DynamoDB service documented in

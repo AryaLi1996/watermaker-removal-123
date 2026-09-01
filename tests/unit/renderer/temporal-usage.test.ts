@@ -104,9 +104,16 @@ describe('who the allowance applies to', () => {
 describe('a count that cannot be trusted', () => {
   it('is encrypted, so it cannot be reset in a text editor', () => {
     usage.recordUse(dir, TRIAL);
-    const raw = readFileSync(path.join(dir, usage.USAGE_FILE));
-    expect(raw.toString('utf8')).not.toContain('count');
-    expect(raw.toString('utf8')).not.toContain('1');
+    const text = readFileSync(path.join(dir, usage.USAGE_FILE)).toString('utf8');
+    // The record as it would read if it were written in the clear, and then
+    // the weaker property that the file is not readable structured text at
+    // all. Looking for a single character like '1' does not work here: the
+    // file is 39 bytes of ciphertext, so any one byte value turns up in it by
+    // chance — measured at 15.5% of runs, which is where this test's history
+    // of failing for no reason came from.
+    expect(text).not.toContain('count');
+    expect(text).not.toContain(JSON.stringify({ count: 1 }));
+    expect(() => JSON.parse(text)).toThrow();
   });
 
   it('reads a file somebody edited as no uses at all', () => {
