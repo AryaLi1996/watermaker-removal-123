@@ -61,9 +61,11 @@ describe('what a state unlocks', () => {
     expect(entitlementsFor(state('grace_period')).temporalFill).toBe(true);
   });
 
-  it('withholds them from a trial, and from no subscription at all', () => {
-    // The trial buys time to evaluate the basics rather than a preview of
-    // the paid features — one constant changes that.
+  it('withholds them from a trial with no allowance to spend', () => {
+    // The trial buys time to evaluate the basics. It now also gets a metered
+    // run or two of temporal fill, but only when the main process hands one
+    // over: with no allowance in sight this is the free tier, as it always
+    // was — which is also what an older main process gets.
     for (const s of [state('unlicensed', { trial: trial({ used: true, active: true }) }), state('unlicensed'), state('expired')]) {
       const limits = entitlementsFor(s);
       expect(limits.temporalFill).toBe(false);
@@ -75,6 +77,41 @@ describe('what a state unlocks', () => {
 
   it('withholds them while the state is still being read', () => {
     expect(entitlementsFor(LOADING_STATE).temporalFill).toBe(false);
+  });
+
+  describe('the trial\'s metered temporal fill', () => {
+    const trialing = state('unlicensed', { trial: trial({ used: true, active: true }) });
+    const allowance = (over = {}) => ({ allowed: true, remaining: 3, limit: 3, limited: true, ...over });
+
+    it('lends temporal fill to a trial that still has runs left', () => {
+      const limits = entitlementsFor(trialing, allowance());
+      expect(limits.temporalFill).toBe(true);
+      // The learned engine is temporal fill's other implementation, not a
+      // feature of its own: metering one and withholding the other would
+      // offer a method that cannot run its faster path for no visible reason.
+      expect(limits.deepLearning).toBe(true);
+    });
+
+    it('lends nothing else with it', () => {
+      // An allowance of exports is not a subscription: the preview cap and
+      // the batch limit stay where the free tier put them.
+      const limits = entitlementsFor(trialing, allowance());
+      expect(limits.maxPreviewSeconds).toBe(1);
+      expect(limits.batchLimit).toBe(5);
+    });
+
+    it('takes it back once the runs are spent', () => {
+      const limits = entitlementsFor(trialing, allowance({ allowed: false, remaining: 0 }));
+      expect(limits.temporalFill).toBe(false);
+      expect(limits.deepLearning).toBe(false);
+    });
+
+    it('leaves a subscriber on the paid tier regardless of the count', () => {
+      // A subscriber is not "0 of 3 used"; the allowance does not apply.
+      const limits = entitlementsFor(state('active'), allowance({ allowed: false, remaining: 0 }));
+      expect(limits.temporalFill).toBe(true);
+      expect(limits.maxPreviewSeconds).toBe(Infinity);
+    });
   });
 });
 

@@ -39,6 +39,9 @@ interface SubscriptionPageProps {
   createOrder: (planId: PlanId, method: PaymentMethodId) => Promise<Order | OrderError>;
   watchOrder: (orderId: string, signal: { cancelled: boolean }) => Promise<OrderOutcome>;
   refresh: () => Promise<void>;
+  /** Whether this build offers the box for typing a licence in by hand. */
+  manualActivation?: boolean;
+  activate?: (code: string) => Promise<{ success: boolean; error?: string; code?: string }>;
 }
 
 const FAQ = [
@@ -65,13 +68,25 @@ type Phase =
   // license belonging to another app, which no amount of retrying fixes.
   | { kind: 'error'; message: string; code?: string };
 
+/** Where the manual activation box has got to. */
+type Activation =
+  | { kind: 'idle' }
+  | { kind: 'working' }
+  | { kind: 'ok' }
+  | { kind: 'failed'; message: string; code?: string };
+
 export default function SubscriptionPage({
   state, plans, plansAreFallback, methods, trialMsRemaining, createOrder, watchOrder, refresh,
+  manualActivation = false, activate,
 }: SubscriptionPageProps) {
   const { t, locale } = useTranslation();
   // The chosen method, or none chosen yet.
   const [picked, setPicked] = useState<PaymentMethodId | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
+  // The manual activation box, kept apart from `phase`: it is a side door,
+  // and a failure there should not clear a payment the user is watching.
+  const [code, setCode] = useState('');
+  const [activation, setActivation] = useState<Activation>({ kind: 'idle' });
   // Shared with the in-flight poll so cancelling actually stops it, rather
   // than leaving it to finish and overwrite whatever the user did next.
   const watching = useRef<{ cancelled: boolean }>({ cancelled: false });
@@ -121,6 +136,30 @@ export default function SubscriptionPage({
     else setPhase({ kind: 'idle' });
   }, [createOrder, method, watchOrder]);
 
+  const submitCode = useCallback(async () => {
+    const entered = code.trim();
+    if (!entered || !activate) return;
+    setActivation({ kind: 'working' });
+    const result = await activate(entered);
+    if (result.success) {
+      setActivation({ kind: 'ok' });
+      setCode('');
+      return;
+    }
+    setActivation({ kind: 'failed', message: result.error ?? '', code: result.code });
+  }, [activate, code]);
+
+  /** The clipboard, for a token far too long to retype. Silently ignored
+   *  where the browser refuses it: the field still accepts a paste. */
+  const pasteCode = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) setCode(text.trim());
+    } catch {
+      // No clipboard permission. Ctrl/Cmd-V still works.
+    }
+  }, []);
+
   const stopWaiting = useCallback(() => {
     watching.current.cancelled = true;
     void window.electronAPI.paymentCloseEmbedded?.();
@@ -130,6 +169,7 @@ export default function SubscriptionPage({
   // A failure with wording of its own — a licence belonging to another app —
   // or null, in which case the reason the service gave is what to show.
   const errorKey = phase.kind === 'error' ? licenseErrorKey(phase.code) : null;
+  const activationErrorKey = activation.kind === 'failed' ? licenseErrorKey(activation.code) : null;
 
   const licensed = isLicensed(state.status);
   const expiry = state.expiresAt
@@ -309,6 +349,73 @@ export default function SubscriptionPage({
               {t('subscription.refresh')}
             </button>
           </div>
+        )}
+
+        {/* Activating by hand: a licence key, or a token pasted whole.
+            Hidden unless the build asks for it — the shop issues neither, so
+            an always-on box would mostly generate support questions. The
+            verification is the online one: see `activate` in
+            electron/subscription-monitor.js. */}
+        {manualActivation && (
+          <details data-testid="manual-activation">
+            <summary style={{ color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer', padding: '4px 0' }}>
+              {t('subscription.activateHeading')}
+            </summary>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 8 }}>
+              <p style={{ color: 'var(--text-faint)', fontSize: 11 }}>{t('subscription.activateHint')}</p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  data-testid="activation-code"
+                  aria-label={t('subscription.activateHeading')}
+                  value={code}
+                  onChange={(e) => { setCode(e.target.value); setActivation({ kind: 'idle' }); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void submitCode(); }}
+                  placeholder={t('subscription.activatePlaceholder')}
+                  spellCheck={false}
+                  autoComplete="off"
+                  style={{
+                    flex: 1, minWidth: 0, background: 'var(--bg)', color: 'var(--text)',
+                    border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px',
+                    fontSize: 12, fontFamily: 'monospace',
+                  }}
+                />
+                <button
+                  data-testid="activation-paste"
+                  onClick={() => { void pasteCode(); }}
+                  style={{
+                    background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
+                    padding: '6px 12px', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer',
+                  }}
+                >
+                  {t('subscription.activatePaste')}
+                </button>
+                <button
+                  data-testid="activation-submit"
+                  onClick={() => { void submitCode(); }}
+                  disabled={!code.trim() || activation.kind === 'working'}
+                  style={{
+                    background: code.trim() ? 'var(--accent)' : 'var(--border)', border: 'none', borderRadius: 6,
+                    padding: '6px 16px', color: code.trim() ? 'var(--accent-contrast)' : 'var(--text-disabled)',
+                    fontSize: 12, cursor: code.trim() ? 'pointer' : 'default',
+                  }}
+                >
+                  {activation.kind === 'working' ? t('subscription.activateWorking') : t('subscription.activate')}
+                </button>
+              </div>
+              {activation.kind === 'ok' && (
+                <p data-testid="activation-success" style={{ color: 'var(--success-text)', fontSize: 11 }}>
+                  {t('subscription.activateSuccess')}
+                </p>
+              )}
+              {activation.kind === 'failed' && (
+                <p data-testid="activation-error" style={{ color: 'var(--danger-text)', fontSize: 11 }}>
+                  {activationErrorKey
+                    ? t(activationErrorKey)
+                    : t('subscription.activateFailed', { reason: activation.message })}
+                </p>
+              )}
+            </div>
+          </details>
         )}
 
         {/* FAQ and the refund policy */}

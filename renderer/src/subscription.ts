@@ -61,9 +61,13 @@ export type LicenseStatus = 'loading' | 'unlicensed' | 'active' | 'grace_period'
  * "try again"; this one never resolves by retrying, so it gets its own
  * message telling the user to activate here instead.
  */
-export type LicenseErrorCode = 'app_mismatch';
+export type LicenseErrorCode = 'app_mismatch' | 'expired';
 
 export const APP_MISMATCH: LicenseErrorCode = 'app_mismatch';
+
+/** A licence that verifies, but whose period is already over. Typing it in
+ *  again will not help, so it is worded as its own outcome. */
+export const EXPIRED: LicenseErrorCode = 'expired';
 
 /**
  * How watching an order ended.
@@ -77,7 +81,9 @@ export type OrderOutcome = 'paid' | 'timeout' | 'cancelled' | 'mismatch';
 /** The message for a coded failure, or null when the raw reason is all there
  *  is to say. */
 export function licenseErrorKey(code?: string | null): string | null {
-  return code === APP_MISMATCH ? 'subscription.appMismatch' : null;
+  if (code === APP_MISMATCH) return 'subscription.appMismatch';
+  if (code === EXPIRED) return 'subscription.activateExpired';
+  return null;
 }
 
 export interface LicensePayload {
@@ -174,14 +180,42 @@ export const PAID_TIER: Entitlements = {
 };
 
 /**
+ * How much of the trial's temporal allowance is left, as the main process
+ * reports it. Null until it has answered.
+ */
+export interface TemporalAllowance {
+  /** Whether temporal fill may run at all right now. */
+  allowed: boolean;
+  remaining: number;
+  limit: number;
+  limited: boolean;
+}
+
+/**
  * The limits in force.
  *
- * The trial deliberately sits on the free tier: it buys time to evaluate the
- * basics rather than a preview of the paid features. One constant changes
- * that if the product decides otherwise.
+ * The trial used to sit on the free tier outright: it bought time to evaluate
+ * the basics, and none of the paid features. It now gets a metered allowance
+ * of temporal fill on top — enough to finish something small with the method
+ * that is the reason to subscribe, not enough to finish a project with it.
+ * The count and the cap are the main process's (electron/temporal-usage.js);
+ * this only spends what it is handed.
+ *
+ * `allowance` omitted means no allowance is known — an older main process, or
+ * the first frames before it has answered — and the trial falls back to the
+ * free tier exactly as it did before.
  */
-export function entitlementsFor(state: LicenseState): Entitlements {
-  return isLicensed(state.status) ? PAID_TIER : FREE_TIER;
+export function entitlementsFor(
+  state: LicenseState,
+  allowance?: TemporalAllowance | null,
+): Entitlements {
+  if (isLicensed(state.status)) return PAID_TIER;
+  if (!allowance?.allowed) return FREE_TIER;
+  // Temporal fill and the learned engine move together: the second is the
+  // first's other implementation, not a feature of its own, so metering one
+  // and withholding the other would offer a method that cannot run its
+  // faster path for no reason the user could see.
+  return { ...FREE_TIER, temporalFill: true, deepLearning: true };
 }
 
 // ─── Naming and formatting ─────────────────────────────────────────────

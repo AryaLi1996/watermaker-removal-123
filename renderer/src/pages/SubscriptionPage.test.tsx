@@ -222,6 +222,110 @@ describe('paying', () => {
   });
 });
 
+describe('activating by hand', () => {
+  /**
+   * The box is for internal testing and the occasional offline or redeemed
+   * activation, so the first thing worth pinning is that it is not there by
+   * default: a field asking for a code the shop never issues would mostly
+   * generate support questions.
+   */
+  it('is absent unless the build asks for it', () => {
+    renderPage();
+    expect(screen.queryByTestId('manual-activation')).toBeNull();
+  });
+
+  it('appears when the build enables it', () => {
+    renderPage(TRIALING, { manualActivation: true });
+    expect(screen.getByTestId('manual-activation')).not.toBeNull();
+  });
+
+  it('passes what was typed to the same verification a purchase uses', async () => {
+    const activate = vi.fn().mockResolvedValue({ success: true });
+    renderPage(TRIALING, { manualActivation: true, activate });
+
+    fireEvent.change(screen.getByTestId('activation-code'), { target: { value: '  KEY12345  ' } });
+    fireEvent.click(screen.getByTestId('activation-submit'));
+
+    // Trimmed: a code copied out of an email brings whitespace with it.
+    await waitFor(() => expect(activate).toHaveBeenCalledWith('KEY12345'));
+    await waitFor(() => expect(screen.getByTestId('activation-success')).toBeTruthy());
+  });
+
+  it('will not submit an empty box', () => {
+    const activate = vi.fn();
+    renderPage(TRIALING, { manualActivation: true, activate });
+
+    expect((screen.getByTestId('activation-submit') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId('activation-submit'));
+    expect(activate).not.toHaveBeenCalled();
+  });
+
+  it('says what was wrong with a code that was refused', async () => {
+    const activate = vi.fn().mockResolvedValue({ success: false, error: 'License key not accepted' });
+    renderPage(TRIALING, { manualActivation: true, activate });
+
+    fireEvent.change(screen.getByTestId('activation-code'), { target: { value: 'NOPE1234' } });
+    fireEvent.click(screen.getByTestId('activation-submit'));
+
+    await waitFor(() => expect(screen.getByTestId('activation-error'))
+      .toHaveTextContent('License key not accepted'));
+  });
+
+  it('words an expired licence as expired, not as a typo', async () => {
+    const activate = vi.fn().mockResolvedValue({ success: false, code: 'expired', error: 'This license has already expired' });
+    renderPage(TRIALING, { manualActivation: true, activate });
+
+    fireEvent.change(screen.getByTestId('activation-code'), { target: { value: 'a.b.c' } });
+    fireEvent.click(screen.getByTestId('activation-submit'));
+
+    await waitFor(() => expect(screen.getByTestId('activation-error')).toHaveTextContent(/expired/i));
+  });
+
+  it('words a licence bought for another app as such', async () => {
+    const activate = vi.fn().mockResolvedValue({ success: false, code: 'app_mismatch', error: 'belongs to soothevoice' });
+    renderPage(TRIALING, { manualActivation: true, activate });
+
+    fireEvent.change(screen.getByTestId('activation-code'), { target: { value: 'a.b.c' } });
+    fireEvent.click(screen.getByTestId('activation-submit'));
+
+    await waitFor(() => expect(screen.getByTestId('activation-error')).toHaveTextContent(/different app/i));
+  });
+
+  it('submits on Enter, since a pasted token is long enough to want it', async () => {
+    const activate = vi.fn().mockResolvedValue({ success: true });
+    renderPage(TRIALING, { manualActivation: true, activate });
+
+    const box = screen.getByTestId('activation-code');
+    fireEvent.change(box, { target: { value: 'a.b.c' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(activate).toHaveBeenCalledWith('a.b.c'));
+  });
+
+  it('fills the box from the clipboard', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { readText: vi.fn().mockResolvedValue(' pasted.token.here ') },
+      configurable: true,
+    });
+    renderPage(TRIALING, { manualActivation: true, activate: vi.fn() });
+
+    fireEvent.click(screen.getByTestId('activation-paste'));
+    await waitFor(() => expect((screen.getByTestId('activation-code') as HTMLInputElement).value)
+      .toBe('pasted.token.here'));
+  });
+
+  it('carries on when the clipboard is refused, rather than throwing', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { readText: vi.fn().mockRejectedValue(new Error('denied')) },
+      configurable: true,
+    });
+    renderPage(TRIALING, { manualActivation: true, activate: vi.fn() });
+
+    fireEvent.click(screen.getByTestId('activation-paste'));
+    await waitFor(() => expect((screen.getByTestId('activation-code') as HTMLInputElement).value).toBe(''));
+    expect(screen.queryByTestId('activation-error')).toBeNull();
+  });
+});
+
 describe('what the page says about the current state', () => {
   it('counts the trial down', () => {
     renderPage();

@@ -13,7 +13,7 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { SubscriptionMonitor, APP_MISMATCH } = require('../../../electron/subscription-monitor.js');
+const { SubscriptionMonitor, APP_MISMATCH, EXPIRED, looksLikeToken } = require('../../../electron/subscription-monitor.js');
 const { APP_ID } = require('../../../electron/license-config.js');
 const token = require('../../../electron/license-token.js');
 const secureStore = require('../../../electron/secure-store.js');
@@ -430,6 +430,104 @@ describe('which app the licence is for', () => {
     await monitor.initialize();
 
     expect((await monitor.createOrder('monthly', 'alipay')).code).toBe(APP_MISMATCH);
+  });
+});
+
+describe('activating by hand', () => {
+  /**
+   * The box behind ENABLE_MANUAL_ACTIVATION takes two shapes, and the whole
+   * point is that neither is a way past the checks a purchase goes through.
+   */
+  const routes = {
+    'trial/status': { trialUsed: false, trialStart: null, trialEnd: null },
+    'trial/activate': { success: true, trialStart: NOW, trialEnd: NOW + 3 * DAY },
+  };
+
+  it('tells a licence key from a pasted token by shape alone', () => {
+    // The service's own _LICENSE_KEY_RE admits no dots, so the two can never
+    // be confused for one another.
+    expect(looksLikeToken('header.body.signature')).toBe(true);
+    expect(looksLikeToken('KEY12345')).toBe(false);
+    expect(looksLikeToken('ABC-123_xyz')).toBe(false);
+    // Not three non-empty parts: not a token.
+    expect(looksLikeToken('a..c')).toBe(false);
+    expect(looksLikeToken('a.b.c.d')).toBe(false);
+  });
+
+  it('exchanges a licence key with the service, as a purchase does', async () => {
+    const paid = token.createToken({
+      userId: 'u1', planId: 'monthly', licenseKey: 'KEY12345', expiresAt: NOW + 30 * DAY, issuedAt: NOW,
+    });
+    const { request, calls } = stubService({ ...routes, '': { valid: true, token: paid } });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+
+    expect((await monitor.activate('KEY12345')).success).toBe(true);
+    expect(monitor.getState().status).toBe('active');
+    // It went to the service — this path is the online one, not a shortcut.
+    const exchanged = calls.find((c) => c.path === '');
+    expect(exchanged?.body).toMatchObject({ licenseKey: 'KEY12345', appId: APP_ID });
+  });
+
+  it('adopts a pasted token without needing the network at all', async () => {
+    // The case the online flow cannot cover, and the reason the box exists.
+    const pasted = token.createToken({
+      userId: 'u1', planId: 'annual', licenseKey: 'KEY12345', expiresAt: NOW + 365 * DAY, issuedAt: NOW,
+    });
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+
+    expect((await monitor.activate(pasted)).success).toBe(true);
+    expect(monitor.getState().status).toBe('active');
+    expect(monitor.getState().payload.planId).toBe('annual');
+  });
+
+  it('refuses a token nobody with the signing secret produced', async () => {
+    const forged = token.createToken({
+      userId: 'u1', planId: 'annual', licenseKey: 'KEY12345', expiresAt: NOW + 365 * DAY, issuedAt: NOW,
+    }, 'not-the-signing-secret');
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+
+    expect((await monitor.activate(forged)).success).toBe(false);
+    expect(monitor.isLicensedNow()).toBe(false);
+  });
+
+  it('refuses a token issued for another app, exactly as the paid path does', async () => {
+    const sibling = token.createToken({
+      userId: 'u1', appId: 'soothevoice', planId: 'annual', licenseKey: 'KEY12345',
+      expiresAt: NOW + 365 * DAY, issuedAt: NOW,
+    });
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+
+    const result = await monitor.activate(sibling);
+    expect(result.success).toBe(false);
+    expect(result.code).toBe(APP_MISMATCH);
+    expect(monitor.isLicensedNow()).toBe(false);
+  });
+
+  it('says a token is expired rather than that it was not accepted', async () => {
+    // It verifies; it is simply over. Reporting "not accepted" would send the
+    // user hunting for a typo that is not there.
+    const stale = token.createToken({
+      userId: 'u1', planId: 'monthly', licenseKey: 'KEY12345',
+      expiresAt: NOW - 90 * DAY, issuedAt: NOW - 120 * DAY,
+    });
+    const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+
+    const result = await monitor.activate(stale);
+    expect(result.success).toBe(false);
+    expect(result.code).toBe(EXPIRED);
+    expect(monitor.isLicensedNow()).toBe(false);
+  });
+
+  it('refuses an empty box without calling anything', async () => {
+    const { request } = stubService(routes);
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+    expect((await monitor.activate('   ')).success).toBe(false);
   });
 });
 

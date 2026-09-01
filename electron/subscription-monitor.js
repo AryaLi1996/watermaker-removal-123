@@ -44,6 +44,9 @@ const ANON_ID_FILE = '.anon_id';
  */
 const APP_MISMATCH = 'app_mismatch';
 
+/** A token that verifies but whose period is already over. */
+const EXPIRED = 'expired';
+
 /**
  * Whether a service reply is about this app at all.
  *
@@ -68,6 +71,19 @@ function isAppMismatch(data) {
 function tokenIsOurs(payload) {
   const appId = payload && payload.appId;
   return typeof appId !== 'string' || appId === '' || appId === APP_ID;
+}
+
+/**
+ * Whether what was typed in is a signed token rather than a licence key.
+ *
+ * The two cannot be confused: the service's own `_LICENSE_KEY_RE` is
+ * `[A-Za-z0-9_-]{8,64}`, which admits no dots at all, while a token is three
+ * dot-separated segments. So the shape decides which path to take, and a key
+ * can never be mistaken for a token that then fails to verify.
+ */
+function looksLikeToken(input) {
+  const parts = String(input).split('.');
+  return parts.length === 3 && parts.every((part) => part.length > 0);
 }
 
 /** A query string with `appId` always on it, escaped once and in one place. */
@@ -378,11 +394,34 @@ class SubscriptionMonitor extends EventEmitter {
   }
 
   // ── License ─────────────────────────────────────────────────────────────
-  /** The legacy path: a license key the user was emailed, exchanged for a
-   *  token by the service's default route. */
+  /**
+   * Activate from something the user typed or pasted in.
+   *
+   * Two shapes arrive here. A licence key — emailed after a purchase, or
+   * redeemed — is exchanged with the service for a fresh token, which is the
+   * path this has always taken. A whole signed token, pasted in, is adopted
+   * directly.
+   *
+   * The second is not a way past anything. `_adoptToken` runs exactly the
+   * checks a token from a settled order runs — the HMAC, and the appId — so
+   * producing one that this accepts means holding the signing secret, which
+   * is the same thing the payment path already rests on. What it buys is an
+   * activation that works with no network at all, which is the case the
+   * online flow cannot cover.
+   */
   async activate(licenseKey) {
     const key = String(licenseKey || '').trim();
     if (!key) return { success: false, error: 'licenseKey required' };
+
+    if (looksLikeToken(key)) {
+      const adopted = this._adoptToken(key);
+      // Adopting an expired token is not a failure to verify, and saying "not
+      // accepted" would send the user to look for a typo that is not there.
+      if (adopted.success && !this.isLicensedNow()) {
+        return { success: false, code: EXPIRED, error: 'This license has already expired' };
+      }
+      return adopted;
+    }
 
     try {
       const data = await this._request('POST', '', { licenseKey: key, appId: APP_ID });
@@ -567,6 +606,6 @@ class SubscriptionMonitor extends EventEmitter {
 }
 
 module.exports = {
-  SubscriptionMonitor, NO_TRIAL, APP_MISMATCH, isAppMismatch, tokenIsOurs,
+  SubscriptionMonitor, NO_TRIAL, APP_MISMATCH, EXPIRED, isAppMismatch, tokenIsOurs, looksLikeToken,
   TOKEN_FILE, TRIAL_FILE, TS_FILE, ANON_ID_FILE,
 };

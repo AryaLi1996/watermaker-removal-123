@@ -18,6 +18,7 @@ import { normalizeCoordinates, defaultOutputName, formatDuration, mediaUrl, NULL
 import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX } from './errors';
 import type { FriendlyError } from './errors';
 import { BUILT_IN_PRESETS, loadCustomPresets, saveCustomPresets, presetFromCurrent } from './presets';
+import { topbarInset } from './titlebar';
 import type { Preset, PresetParams } from './presets';
 import { useHistory } from './hooks/useHistory';
 import type { JobSettings } from './hooks/useHistory';
@@ -38,6 +39,11 @@ type Screen = 'editor' | 'subscription' | 'settings';
 /** How a feature reads when the subscription, not the hardware, is what
  *  rules it out. Same shape the capability checks return. */
 const LOCKED: Availability = { available: false, reasonKey: 'subscription.lockedFeature' };
+
+/** Locked because the trial's allowance of temporal exports is spent, rather
+ *  than because the method was never on offer. Different words: one is "buy
+ *  this", the other is "you have had your three". */
+const TRIAL_SPENT: Availability = { available: false, reasonKey: 'subscription.temporalTrialSpent' };
 
 /** The screens the top bar switches between, in the order they appear. */
 const NAV_ITEMS: { id: Screen; labelKey: string }[] = [
@@ -78,6 +84,9 @@ function App() {
   // switch that silently falls back on every run is a switch that lies.
   const [selectedDeepLearning, setDeepLearning] = useState(false);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  // macOS floats the window's own controls over the top-left of the page, and
+  // takes them away again in full screen. See titlebar.ts.
+  const [isFullScreen, setIsFullScreen] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stateLabel, setStateLabel] = useState('');
   const [error, setError] = useState<FriendlyError>({ key: null, raw: '' });
@@ -98,8 +107,14 @@ function App() {
   // A paid feature is off the table the same way an underpowered machine puts
   // one off the table: greyed out with the reason on the card, rather than a
   // control that accepts a click and then refuses the job.
-  const { entitlements } = subscription;
-  const temporal = entitlements.temporalFill ? temporalAvailability(systemInfo) : LOCKED;
+  const { entitlements, temporalUsage } = subscription;
+  // Three states, not two: available, never offered, and offered until the
+  // trial's allowance ran out. The last one has to say so — "needs a
+  // subscription" on a method the user ran twice this morning reads as a bug.
+  const spentTrial = !entitlements.temporalFill && !!temporalUsage?.limited && temporalUsage.used > 0;
+  const temporal = entitlements.temporalFill
+    ? temporalAvailability(systemInfo)
+    : (spentTrial ? TRIAL_SPENT : LOCKED);
 
   // The method and the engine a job would actually run. A trial can run out
   // with temporal fill selected, so the selection is read through what the
@@ -155,6 +170,11 @@ function App() {
   // is running, and until the answer arrives every method stays on offer.
   useEffect(() => {
     void window.electronAPI.systemInfo().then(setSystemInfo).catch(() => setSystemInfo(null));
+  }, []);
+
+  useEffect(() => {
+    window.electronAPI.onFullScreenChange?.(setIsFullScreen);
+    return () => window.electronAPI.removeWindowListeners?.();
   }, []);
 
   // A downloaded update installs on the user's say-so, never mid-export.
@@ -420,7 +440,10 @@ function App() {
       <div
         className="app-topbar"
         style={{
-          display: 'flex', alignItems: 'center', gap: 16, padding: '0 14px', height: 40,
+          display: 'flex', alignItems: 'center', gap: 16, height: 40,
+          // Right padding is the ordinary one; the left keeps clear of the
+          // window controls macOS floats over this corner.
+          paddingRight: 14, paddingLeft: topbarInset(systemInfo?.platform, isFullScreen),
           background: 'var(--surface)', borderBottom: '1px solid var(--border)',
         }}
       >
@@ -554,7 +577,7 @@ function App() {
               onSaveCurrent={saveCurrentPreset}
             />
 
-            <MethodPicker method={method} deepLearning={deepLearning} deep={deep} deepPreset={deepPreset} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} temporalQuality={temporalQuality} temporal={temporal} videoMeta={videoMeta} cpuCount={systemInfo?.cpuCount} previewSeconds={effectivePreviewSeconds} disabled={!isLoaded} onChange={handleMethodChange} />
+            <MethodPicker method={method} deepLearning={deepLearning} deep={deep} deepPreset={deepPreset} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} temporalQuality={temporalQuality} temporal={temporal} videoMeta={videoMeta} cpuCount={systemInfo?.cpuCount} previewSeconds={effectivePreviewSeconds} temporalUsage={temporalUsage} disabled={!isLoaded} onChange={handleMethodChange} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{t('file.output')}</p>
@@ -691,6 +714,8 @@ function App() {
           createOrder={subscription.createOrder}
           watchOrder={subscription.watchOrder}
           refresh={subscription.refresh}
+          manualActivation={subscription.manualActivation}
+          activate={subscription.activate}
         />
       )}
 

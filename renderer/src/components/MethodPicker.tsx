@@ -1,7 +1,7 @@
 /**
  * MethodPicker — sidebar control panel for removal algorithm and parameters.
  */
-import type { RemovalMethod, TemporalQuality, VideoMeta } from '../types';
+import type { RemovalMethod, TemporalQuality, TemporalUsage, VideoMeta } from '../types';
 import type { Availability } from '../capabilities';
 import { TEMPORAL_QUALITIES, PREVIEW_TEMPORAL_QUALITY, previewIsDowngraded } from '../capabilities';
 import { estimateTemporalSeconds, formatEstimate } from '../estimate';
@@ -27,6 +27,9 @@ interface MethodPickerProps {
   temporalQuality: TemporalQuality;
   /** Whether this machine can run temporal inpainting, and why not if it cannot. */
   temporal: Availability;
+  /** The trial's remaining temporal exports, or null where nothing is
+   *  metered — a subscriber, or a main process that does not count them. */
+  temporalUsage?: TemporalUsage | null;
   /** The loaded video, for the "how long will this take" forecast. Null before one is. */
   videoMeta: VideoMeta | null;
   /** Cores the frame pool will spread the work over, where the host said. */
@@ -106,6 +109,7 @@ export default function MethodPicker({
   dy,
   temporalQuality,
   temporal,
+  temporalUsage,
   videoMeta,
   cpuCount,
   previewSeconds,
@@ -201,6 +205,19 @@ export default function MethodPicker({
                     >
                       ⓘ
                     </span>
+                    {/* How many of the trial's exports are left. Shown before
+                        they run out, not after: a count that only appears
+                        once it reads zero tells the user about a limit at
+                        the exact moment they can no longer plan around it.
+                        Absent entirely for a subscriber, who has no count. */}
+                    {temporalUsage?.limited && temporalUsage.remaining > 0 && (
+                      <span
+                        data-testid="temporal-uses-left"
+                        style={{ color: 'var(--text-faint)', fontSize: 10, marginLeft: 'auto' }}
+                      >
+                        {t('method.temporalUsesLeft', { count: temporalUsage.remaining })}
+                      </span>
+                    )}
                   </>
                 )}
               </div>

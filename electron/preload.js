@@ -54,10 +54,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   paymentCloseEmbedded: () => ipcRenderer.invoke('payment:closeEmbedded'),
   onPaymentWindowClosed: (cb) => ipcRenderer.on('payment:window-closed', () => cb()),
 
+  // Whether the window is full screen. Only macOS acts on it, where going
+  // full screen takes the traffic lights away and frees the corner the top
+  // bar was keeping clear for them.
+  onFullScreenChange: (cb) => ipcRenderer.on('window:full-screen', (_e, v) => cb(v)),
+
+  // The trial's allowance of temporal-fill exports. Owned by the main
+  // process, which is also what enforces it — see electron/temporal-usage.js.
+  temporalUsage: () => ipcRenderer.invoke('temporal:usage'),
+  onTemporalUsage: (cb) => ipcRenderer.on('temporal:usage', (_e, v) => cb(v)),
+
   // Host platform
   systemInfo: () => ipcRenderer.invoke('system:info'),
   tempDir: () => ipcRenderer.invoke('system:tempDir'),
   notify: (title, body) => ipcRenderer.invoke('system:notify', title, body),
+
+  removeWindowListeners: () => {
+    ipcRenderer.removeAllListeners('window:full-screen');
+  },
+
+  removeTemporalUsageListeners: () => {
+    ipcRenderer.removeAllListeners('temporal:usage');
+  },
 
   removeLicenseListeners: () => {
     ipcRenderer.removeAllListeners('license:state-changed');

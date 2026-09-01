@@ -55,6 +55,24 @@ export async function grantSubscription(electronApp: ElectronApplication) {
   await setLicenseState(electronApp, LICENSED_STATE);
 }
 
+/**
+ * Pin the trial's allowance of temporal-fill exports.
+ *
+ * The real count lives in the main process and is derived from the *real*
+ * licence state there, not the one `setLicenseState` injects into the
+ * renderer — so a spec that wants an exhausted allowance has to say so here
+ * rather than by spending three exports.
+ */
+export async function setTemporalUsage(
+  electronApp: ElectronApplication,
+  usage: { used: number; remaining: number; allowed: boolean; limited?: boolean },
+) {
+  await electronApp.evaluate(({ ipcMain }, injected) => {
+    ipcMain.removeHandler('temporal:usage');
+    ipcMain.handle('temporal:usage', () => injected);
+  }, { limit: 3, exhausted: usage.remaining === 0, limited: true, ...usage });
+}
+
 /** Stub the payment routes, so no spec talks to the real service. */
 export async function stubPayments(
   electronApp: ElectronApplication,
