@@ -10,7 +10,7 @@
  * remaining time visibly moves, while the state behind it is unchanged.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { OrderError, TemporalUsage } from '../types';
+import type { DemoActivation, DemoState, OrderError, TemporalUsage } from '../types';
 import {
   APP_MISMATCH,
   entitlementsFor,
@@ -24,6 +24,7 @@ import {
   type Plan,
   type PlanId,
 } from '../subscription';
+import { ENABLE_DEMO_LICENSE } from '../config';
 
 /** How often the trial countdown is redrawn. */
 export const TICK_MS = 60_000;
@@ -39,6 +40,9 @@ export interface UseSubscription {
   methods: PaymentMethod[];
   /** Milliseconds left on the trial, recomputed as the clock moves. */
   trialMsRemaining: number;
+  /** Milliseconds left on the licence in force, on the same ticking clock.
+   *  Zero where nothing is in force. */
+  licenseMsRemaining: number;
   createOrder: (planId: PlanId, method: PaymentMethodId) => Promise<Order | OrderError>;
   /** The trial's remaining temporal-fill exports. Null until the main
    *  process answers, or where it does not meter them at all. */
@@ -47,6 +51,15 @@ export interface UseSubscription {
   manualActivation: boolean;
   /** Activate from a licence key or a pasted token. */
   activate: (code: string) => Promise<{ success: boolean; error?: string; code?: string }>;
+  /** Whether this build offers the demo licence. Both halves have to agree:
+   *  the bundle was built with it, and the main process still issues it. */
+  demoEnabled: boolean;
+  /** What the main process knows about this device's demo, or null before it
+   *  has answered. */
+  demo: DemoState | null;
+  /** Take this device's demo licence. The code is optional — omitted, it is
+   *  the one-click path. */
+  activateDemo: (code?: string) => Promise<DemoActivation>;
   /** Poll one order until it is paid, the user gives up, or time runs out. */
   watchOrder: (orderId: string, signal: { cancelled: boolean }) => Promise<OrderOutcome>;
   refresh: () => Promise<void>;
@@ -64,6 +77,8 @@ export function useSubscription(locale: string): UseSubscription {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [manualActivation, setManualActivation] = useState(false);
+  const [demoAllowed, setDemoAllowed] = useState(false);
+  const [demo, setDemo] = useState<DemoState | null>(null);
   const [temporalUsage, setTemporalUsage] = useState<TemporalUsage | null>(null);
 
   const applyState = useCallback((next: LicenseState) => {
@@ -107,11 +122,29 @@ export function useSubscription(locale: string): UseSubscription {
   }, []);
 
   // Whether to offer manual activation is the main process's to decide: the
-  // environment variable behind it is not visible from here.
+  // environment variable behind it is not visible from here. The demo entry
+  // is decided by both — this bundle was built with it (ENABLE_DEMO_LICENSE)
+  // and that process still issues it — so an entry can never be shown for a
+  // door the main process would refuse to open.
   useEffect(() => {
     let cancelled = false;
     void window.electronAPI.licenseConfig?.()
-      .then((config) => { if (!cancelled && config) setManualActivation(!!config.manualActivationEnabled); })
+      .then((config) => {
+        if (cancelled || !config) return;
+        setManualActivation(!!config.manualActivationEnabled);
+        setDemoAllowed(ENABLE_DEMO_LICENSE && config.demoLicenseEnabled !== false);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Whether this device has already had its demo. Asked once, and refreshed
+  // by taking one — so the button says "already used" instead of offering
+  // something that will be refused.
+  useEffect(() => {
+    let cancelled = false;
+    void window.electronAPI.licenseDemoState?.()
+      .then((next) => { if (!cancelled && next) setDemo(next); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -183,6 +216,28 @@ export function useSubscription(locale: string): UseSubscription {
     return result;
   }, [applyState]);
 
+  const activateDemo = useCallback(async (code?: string) => {
+    const api = window.electronAPI;
+    if (!api.licenseActivateDemo) {
+      return { success: false, error: 'the demo license is not available in this build' };
+    }
+    const result = await api.licenseActivateDemo(code);
+    // The main process pushes the new state on success, but reading it back
+    // here is what makes the page update on the same tick as the message.
+    if (result?.success) {
+      const next = await api.licenseState?.().catch(() => null);
+      if (next) applyState(next);
+    }
+    // Whether it worked or not, the answer may carry a fresher demo record —
+    // and a refusal is exactly when the button needs to stop offering one.
+    if (result?.demo) setDemo(result.demo);
+    else {
+      const next = await api.licenseDemoState?.().catch(() => null);
+      if (next) setDemo(next);
+    }
+    return result;
+  }, [applyState]);
+
   const refresh = useCallback(async () => {
     await window.electronAPI.licenseRefresh?.().catch(() => {});
     const next = await window.electronAPI.licenseState?.().catch(() => null);
@@ -199,6 +254,12 @@ export function useSubscription(locale: string): UseSubscription {
   // so the countdown moves every minute without it having to push a state.
   const elapsed = reading.readAt === 0 ? 0 : now - reading.readAt;
   const trialMsRemaining = Math.max(0, state.trial.msRemaining - elapsed);
+  // The licence's own countdown, off the same clock. A subscription is shown
+  // as a date and does not need this; a demo licence is short enough that
+  // "six days and change" is the useful answer.
+  const licenseMsRemaining = state.expiresAt
+    ? Math.max(0, new Date(state.expiresAt).getTime() - now)
+    : 0;
 
   return {
     state,
@@ -208,11 +269,15 @@ export function useSubscription(locale: string): UseSubscription {
     plansAreFallback,
     methods,
     trialMsRemaining,
+    licenseMsRemaining,
     createOrder,
     watchOrder,
     refresh,
     temporalUsage,
     manualActivation,
     activate,
+    demoEnabled: demoAllowed,
+    demo,
+    activateDemo,
   };
 }

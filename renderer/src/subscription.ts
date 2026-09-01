@@ -16,6 +16,20 @@
  *  against them and the licenses table is keyed by what it issued. */
 export type PlanId = 'monthly' | 'quarterly' | 'semi_annual' | 'annual';
 
+/**
+ * The demo licence's plan id.
+ *
+ * Deliberately not a `PlanId`: nothing can be bought under it, and typing it
+ * as one would let `/create-order` be called with a plan the service has
+ * never heard of. It only ever appears on a licence that is already in force,
+ * which is why it joins `PlanId` in `LicensePlanId` below and nowhere else.
+ */
+export const DEMO_PLAN_ID = 'demo';
+
+/** What a licence in force can say it is: a plan that was bought, or the
+ *  demo this build issued itself. */
+export type LicensePlanId = PlanId | typeof DEMO_PLAN_ID;
+
 export type PlanPeriod = 'month' | 'quarter' | 'half_year' | 'year';
 
 export type PaymentMethodId = 'wechat_pay' | 'alipay' | 'douyin_pay' | 'card';
@@ -70,6 +84,31 @@ export const APP_MISMATCH: LicenseErrorCode = 'app_mismatch';
 export const EXPIRED: LicenseErrorCode = 'expired';
 
 /**
+ * How taking a demo licence can fail, as the main process codes it.
+ *
+ * All three are final — a second demo, a code that is not one of this
+ * build's, a build that does not offer demos — so each gets its own wording
+ * rather than the "try again" every uncoded failure reads as.
+ */
+export const DEMO_ALREADY_USED = 'demo_already_used';
+export const DEMO_CODE_INVALID = 'demo_code_invalid';
+export const DEMO_DISABLED = 'demo_disabled';
+
+export type DemoErrorCode =
+  | typeof DEMO_ALREADY_USED
+  | typeof DEMO_CODE_INVALID
+  | typeof DEMO_DISABLED;
+
+/** The message for a demo failure, or null when the raw reason is all there
+ *  is to say. */
+export function demoErrorKey(code?: string | null): string | null {
+  if (code === DEMO_ALREADY_USED) return 'subscription.demoAlreadyUsed';
+  if (code === DEMO_CODE_INVALID) return 'subscription.demoCodeInvalid';
+  if (code === DEMO_DISABLED) return 'subscription.demoDisabled';
+  return null;
+}
+
+/**
  * How watching an order ended.
  *
  * `mismatch` is its own outcome rather than a failure to pay: the payment
@@ -91,7 +130,9 @@ export interface LicensePayload {
   /** Which app the service issued this for. Absent on tokens minted before
    *  the service grew the dimension — those are this app's. */
   appId?: string;
-  planId: PlanId;
+  /** `demo` for the licence this build issues itself; otherwise a plan the
+   *  service sold. */
+  planId: LicensePlanId;
   licenseKey: string;
   /** Unix seconds. The single source of truth for when access ends. */
   expiresAt: number;
@@ -219,14 +260,15 @@ export function entitlementsFor(
 }
 
 // ─── Naming and formatting ─────────────────────────────────────────────
-const PLAN_KEY: Record<PlanId, string> = {
+const PLAN_KEY: Record<LicensePlanId, string> = {
   monthly: 'Monthly',
   quarterly: 'Quarterly',
   semi_annual: 'Halfyear',
   annual: 'Yearly',
+  demo: 'Demo',
 };
 
-export function planNameKey(id: PlanId): string {
+export function planNameKey(id: LicensePlanId): string {
   return `subscription.plan${PLAN_KEY[id] ?? 'Monthly'}`;
 }
 
@@ -240,6 +282,12 @@ export function planBadgeKey(id: PlanId): string | null {
   if (id === 'semi_annual') return 'subscription.badgeValue';
   if (id === 'annual') return 'subscription.badgeBest';
   return null;
+}
+
+/** Whether what is in force is a demo licence rather than a purchase. Read
+ *  off the plan id, which is the only thing that separates the two. */
+export function isDemoLicense(state: LicenseState): boolean {
+  return state.payload?.planId === DEMO_PLAN_ID;
 }
 
 /** What to call the state in force. */

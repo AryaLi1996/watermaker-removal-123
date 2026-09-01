@@ -73,6 +73,45 @@ export async function setTemporalUsage(
   }, { limit: 3, exhausted: usage.remaining === 0, limited: true, ...usage });
 }
 
+/**
+ * Stub the demo licence, so a spec never takes the *real* one.
+ *
+ * The real handlers mint a token and write a "this device has had its demo"
+ * record into the app's userData — which is the runner's own, not a temporary
+ * one. A spec that let them run would spend the developer's demo, and would
+ * pass exactly once. So the channels are replaced, and what is left to test
+ * is the whole of what this app decides: that the entry is offered, that the
+ * click reaches the main process through the real bridge, and that the answer
+ * is worded correctly.
+ */
+export async function stubDemoLicense(
+  electronApp: ElectronApplication,
+  options: { used?: boolean; result?: unknown } = {},
+) {
+  await electronApp.evaluate(({ ipcMain, app }, opts) => {
+    const store = app as unknown as { __demo: { activations: unknown[] } };
+    store.__demo = { activations: [] };
+
+    for (const channel of ['license:demoState', 'license:activateDemo']) {
+      ipcMain.removeHandler(channel);
+    }
+
+    const demo = { used: !!opts.used, durationDays: 7, issuedAt: null, expiresAt: null };
+    ipcMain.handle('license:demoState', () => demo);
+    ipcMain.handle('license:activateDemo', (_e: unknown, code?: string) => {
+      store.__demo.activations.push({ code: code ?? null });
+      return opts.result ?? { success: true, demo: { ...demo, used: true } };
+    });
+  }, options);
+}
+
+/** What `stubDemoLicense` recorded — one entry per activation attempt, with
+ *  the code it carried (null for the one-click path). */
+export function demoCalls(electronApp: ElectronApplication) {
+  return electronApp.evaluate(({ app }) =>
+    (app as unknown as { __demo: { activations: { code: string | null }[] } }).__demo);
+}
+
 /** Stub the payment routes, so no spec talks to the real service. */
 export async function stubPayments(
   electronApp: ElectronApplication,

@@ -711,11 +711,15 @@ function App() {
           plansAreFallback={subscription.plansAreFallback}
           methods={subscription.methods}
           trialMsRemaining={subscription.trialMsRemaining}
+          licenseMsRemaining={subscription.licenseMsRemaining}
           createOrder={subscription.createOrder}
           watchOrder={subscription.watchOrder}
           refresh={subscription.refresh}
           manualActivation={subscription.manualActivation}
           activate={subscription.activate}
+          demoEnabled={subscription.demoEnabled}
+          demo={subscription.demo}
+          activateDemo={subscription.activateDemo}
         />
       )}
 

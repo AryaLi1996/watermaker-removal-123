@@ -13,10 +13,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import SubscriptionCard from '../components/SubscriptionCard';
 import { useTranslation } from '../hooks/useTranslation';
-import type { OrderError } from '../types';
+import type { DemoActivation, DemoState, OrderError } from '../types';
 import {
   APP_MISMATCH,
+  demoErrorKey,
   formatRemaining,
+  isDemoLicense,
   isLicensed,
   licenseErrorKey,
   planNameKey,
@@ -36,12 +38,21 @@ interface SubscriptionPageProps {
   plansAreFallback: boolean;
   methods: PaymentMethod[];
   trialMsRemaining: number;
+  /** Milliseconds left on the licence in force, ticking in the renderer.
+   *  Only the demo licence shows it — a subscription is shown as a date. */
+  licenseMsRemaining?: number;
   createOrder: (planId: PlanId, method: PaymentMethodId) => Promise<Order | OrderError>;
   watchOrder: (orderId: string, signal: { cancelled: boolean }) => Promise<OrderOutcome>;
   refresh: () => Promise<void>;
   /** Whether this build offers the box for typing a licence in by hand. */
   manualActivation?: boolean;
   activate?: (code: string) => Promise<{ success: boolean; error?: string; code?: string }>;
+  /** Whether this build offers the demo licence at all. */
+  demoEnabled?: boolean;
+  /** What the main process knows about this device's demo, or null before it
+   *  has answered. */
+  demo?: DemoState | null;
+  activateDemo?: (code?: string) => Promise<DemoActivation>;
 }
 
 const FAQ = [
@@ -75,9 +86,20 @@ type Activation =
   | { kind: 'ok' }
   | { kind: 'failed'; message: string; code?: string };
 
+/** Where taking the demo licence has got to. Its own state, not `phase`'s:
+ *  the two are separate doors and a failure at one should not clear the
+ *  other. */
+type Demo =
+  | { kind: 'idle' }
+  | { kind: 'working' }
+  | { kind: 'ok' }
+  | { kind: 'failed'; message: string; code?: string };
+
 export default function SubscriptionPage({
-  state, plans, plansAreFallback, methods, trialMsRemaining, createOrder, watchOrder, refresh,
+  state, plans, plansAreFallback, methods, trialMsRemaining, licenseMsRemaining = 0,
+  createOrder, watchOrder, refresh,
   manualActivation = false, activate,
+  demoEnabled = false, demo = null, activateDemo,
 }: SubscriptionPageProps) {
   const { t, locale } = useTranslation();
   // The chosen method, or none chosen yet.
@@ -87,6 +109,9 @@ export default function SubscriptionPage({
   // and a failure there should not clear a payment the user is watching.
   const [code, setCode] = useState('');
   const [activation, setActivation] = useState<Activation>({ kind: 'idle' });
+  // The demo panel, likewise kept to itself.
+  const [demoCode, setDemoCode] = useState('');
+  const [demoPhase, setDemoPhase] = useState<Demo>({ kind: 'idle' });
   // Shared with the in-flight poll so cancelling actually stops it, rather
   // than leaving it to finish and overwrite whatever the user did next.
   const watching = useRef<{ cancelled: boolean }>({ cancelled: false });
@@ -160,6 +185,26 @@ export default function SubscriptionPage({
     }
   }, []);
 
+  /**
+   * Take the demo licence.
+   *
+   * One handler for both doors: the button calls it with nothing, the box
+   * with what was typed. They grant the same licence, so anything else would
+   * be two features wearing one name — and the main process is what decides
+   * either way, since it holds the device record the "once" is counted in.
+   */
+  const takeDemo = useCallback(async (entered?: string) => {
+    if (!activateDemo) return;
+    setDemoPhase({ kind: 'working' });
+    const result = await activateDemo(entered);
+    if (result.success) {
+      setDemoPhase({ kind: 'ok' });
+      setDemoCode('');
+      return;
+    }
+    setDemoPhase({ kind: 'failed', message: result.error ?? '', code: result.code });
+  }, [activateDemo]);
+
   const stopWaiting = useCallback(() => {
     watching.current.cancelled = true;
     void window.electronAPI.paymentCloseEmbedded?.();
@@ -170,8 +215,17 @@ export default function SubscriptionPage({
   // or null, in which case the reason the service gave is what to show.
   const errorKey = phase.kind === 'error' ? licenseErrorKey(phase.code) : null;
   const activationErrorKey = activation.kind === 'failed' ? licenseErrorKey(activation.code) : null;
+  const demoFailureKey = demoPhase.kind === 'failed' ? demoErrorKey(demoPhase.code) : null;
 
   const licensed = isLicensed(state.status);
+  // A demo in force. Its countdown comes in on the same ticking clock as the
+  // trial's rather than being read off the wall clock here, so it moves once
+  // a minute without this page keeping a second timer honest.
+  const demoLicensed = licensed && isDemoLicense(state);
+  // Already spent: either the record says so, or one is running right now —
+  // which is the same answer as far as offering another goes.
+  const demoSpent = demoLicensed || !!demo?.used;
+  const demoDays = demo?.durationDays ?? 7;
   const expiry = state.expiresAt
     ? new Date(state.expiresAt).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-GB')
     : '';
@@ -335,8 +389,12 @@ export default function SubscriptionPage({
             <p style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('subscription.expiresOn', { date: expiry })}</p>
             {/* One-off periods, not an auto-renewing subscription: there is
                 nothing to cancel, and buying again extends from the current
-                expiry rather than restarting the clock. */}
-            <p style={{ color: 'var(--text-faint)', fontSize: 11 }}>{t('subscription.noAutoRenew')}</p>
+                expiry rather than restarting the clock. A demo is the one
+                case where that is not true — the service never issued it and
+                has nothing to extend — so it says something else. */}
+            <p style={{ color: 'var(--text-faint)', fontSize: 11 }}>
+              {t(demoLicensed ? 'subscription.demoNoExtend' : 'subscription.noAutoRenew')}
+            </p>
             <button
               data-testid="refresh-license"
               onClick={() => { void refresh(); }}
@@ -348,6 +406,95 @@ export default function SubscriptionPage({
             >
               {t('subscription.refresh')}
             </button>
+          </div>
+        )}
+
+        {/* The demo licence: seven days of everything, once per device, no
+            payment. Grey and understated on purpose — it sits beside the paid
+            plans, not in front of them, and the paid entry above stays live
+            throughout so a demo can be upgraded at any point.
+            Hidden entirely where the build does not offer it
+            (VITE_DISABLE_DEMO_LICENSE), and the main process refuses the
+            activation independently — see electron/demo-license.js. */}
+        {demoEnabled && (
+          <div
+            data-testid="demo-license"
+            style={{
+              background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
+              padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8,
+            }}
+          >
+            <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              {t('subscription.demoHeading')}
+            </p>
+            <p style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+              {t('subscription.demoBody', { days: demoDays })}
+            </p>
+
+            {demoLicensed ? (
+              <p data-testid="demo-remaining" style={{ color: 'var(--text)', fontSize: 12 }}>
+                {t('subscription.demoRunning', { remaining: formatRemaining(licenseMsRemaining, t) })}
+              </p>
+            ) : (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <button
+                  data-testid="demo-activate"
+                  onClick={() => { void takeDemo(); }}
+                  disabled={demoSpent || demoPhase.kind === 'working'}
+                  style={{
+                    background: demoSpent ? 'var(--border)' : 'var(--accent)', border: 'none', borderRadius: 6,
+                    padding: '6px 16px', fontSize: 12,
+                    color: demoSpent ? 'var(--text-disabled)' : 'var(--accent-contrast)',
+                    cursor: demoSpent ? 'default' : 'pointer',
+                  }}
+                >
+                  {demoPhase.kind === 'working' ? t('subscription.demoWorking') : t('subscription.demoGet')}
+                </button>
+                <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>{t('subscription.demoOr')}</span>
+                <input
+                  data-testid="demo-code"
+                  aria-label={t('subscription.demoCodeLabel')}
+                  value={demoCode}
+                  onChange={(e) => { setDemoCode(e.target.value); setDemoPhase({ kind: 'idle' }); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && demoCode.trim()) void takeDemo(demoCode.trim()); }}
+                  placeholder={t('subscription.demoCodePlaceholder')}
+                  spellCheck={false}
+                  autoComplete="off"
+                  disabled={demoSpent}
+                  style={{
+                    flex: '1 1 160px', minWidth: 0, background: 'var(--bg)', color: 'var(--text)',
+                    border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px',
+                    fontSize: 12, fontFamily: 'monospace',
+                  }}
+                />
+                <button
+                  data-testid="demo-code-submit"
+                  onClick={() => { void takeDemo(demoCode.trim()); }}
+                  disabled={demoSpent || !demoCode.trim() || demoPhase.kind === 'working'}
+                  style={{
+                    background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
+                    padding: '6px 14px', color: 'var(--text-secondary)', fontSize: 11,
+                    cursor: demoSpent || !demoCode.trim() ? 'default' : 'pointer',
+                  }}
+                >
+                  {t('subscription.activate')}
+                </button>
+              </div>
+            )}
+
+            {demoPhase.kind === 'ok' && (
+              <p data-testid="demo-success" style={{ color: 'var(--success-text)', fontSize: 11 }}>
+                {t('subscription.demoSuccess', { days: demoDays })}
+              </p>
+            )}
+            {demoPhase.kind === 'failed' && (
+              <p data-testid="demo-error" style={{ color: 'var(--danger-text)', fontSize: 11 }}>
+                {demoFailureKey ? t(demoFailureKey) : t('subscription.demoFailed', { reason: demoPhase.message })}
+              </p>
+            )}
+            {/* Said whether or not one has been taken: a demo is not a
+                subscription, and the difference is the point. */}
+            <p style={{ color: 'var(--text-faint)', fontSize: 11 }}>{t('subscription.demoHint')}</p>
           </div>
         )}
 

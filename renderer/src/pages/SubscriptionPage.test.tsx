@@ -11,7 +11,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 import SubscriptionPage from './SubscriptionPage';
 import SubscriptionStatusBar from '../components/SubscriptionStatusBar';
-import { LOADING_STATE, type LicenseState, type LicenseStatus, type PaymentMethod, type Plan, type TrialState } from '../subscription';
+import {
+  DEMO_ALREADY_USED, DEMO_CODE_INVALID, DEMO_PLAN_ID, LOADING_STATE,
+  type LicenseState, type LicenseStatus, type PaymentMethod, type Plan, type TrialState,
+} from '../subscription';
 import { setLocale } from '../i18n';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -323,6 +326,115 @@ describe('activating by hand', () => {
     fireEvent.click(screen.getByTestId('activation-paste'));
     await waitFor(() => expect((screen.getByTestId('activation-code') as HTMLInputElement).value).toBe(''));
     expect(screen.queryByTestId('activation-error')).toBeNull();
+  });
+});
+
+
+describe('the demo licence', () => {
+  /**
+   * The entry that hands out seven days with no payment. What matters here is
+   * that it is only ever shown where the build offers it, that a device which
+   * has spent its demo is told so rather than finding out by clicking, and
+   * that offering one never takes the paid entry away.
+   */
+  const DEMO_STATE = { used: false, durationDays: 7, issuedAt: null, expiresAt: null };
+
+  const demoProps = (over: Record<string, unknown> = {}) => ({
+    demoEnabled: true,
+    demo: DEMO_STATE,
+    activateDemo: vi.fn().mockResolvedValue({ success: true }),
+    ...over,
+  });
+
+  it('is not there at all in a build that does not offer it', () => {
+    renderPage(TRIALING, demoProps({ demoEnabled: false }));
+    expect(screen.queryByTestId('demo-license')).toBeNull();
+  });
+
+  it('offers seven free days, and says it needs no payment', () => {
+    renderPage(TRIALING, demoProps());
+    expect(screen.getByTestId('demo-license')).toHaveTextContent('7 days');
+    expect(screen.getByTestId('demo-license')).toHaveTextContent('no payment');
+    expect(screen.getByTestId('demo-activate')).toBeEnabled();
+  });
+
+  it('takes one on a click, with no code to type', async () => {
+    const activateDemo = vi.fn().mockResolvedValue({ success: true });
+    renderPage(TRIALING, demoProps({ activateDemo }));
+
+    fireEvent.click(screen.getByTestId('demo-activate'));
+
+    await waitFor(() => expect(screen.getByTestId('demo-success')).toBeInTheDocument());
+    // Called with nothing: the button is the whole interaction.
+    expect(activateDemo).toHaveBeenCalledWith(undefined);
+  });
+
+  it('takes one from an activation code as well', async () => {
+    const activateDemo = vi.fn().mockResolvedValue({ success: true });
+    renderPage(TRIALING, demoProps({ activateDemo }));
+
+    fireEvent.change(screen.getByTestId('demo-code'), { target: { value: ' demo-2026 ' } });
+    fireEvent.click(screen.getByTestId('demo-code-submit'));
+
+    await waitFor(() => expect(activateDemo).toHaveBeenCalledWith('demo-2026'));
+    expect(screen.getByTestId('demo-success')).toBeInTheDocument();
+  });
+
+  it('says so, in its own words, when a code is not one of ours', async () => {
+    const activateDemo = vi.fn().mockResolvedValue({ success: false, code: DEMO_CODE_INVALID });
+    renderPage(TRIALING, demoProps({ activateDemo }));
+
+    fireEvent.change(screen.getByTestId('demo-code'), { target: { value: 'NOPE' } });
+    fireEvent.click(screen.getByTestId('demo-code-submit'));
+
+    await waitFor(() => expect(screen.getByTestId('demo-error')).toBeInTheDocument());
+    expect(screen.getByTestId('demo-error')).toHaveTextContent('not a demo activation code');
+  });
+
+  it('tells a device that has already had one, rather than letting it click', () => {
+    renderPage(TRIALING, demoProps({ demo: { ...DEMO_STATE, used: true } }));
+    expect(screen.getByTestId('demo-activate')).toBeDisabled();
+    expect(screen.getByTestId('demo-code-submit')).toBeDisabled();
+  });
+
+  it('says the demo is spent when the main process refuses a second one', async () => {
+    const activateDemo = vi.fn().mockResolvedValue({ success: false, code: DEMO_ALREADY_USED });
+    renderPage(TRIALING, demoProps({ activateDemo }));
+
+    fireEvent.click(screen.getByTestId('demo-activate'));
+
+    await waitFor(() => expect(screen.getByTestId('demo-error')).toBeInTheDocument());
+    expect(screen.getByTestId('demo-error')).toHaveTextContent('already used its demo');
+    // And it points at the paid plans rather than leaving it there.
+    expect(screen.getByTestId('demo-error')).toHaveTextContent('Subscribe');
+  });
+
+  it('counts a running demo down instead of offering another', () => {
+    const running = state('active', {
+      payload: {
+        userId: 'u1', appId: 'smoothvoice', planId: DEMO_PLAN_ID,
+        licenseKey: 'DEMO-ABC', expiresAt: 0, issuedAt: 0,
+      },
+    });
+    renderPage(running, demoProps({ licenseMsRemaining: 6 * DAY + 3 * 60 * 60 * 1000 }));
+
+    expect(screen.getByTestId('demo-remaining')).toHaveTextContent('6 days 03:00 left');
+    expect(screen.queryByTestId('demo-activate')).toBeNull();
+    // The demo is named as what it is, not as a plan someone bought.
+    expect(screen.getByTestId('subscription-status')).toHaveTextContent('Demo licence');
+  });
+
+  it('leaves the paid plans buyable throughout, so a demo can be upgraded', async () => {
+    const running = state('active', {
+      payload: {
+        userId: 'u1', planId: DEMO_PLAN_ID, licenseKey: 'DEMO-ABC', expiresAt: 0, issuedAt: 0,
+      },
+    });
+    const { createOrder } = renderPage(running, demoProps());
+
+    fireEvent.click(screen.getByTestId('subscribe-annual'));
+
+    await waitFor(() => expect(createOrder).toHaveBeenCalledWith('annual', 'wechat_pay'));
   });
 });
 

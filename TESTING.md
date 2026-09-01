@@ -278,6 +278,13 @@ whether they paid. The fifth is the app with the pieces wired together: the
 bottom bar, the gating, and a state pushed from the main process taking
 effect.
 
+The demo licence — seven days with no payment, once per device — is covered
+across the same files: that it is minted, marked `demo` and never refreshed
+against the service (the second file), that the entry is shown only where the
+build offers it and a spent device is told so rather than finding out by
+clicking (the fourth), and that taking one actually unlocks temporal fill and
+that expiry takes it away again (the fifth).
+
 `tests/e2e/subscription.spec.ts` drives the same flow through the real IPC
 surface. No test reaches the real licence service: the fixtures point
 `LICENSE_URL` at a dead port and inject the licence and payment answers, so a
