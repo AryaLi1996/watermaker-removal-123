@@ -86,14 +86,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The page names it a demo, counts it down, and leaves the paid plans
     buyable throughout, so a demo can be upgraded at any point. When it ends
     the features lock again and the page asks for a plan.
-  - **Off in a release.** The "once per device" limit is a file in the app's
-    own data directory: it stops an honest user clicking twice and stops
-    nobody who deletes it. So `renderer/.env.production` sets
-    `VITE_DISABLE_DEMO_LICENSE=true`, which removes the entry from the
-    bundle, and a *packaged* app refuses to issue one at all unless its
-    environment also says `ENABLE_DEMO_LICENSE=true`. Hiding the button was
-    never going to be the limit. A real one needs the service to hold the
-    record — see the note in [`docs/LICENSE_SERVICE.md`](docs/LICENSE_SERVICE.md).
+  - **On in every build**, including a release, and removed by setting
+    `VITE_DISABLE_DEMO_LICENSE=true` at build time. Both halves of the app
+    read that flag, so a build without the button is also a build whose main
+    process refuses to issue one.
+  - Worth knowing what that means: the "once per device" limit is a file in
+    the app's own data directory, so it stops an honest user clicking twice
+    and stops nobody who deletes it, and the token is signed with the secret
+    the client already carries. It is a nudge, not a limit. A real one needs
+    the service to hold the record — see the note in
+    [`docs/LICENSE_SERVICE.md`](docs/LICENSE_SERVICE.md).
 
 - **Light and dark themes**, with "follow the system" as the default, under a
   new **Settings** screen in the top bar.

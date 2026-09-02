@@ -12,10 +12,11 @@
  * Whether to offer the demo licence — seven days of everything, once per
  * device, with no payment (see electron/demo-license.js).
  *
- * Phrased as a *disable* flag, and read that way: unset means on, so a
- * developer build and a test run both have it without anyone configuring
- * anything, and a release turns it off explicitly. `renderer/.env.production`
- * is where that happens.
+ * Phrased as a *disable* flag, and read that way: unset means on, so every
+ * build has the entry without anyone configuring anything. A build that
+ * should not carry it sets `VITE_DISABLE_DEMO_LICENSE=true` — in the build
+ * environment, or in a `renderer/.env.production` that a release build
+ * would pick up.
  *
  * This is only half the answer. The main process reads the same variable and
  * refuses the activation outright when it is set — a build that hid the

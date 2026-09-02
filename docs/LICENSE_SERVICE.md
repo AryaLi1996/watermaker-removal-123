@@ -211,18 +211,25 @@ becomes the offline fallback, the same shape `_resolveTrial` already has.
 
 ### Which builds have it
 
-Because of the above, the demo is a build-time decision, and both halves of
-the app decide independently:
+**All of them, unless a build says otherwise.** The flag is a *disable*, and
+unset means on, so a development run, a packaged release and the test suites
+all carry the entry without anyone configuring anything.
+
+Both halves of the app read the same variable, and the entry appears only if
+both agree:
 
 | | |
 |---|---|
-| The button | `VITE_DISABLE_DEMO_LICENSE` → `ENABLE_DEMO_LICENSE` in `renderer/src/config.ts`. Unset means on. `renderer/.env.production` sets it, so a release build has no entry. |
-| The issuing | `demoAvailable()` in `electron/main.js`. A **packaged** app refuses `license:activateDemo` outright unless its environment says `ENABLE_DEMO_LICENSE=true`. |
+| The button | `VITE_DISABLE_DEMO_LICENSE` → `ENABLE_DEMO_LICENSE` in `renderer/src/config.ts`. Inlined at build time. |
+| The issuing | `demoLicenseEnabled` in `electron/license-config.js`, which gates `license:activateDemo` in `main.js`. A renderer told the entry does not exist can still send the message; this is what refuses it. |
 
-The second is the one that matters: `.env.production` is Vite's and configures
-only the bundle, so hiding the button is not the limit. A development run,
-`npm run dev` and the unit suites are all unpackaged with the flag unset, so
-the demo is simply there.
+To turn it off for a build, set `VITE_DISABLE_DEMO_LICENSE=true` — in the
+build environment, or in a `renderer/.env.production` that `npm run build`
+picks up. That removes the button. Note the asymmetry: `VITE_` variables are
+build-time values for the *bundle* and do not reach a packaged main process at
+runtime, so a packaged build that must also refuse the IPC needs
+`DISABLE_DEMO_LICENSE=true` in its own environment. In practice the button is
+the entry, and there is no other way to reach the channel from the app.
 
 ---
 
@@ -233,8 +240,8 @@ the demo is simply there.
 | `LICENSE_URL` | The base URL — Function URL or API Gateway stage |
 | `LICENSE_SIGNING_SECRET` | HMAC secret; **must match the deployment's** |
 | `LICENSE_APP_ID` / `VITE_APP_ID` | Which app the service scopes this build to. Defaults to `smoothvoice`; only change it for a test deployment |
-| `VITE_DISABLE_DEMO_LICENSE` | `true` removes the demo licence entry from the bundle. Set by `renderer/.env.production` |
-| `ENABLE_DEMO_LICENSE` | `true` lets a **packaged** app issue demo licences. Unpackaged runs do not need it |
+| `VITE_DISABLE_DEMO_LICENSE` | `true` removes the demo licence entry from the bundle. Unset — the default — means the demo is offered |
+| `DISABLE_DEMO_LICENSE` | `true` makes the main process refuse `license:activateDemo`. For a packaged build, which cannot read the `VITE_` one at runtime |
 | `ENABLE_MANUAL_ACTIVATION` | `true` shows the box for typing a licence key or token in by hand |
 
 The signing secret ships with a public default, in this repository and in the

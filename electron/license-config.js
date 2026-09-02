@@ -171,15 +171,19 @@ const DEMO_CODES = ['DEMO-2026', 'SHUYIN-TRIAL'];
 /**
  * Whether this build offers a demo licence at all.
  *
- * On by default, and turned off for a release with
- * `VITE_DISABLE_DEMO_LICENSE=true` — the renderer's name for it, read here
- * too so the two halves cannot disagree about whether the entry exists.
- * `DISABLE_DEMO_LICENSE` is accepted for a main-process-only build.
+ * On unless a build says otherwise with `VITE_DISABLE_DEMO_LICENSE=true` —
+ * the renderer's name for it, read here too so the two halves cannot
+ * disagree about whether the entry exists. `DISABLE_DEMO_LICENSE` is
+ * accepted as well, since the `VITE_` one is a build-time value that does
+ * not reach a packaged main process at runtime.
  *
- * Worth being deliberate about: a build that leaves this on gives every
- * device that asks seven days of the paid features, and the only thing
- * stopping a second helping is a file in the app's own data directory.
- * `renderer/.env.production` therefore sets it.
+ * Worth knowing what leaving it on means: every device that asks gets seven
+ * days of the paid features, and the only thing stopping a second helping is
+ * a file in the app's own data directory. That is a nudge, not a limit — see
+ * the argument in demo-license.js, and the note in docs/LICENSE_SERVICE.md
+ * on what a real limit would take. Turn it off for a build that should not
+ * carry it by putting `VITE_DISABLE_DEMO_LICENSE=true` in the build
+ * environment or in `renderer/.env.production`.
  */
 const demoLicenseEnabled = process.env.VITE_DISABLE_DEMO_LICENSE !== 'true'
   && process.env.DISABLE_DEMO_LICENSE !== 'true';
