@@ -316,10 +316,9 @@ in that template, not a parameter: CloudFormation names it, and passing
 
 ### Where the demo routes are
 
-The service code is merged on `ruanjian123` `main`; the deploy that carries it
-is **created and waiting on its approval gate**, not applied. The change-set
-`plan` produced for that commit adds `DemosTable` and modifies the function
-and its role:
+**Live.** The deploy carrying them was approved and applied on 2 September
+2026 (`ruanjian123` run #6, commit `d4f8879`), which added `DemosTable` and
+pointed the function at it:
 
 ```
 + Add     DemosTable            AWS::DynamoDB::Table
@@ -327,11 +326,15 @@ and its role:
 * Modify  LicenseVerifier       AWS::Lambda::Function
 ```
 
-Until a `production` reviewer releases that run, the live function has no
-`DEMOS_TABLE`, and `demo/activate` and `demo/status` answer 501 — which the
-client already handles as `demo_unavailable`, granting nothing and spending
-nothing. No change is needed in this repository when the deploy lands: the
-Function URL does not move, and the client is already pointed at it.
+So `demo/activate` and `demo/status` answer for real now rather than 501, and
+the 501 path in this client is the thing that should no longer be reachable
+against the production endpoint. Nothing in this repository had to change for
+it: the Function URL did not move, and the client was already pointed at it.
+
+The `appId` scoping work behind it (`TrialsV2Table`, `LicensesV2Table`) is
+merged on `main` but **its deploy is still waiting on the same approval
+gate**, so the isolation "What the service still has to do" describes above
+is not live yet — a trial spent in the sibling app still arrives here used.
 
 ---
 
