@@ -36,9 +36,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   licenseActivate: (licenseKey) => ipcRenderer.invoke('license:activate', licenseKey),
   licenseDeactivate: () => ipcRenderer.invoke('license:deactivate'),
   licenseRefresh: () => ipcRenderer.invoke('license:refresh'),
-  // The demo licence: seven days of everything, once per device, and only
-  // where the build offers it. See electron/demo-license.js.
-  licenseActivateDemo: (code) => ipcRenderer.invoke('license:activateDemo', code),
+  // The demo licence: a month of everything, once per device, issued by the
+  // service and only where the build offers it. No code to pass — see
+  // electron/demo-license.js.
+  licenseActivateDemo: () => ipcRenderer.invoke('license:activateDemo'),
   licenseDemoState: () => ipcRenderer.invoke('license:demoState'),
   licenseConfig: () => ipcRenderer.invoke('license:getConfig'),
   // Pushed whenever the trial, a payment or a background refresh changes it.

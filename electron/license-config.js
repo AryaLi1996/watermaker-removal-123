@@ -140,33 +140,35 @@ const PAYMENT_METHODS = ['wechat_pay', 'alipay', 'douyin_pay', 'card'];
 const manualActivationEnabled = process.env.ENABLE_MANUAL_ACTIVATION === 'true';
 
 /**
- * The demo licence: seven days of everything, issued by this build itself.
+ * The demo licence: the paid features for a month, issued by the service.
  *
- * It exists for the cases a purchase cannot serve — an internal test, a
- * demonstration, someone deciding whether temporal fill is worth paying for
- * — where the three-day device trial is either already spent or too small to
- * finish anything with.
+ * It exists for the case a trial does not cover — a demonstration, an
+ * evaluation, a support conversation that needs the licensed experience on
+ * someone else's machine — and it is not a purchase, which is what the plan
+ * id below says. `demo` is not in `PLAN_TIERS`, so anything reading a licence
+ * can tell the two apart.
  *
- * It is not a token the service issued, and it deliberately does not pretend
- * to be one: the plan id below is `demo`, which no plan in `PLAN_TIERS` uses,
- * so anything reading a licence can tell the two apart. What signs it is the
- * same HMAC secret this build already verifies with, which is why the demo is
- * a build-time decision — see `demoLicenseEnabled`.
+ * It used to be minted here, signed with the same HMAC secret this build
+ * verifies with, and unlocked by one of a couple of codes that shipped in
+ * this file. Neither half held: the codes went out with every installer, and
+ * the "once per device" limit was a file in this app's own data directory —
+ * something the device owns and can delete. Both are now the service's:
+ * `demo/activate` is the only thing that signs one, and it holds the record.
+ *
+ * What is left here is the plan id the client recognises and a duration used
+ * only for display before the service has been asked. See demo-license.js.
  */
 const DEMO_PLAN_ID = 'demo';
 
-/** How long a demo licence runs. Seven days: long enough to finish a real
- *  clip with temporal fill, short enough not to be a subscription. */
-const DEMO_DURATION_DAYS = 7;
-
 /**
- * The codes the activation box accepts, alongside the one-click button.
+ * How long a demo runs, as far as this build knows.
  *
- * Not secrets — they ship in this file, and a demo is limited by the device
- * record rather than by knowing the string. They exist so a demo can be
- * handed out in writing without also handing out a licence token.
+ * The service decides, and reports its own `demoDurationDays` on every
+ * `demo/activate` and `demo/status`; that answer is cached and preferred.
+ * This constant is the fallback for a first launch that is also offline —
+ * the same split, and the same reason, as `trial.durationDays` below.
  */
-const DEMO_CODES = ['DEMO-2026', 'SHUYIN-TRIAL'];
+const DEMO_DURATION_DAYS = 30;
 
 /**
  * Whether this build offers a demo licence at all.
@@ -177,13 +179,12 @@ const DEMO_CODES = ['DEMO-2026', 'SHUYIN-TRIAL'];
  * accepted as well, since the `VITE_` one is a build-time value that does
  * not reach a packaged main process at runtime.
  *
- * Worth knowing what leaving it on means: every device that asks gets seven
- * days of the paid features, and the only thing stopping a second helping is
- * a file in the app's own data directory. That is a nudge, not a limit — see
- * the argument in demo-license.js, and the note in docs/LICENSE_SERVICE.md
- * on what a real limit would take. Turn it off for a build that should not
- * carry it by putting `VITE_DISABLE_DEMO_LICENSE=true` in the build
- * environment or in `renderer/.env.production`.
+ * Leaving it on now means what it says: a device that asks the service for
+ * its one demo gets a month of the paid features, and asking a second time
+ * gets the same month back rather than a new one. That limit is the
+ * service's record, not a file this app can be talked out of — which is why
+ * this flag is a choice about whether to offer the entry at all, and no
+ * longer the only thing standing between a build and unlimited demos.
  */
 const demoLicenseEnabled = process.env.VITE_DISABLE_DEMO_LICENSE !== 'true'
   && process.env.DISABLE_DEMO_LICENSE !== 'true';
@@ -227,7 +228,6 @@ module.exports = {
   demoLicenseEnabled,
   DEMO_PLAN_ID,
   DEMO_DURATION_DAYS,
-  DEMO_CODES,
   DEFAULT_SIGNING_SECRET,
   DEFAULT_LICENSE_URL,
   DEFAULT_APP_ID,

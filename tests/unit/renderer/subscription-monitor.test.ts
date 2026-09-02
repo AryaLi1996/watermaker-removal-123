@@ -14,8 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const { SubscriptionMonitor, APP_MISMATCH, EXPIRED, looksLikeToken } = require('../../../electron/subscription-monitor.js');
-const { APP_ID, DEMO_CODES, DEMO_DURATION_DAYS, DEMO_PLAN_ID } = require('../../../electron/license-config.js');
-const { DEMO_ALREADY_USED, DEMO_CODE_INVALID, DEMO_FILE, isDemoCode } = require('../../../electron/demo-license.js');
+const { APP_ID, DEMO_DURATION_DAYS, DEMO_PLAN_ID } = require('../../../electron/license-config.js');
+const { DEMO_ALREADY_USED, DEMO_FILE, DEMO_UNAVAILABLE } = require('../../../electron/demo-license.js');
 const token = require('../../../electron/license-token.js');
 const secureStore = require('../../../electron/secure-store.js');
 const deviceIdModule = require('../../../electron/device-id.js');
@@ -632,122 +632,171 @@ describe('signing out', () => {
 
 describe('the demo licence', () => {
   /**
-   * Seven days of everything, once per device, with no payment and — this is
-   * the part worth pinning — no service call. The token is minted here and
-   * signed with the secret this build already verifies with, so what these
-   * cover is that it behaves like the licence it claims to be, that the
-   * "once" actually holds across a restart, and that it stays visibly a demo
-   * rather than passing itself off as a purchase.
+   * A month of everything, once per app per device, issued by the service.
+   *
+   * It used to be minted here and limited by a file in this app's own data
+   * directory, which is why the cases below lean on the two properties that
+   * move bought: nothing is granted without the service saying so, and a
+   * device that deletes its local record does not get a second demo.
    */
-  const routes = {
+  const DEMO_END = NOW + DEMO_DURATION_DAYS * DAY;
+  const trialRoutes = {
     'trial/status': { trialUsed: false, trialStart: null, trialEnd: null },
     'trial/activate': { success: true, trialStart: NOW, trialEnd: NOW + 3 * DAY },
   };
 
-  it('unlocks everything for seven days, without asking the service', async () => {
-    const { request, calls } = stubService(routes);
+  /** What the service returns from `demo/activate` for a device that has one
+   *  coming — the same shape handler.py builds. */
+  function issued(expiresAt = DEMO_END, issuedAt = NOW) {
+    return {
+      success: true,
+      token: token.createToken({
+        userId: 'demo-abc', appId: APP_ID, planId: DEMO_PLAN_ID,
+        licenseKey: 'DEMO-ABC', issuedAt, expiresAt,
+      }),
+      appId: APP_ID,
+      planId: DEMO_PLAN_ID,
+      issuedAt,
+      expiresAt,
+      demoDurationDays: DEMO_DURATION_DAYS,
+    };
+  }
+
+  const spent = {
+    success: false,
+    code: DEMO_ALREADY_USED,
+    error: 'this device has already used its demo for this app',
+    appId: APP_ID,
+    issuedAt: NOW - 40 * DAY,
+    expiresAt: NOW - 10 * DAY,
+  };
+
+  it('unlocks everything for a month, on the service\'s word', async () => {
+    const { request, calls } = stubService({ ...trialRoutes, 'demo/activate': issued() });
     const monitor = makeMonitor(request);
     await monitor.initialize();
-    const before = calls.length;
 
     const result = await monitor.activateDemo();
 
     expect(result.success).toBe(true);
-    expect(monitor.getState().status).toBe('active');
     expect(monitor.isLicensedNow()).toBe(true);
-    expect(monitor.getState().payload.expiresAt).toBe(NOW + DEMO_DURATION_DAYS * DAY);
-    // No route was reached: the service has nothing that issues one of these.
-    expect(calls.length).toBe(before);
+    expect(monitor.getState().payload.expiresAt).toBe(DEMO_END);
+    // The device is named, so the service can hold the "once" — and the app
+    // is, so a demo taken here is not the sibling app's demo.
+    const call = calls.find((c: { path: string }) => c.path === 'demo/activate');
+    expect(call?.body).toMatchObject({ appId: APP_ID });
+    expect((call?.body as { deviceId?: string }).deviceId).toBeTruthy();
   });
 
   it('marks itself a demo rather than passing as a purchase', async () => {
-    const monitor = makeMonitor(offlineService());
+    const { request } = stubService({ ...trialRoutes, 'demo/activate': issued() });
+    const monitor = makeMonitor(request);
     await monitor.initialize();
     await monitor.activateDemo();
 
     const { payload } = monitor.getState();
     expect(payload.planId).toBe(DEMO_PLAN_ID);
-    // Scoped to this app like everything else the client honours, so a demo
-    // taken here cannot licence the sibling app on the same account.
     expect(payload.appId).toBe(APP_ID);
   });
 
-  it('is offered once per device, and remembers that across a restart', async () => {
+  it('grants nothing at all when the service cannot be reached', async () => {
+    // The point of the change: there is no offline path. Signing one here
+    // would put back the locally minted licence this replaced.
     const monitor = makeMonitor(offlineService());
+    await monitor.initialize();
+
+    const result = await monitor.activateDemo();
+
+    expect(result.success).toBe(false);
+    expect(result.code).toBe(DEMO_UNAVAILABLE);
+    expect(monitor.isLicensedNow()).toBe(false);
+    // And nothing was spent, so the next attempt on a working network works.
+    expect(monitor.demoState().used).toBe(false);
+  });
+
+  it('is refused a second time, and the refusal survives a deleted record', async () => {
+    const { request } = stubService({ ...trialRoutes, 'demo/activate': spent });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+
+    // This device has no local record at all — the file the old limit relied
+    // on. The service refuses anyway, which is the whole of the point.
+    expect(monitor.demoState().used).toBe(false);
+    const second = await monitor.activateDemo();
+
+    expect(second.success).toBe(false);
+    expect(second.code).toBe(DEMO_ALREADY_USED);
+    expect(monitor.isLicensedNow()).toBe(false);
+    // And what it told us is cached, so the next launch does not offer the
+    // button again even with no network.
+    expect(monitor.demoState().used).toBe(true);
+  });
+
+  it('remembers an issued demo across a restart', async () => {
+    const { request } = stubService({ ...trialRoutes, 'demo/activate': issued() });
+    const monitor = makeMonitor(request);
     await monitor.initialize();
     expect((await monitor.activateDemo()).success).toBe(true);
 
-    const second = await monitor.activateDemo();
-    expect(second.success).toBe(false);
-    expect(second.code).toBe(DEMO_ALREADY_USED);
-
     // A restart that has also signed out: the licence is gone, the record is
-    // not, so the demo is still spent.
+    // not, so the page still knows this device has had its demo.
     await monitor.deactivate();
     secureStore.resetCache();
     const restarted = makeMonitor(offlineService());
     await restarted.initialize();
     expect(restarted.getState().status).toBe('unlicensed');
-    expect((await restarted.activateDemo()).code).toBe(DEMO_ALREADY_USED);
     expect(restarted.demoState().used).toBe(true);
   });
 
-  it('takes the build\'s activation codes, and nothing else', async () => {
-    expect(DEMO_CODES.every((code: string) => isDemoCode(code))).toBe(true);
-    // Typed in by hand and read off a slide: case and stray spaces are not
-    // wrong answers.
-    expect(isDemoCode(` ${DEMO_CODES[0].toLowerCase()} `)).toBe(true);
-    expect(isDemoCode('DEMO-1999')).toBe(false);
-    expect(isDemoCode('')).toBe(false);
-
-    const monitor = makeMonitor(offlineService());
+  it('re-asking inside the window returns the same window, not a fresh one', async () => {
+    // handler.py's conditional put: a reinstall recovers the licence without
+    // buying more time. The client must adopt what it is given rather than
+    // assume "now + durationDays".
+    const midway = { ...issued(DEMO_END - 20 * DAY, NOW - 20 * DAY) };
+    const { request } = stubService({ ...trialRoutes, 'demo/activate': midway });
+    const monitor = makeMonitor(request);
     await monitor.initialize();
 
-    const wrong = await monitor.activateDemo('NOT-A-CODE');
-    expect(wrong.success).toBe(false);
-    expect(wrong.code).toBe(DEMO_CODE_INVALID);
-    // A refused code spends nothing: the button still works afterwards.
-    expect(monitor.demoState().used).toBe(false);
+    await monitor.activateDemo();
 
-    expect((await monitor.activateDemo(DEMO_CODES[0])).success).toBe(true);
-    expect(monitor.getState().payload.planId).toBe(DEMO_PLAN_ID);
+    expect(monitor.getState().payload.expiresAt).toBe(DEMO_END - 20 * DAY);
+    expect(monitor.demoState().expiresAt).toBe(new Date((DEMO_END - 20 * DAY) * 1000).toISOString());
   });
 
-  it('locks the features again when the seven days are up', async () => {
-    const monitor = makeMonitor(offlineService());
+  it('locks the features again when the month is up', async () => {
+    const { request } = stubService({ ...trialRoutes, 'demo/activate': issued() });
+    const monitor = makeMonitor(request);
     await monitor.initialize();
     await monitor.activateDemo();
 
     // Past the demo and past the grace period that follows every licence.
-    const later = makeMonitor(
-      offlineService(),
-      (NOW + DEMO_DURATION_DAYS * DAY + 4 * DAY) * 1000,
-    );
+    const { request: laterRequest } = stubService({ ...trialRoutes, 'demo/activate': spent });
+    const later = makeMonitor(laterRequest, (DEMO_END + 4 * DAY) * 1000);
     await later.initialize();
     expect(later.getState().status).toBe('expired');
     expect(later.isLicensedNow()).toBe(false);
-    // And it does not come round again — the point of the device record.
     expect((await later.activateDemo()).code).toBe(DEMO_ALREADY_USED);
   });
 
-  it('is never sent to the service to be refreshed', async () => {
-    const { request, calls } = stubService(routes);
+  it('is never sent to the verify route to be refreshed', async () => {
+    const { request, calls } = stubService({ ...trialRoutes, 'demo/activate': issued() });
     const monitor = makeMonitor(request);
     await monitor.initialize();
     await monitor.activateDemo();
 
     const result = await monitor.refresh();
 
-    // Silent, and above all not an exchange: the service never issued this
-    // key, so asking would come back "not accepted" and read as a licence
-    // that had been revoked.
+    // Silent, and above all not an exchange: the verify route only knows
+    // about purchases, so asking would come back "not accepted" and read as
+    // a licence that had been revoked.
     expect(result.success).toBe(false);
     expect(calls.some((c: { path: string }) => c.path === '')).toBe(false);
     expect(monitor.isLicensedNow()).toBe(true);
   });
 
   it('reports a device that has never taken one as free to', async () => {
-    const monitor = makeMonitor(offlineService());
+    const { request } = stubService({ ...trialRoutes, 'demo/activate': issued() });
+    const monitor = makeMonitor(request);
     await monitor.initialize();
 
     expect(monitor.demoState()).toMatchObject({
@@ -757,17 +806,55 @@ describe('the demo licence', () => {
     await monitor.activateDemo();
     const after = monitor.demoState();
     expect(after.used).toBe(true);
-    expect(after.expiresAt).toBe(new Date((NOW + DEMO_DURATION_DAYS * DAY) * 1000).toISOString());
+    expect(after.expiresAt).toBe(new Date(DEMO_END * 1000).toISOString());
   });
 
-  it('keeps the record where an edited file cannot revive it', async () => {
-    const monitor = makeMonitor(offlineService());
+  it('takes the service\'s status over the local record, and caches it', async () => {
+    const { request } = stubService({
+      ...trialRoutes,
+      'demo/status': {
+        used: true, appId: APP_ID, issuedAt: NOW - 5 * DAY,
+        expiresAt: NOW - 5 * DAY + DEMO_DURATION_DAYS * DAY,
+        expired: false, demoDurationDays: DEMO_DURATION_DAYS,
+      },
+    });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+    // Nothing local: this device has never activated through this install.
+    expect(monitor.demoState().used).toBe(false);
+
+    const status = await monitor.demoStatus();
+
+    expect(status.used).toBe(true);
+    expect(status.source).toBe('server');
+    // Cached, so an offline launch says the same thing.
+    expect(monitor.demoState().used).toBe(true);
+  });
+
+  it('falls back to the cached record when the status call fails', async () => {
+    const { request } = stubService({ ...trialRoutes, 'demo/activate': issued() });
+    const monitor = makeMonitor(request);
     await monitor.initialize();
     await monitor.activateDemo();
 
-    // The record is machine-bound and encrypted for the same reason the trial
-    // dates are: not because a date is secret, but so a second demo takes
-    // more than editing a number.
+    secureStore.resetCache();
+    const offline = makeMonitor(offlineService());
+    const status = await offline.demoStatus();
+
+    // "We cannot tell you right now" is not "you may have another one".
+    expect(status.used).toBe(true);
+    expect(status.source).toBe('local');
+  });
+
+  it('keeps the record where an edited file cannot revive it', async () => {
+    const { request } = stubService({ ...trialRoutes, 'demo/activate': issued() });
+    const monitor = makeMonitor(request);
+    await monitor.initialize();
+    await monitor.activateDemo();
+
+    // Encrypted and machine-bound for the same reason the trial dates are:
+    // not because a date is secret, but so the page cannot be lied to about
+    // how long is left. It is no longer the limit — the service is.
     const raw = readFileSync(path.join(dir, DEMO_FILE));
     expect(raw.toString('utf8')).not.toContain('issuedAt');
   });
