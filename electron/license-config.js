@@ -59,14 +59,26 @@ const PREVIOUS_SIGNING_SECRET = String(
  * satisfies this app and a trial spent there arrives here already used —
  * which is what docs/LICENSE_SERVICE.md listed as the cost of sharing.
  *
- * `smoothvoice` and not `shuyin`: this app's rows already exist in the
- * service's tables without an appId, and the migration stamps exactly that
- * value onto them. It is also the value the service falls back to for a
- * request that carries none, so an upgraded client and an old one still
- * resolve to the same subscription. Renaming the id here would strand every
- * license bought before this change.
+ * `shuyin`, this app's own id — not `smoothvoice`, which is SootheVoice's.
+ *
+ * It used to be `smoothvoice`, on the reasoning that this app's rows already
+ * existed in the service's tables without an appId, so the migration would
+ * stamp them with that value and renaming would strand every licence bought
+ * before the change. That reasoning does not hold, and the dates say why: the
+ * licence stack arrived here on 2026-08-31 (`Move subscriptions onto the
+ * shared license service`), after the 1.1.0 release on 2026-08-30, and every
+ * released build predates it. No shipped build of this app has ever called
+ * the service, so it has no rows there to strand — the rows that do exist
+ * belong to SootheVoice, which is why `smoothvoice` stays the service's
+ * DEFAULT_APP_ID and the app a legacy row is adopted for.
+ *
+ * Sharing the id was not free while it lasted. The service keys DemosTable by
+ * "<appId>#<deviceId>" and TrialsV2Table by (deviceId, appId), so with both
+ * apps sending `smoothvoice` the two collide on one machine: a demo or trial
+ * spent in SootheVoice arrives here already used, which is the exact leak the
+ * appId dimension exists to close.
  */
-const DEFAULT_APP_ID = 'smoothvoice';
+const DEFAULT_APP_ID = 'shuyin';
 
 /**
  * `LICENSE_APP_ID` is the main process's name for it; `VITE_APP_ID` is

@@ -114,7 +114,7 @@ The service holds one set of tables for every app on the account. Nothing but
 an app dimension separates them, so this client names itself on every request:
 
 ```
-appId = smoothvoice
+appId = shuyin
 ```
 
 Sent as a query parameter on the `GET` routes and a body field on the `POST`
@@ -124,14 +124,34 @@ routes — `/plans`, `/payment-methods`, `/trial/status`, `/trial/activate`,
 `electron/subscription-monitor.js` puts it on the wire; `URLSearchParams` in
 one helper builds the query strings, so no route can quietly go without it.
 
-**`smoothvoice`, not `shuyin`.** This app's rows already exist in the
-service's tables with no appId at all, and the migration stamps exactly that
-value onto them. It is also the value the service falls back to for a request
-carrying none, so an upgraded client and an old build resolve to the same
-subscription during the rollout. A different id here would strand every
-license bought before the change. `LICENSE_APP_ID` (or `VITE_APP_ID`)
-overrides it at build time, which is for pointing a build at a test
-deployment — not for renaming the app.
+**`shuyin`, not `smoothvoice`.** It was `smoothvoice` until recently, on the
+reasoning that this app's rows already existed in the service's tables with no
+appId, that the migration would stamp them with that value, and that renaming
+would strand every licence bought before the change.
+
+That reasoning does not survive the dates. The licence stack arrived here in
+`Move subscriptions onto the shared license service` on **2026-08-31**, after
+the **1.1.0** release on 2026-08-30; every released build predates it, and the
+changelog's released sections mention no licence or subscription at all. **No
+shipped build of this app has ever called the service**, so it has no rows
+there to strand. The rows that do exist are SootheVoice's — which is why
+`smoothvoice` remains the *service's* `DefaultAppId` and the app a legacy,
+appId-less row is adopted for.
+
+Sharing the id was not free while it lasted. The service keys `DemosTable` by
+`"<appId>#<deviceId>"` and `TrialsV2Table` by `(deviceId, appId)`, so with both
+clients sending `smoothvoice` the two collided on any machine running both: a
+demo or trial spent in SootheVoice arrived here already used — the exact leak
+the appId dimension exists to close.
+
+`LICENSE_APP_ID` (or `VITE_APP_ID`) overrides it at build time, which is for
+pointing a build at a test deployment — not for renaming the app.
+
+One thing this change deliberately does **not** touch: `APP_SALT` in
+`electron/secure-store.js` still contains the string `smoothvoice`. It is the
+key-derivation salt for `license.enc`, `trial.enc` and `demo.enc`, not an app
+id — changing it would make every one of those files on every existing install
+undecryptable.
 
 ### What the client does with the answer
 
@@ -156,16 +176,19 @@ ignores the extra field. Isolation begins when
 
 | | |
 |---|---|
-| `LicensesV2` | partition key `(appId, licenseId)`, GSI `appId-deviceId-index` |
-| `TrialsV2` | partition key `(appId, deviceId)` |
-| Migration | existing rows stamped `appId = 'smoothvoice'` |
-| `USE_APP_ID_DIMENSION` | Lambda env var switching the new lookups on |
+| `LicensesV2Table` | key `(userId, appId)`, GSI `licenseKey-index` |
+| `TrialsV2Table` | key `(deviceId, appId)` |
+| `DemosTable` | key `"<appId>#<deviceId>"` |
+| Backfill | `migrate_app_id.py` stamps the pre-appId rows `appId = 'smoothvoice'` — SootheVoice's, since no released build of this app ever wrote one |
 | Orders | `appId` stored on the order, so the payment webhook issues the license for the right app |
-| Missing `appId` | defaults to `smoothvoice` and logs a warning, for the transition |
+| Missing `appId` | defaults to `smoothvoice`, the app the appId-less rows belong to |
 
-Until then a trial spent in the sibling app still arrives here used, and a
-plan bought there still satisfies this one. Nothing in this repository can
-change that — see the note at the top: this app deploys no infrastructure.
+All of that is deployed from
+[`ruanjian123`](https://github.com/AryaLi1996/ruanjian123); nothing in this
+repository can change it — see the note at the top: this app deploys no
+infrastructure. Until that stack is deployed, the routes it adds answer
+**501**, and this client treats that as the entry not working rather than
+falling back to anything local.
 
 ---
 
@@ -293,9 +316,9 @@ were ever put in front.
 
 Nor is `LICENSE_URL` spelled `VITE_LICENSE_API_URL` anywhere in this
 repository — the main process reads `LICENSE_URL`, and `VITE_APP_ID` is
-accepted only as the renderer's alias for `LICENSE_APP_ID`. Setting the app
-id to `shuyin` for this build would strand every licence already bought,
-for the reason "Which app this is" gives above: the value is `smoothvoice`.
+accepted only as the renderer's alias for `LICENSE_APP_ID`. The app id is
+`shuyin`; `smoothvoice` is SootheVoice's, and a build sending it would share
+that app's trial and demo records rather than keeping its own.
 
 ### How a deployment happens
 
@@ -309,8 +332,10 @@ The signing secret is a GitHub **environment** secret on both environments;
 so a stack cannot come up carrying the public development value at all.
 
 The demo knobs are template parameters with defaults that already match this
-client — `DemoDays: 30`, `DemoPlanId: demo`, `DefaultAppId: smoothvoice` — so
-an ordinary deploy needs no overrides for them. `DemosTable` is a *resource*
+client — `DemoDays: 30`, `DemoPlanId: demo` — so an ordinary deploy needs no
+overrides for them. `DefaultAppId` stays `smoothvoice`: it is the app a
+request carrying no appId, and a row written before the dimension existed,
+belongs to. This client always sends its own. `DemosTable` is a *resource*
 in that template, not a parameter: CloudFormation names it, and passing
 `DemosTable=…` as a parameter override fails before any AWS call is made.
 
@@ -345,7 +370,7 @@ is not live yet — a trial spent in the sibling app still arrives here used.
 | `LICENSE_URL` | The base URL — Function URL or API Gateway stage |
 | `LICENSE_SIGNING_SECRET` | HMAC secret; **must match the deployment's** |
 | `PREVIOUS_LICENSE_SIGNING_SECRET` | Also accepted when verifying, never signed with. Set only while a rotation is in flight — see *Rotating it* below. `VITE_PREVIOUS_LICENSE_SIGNING_SECRET` does the same for an unpackaged run |
-| `LICENSE_APP_ID` / `VITE_APP_ID` | Which app the service scopes this build to. Defaults to `smoothvoice`; only change it for a test deployment |
+| `LICENSE_APP_ID` / `VITE_APP_ID` | Which app the service scopes this build to. Defaults to `shuyin`; only change it for a test deployment |
 | `DISABLE_DEMO_LICENSE` | `true` makes the main process refuse `license:activateDemo`. `VITE_DISABLE_DEMO_LICENSE` does the same for an unpackaged run, which shares the build environment |
 | `ENABLE_MANUAL_ACTIVATION` | No longer read by the interface — the licence box is on in every build. `license:config` still reports what it said |
 

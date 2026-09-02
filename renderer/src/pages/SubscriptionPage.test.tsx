@@ -429,7 +429,7 @@ describe('a demo licence in force', () => {
    */
   const running = (over: Partial<LicenseState> = {}) => state('active', {
     payload: {
-      userId: 'u1', appId: 'smoothvoice', planId: DEMO_PLAN_ID,
+      userId: 'u1', appId: 'shuyin', planId: DEMO_PLAN_ID,
       licenseKey: 'DEMO-ABC', expiresAt: 0, issuedAt: 0,
     },
     ...over,
