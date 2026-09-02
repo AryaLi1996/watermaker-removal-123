@@ -1,6 +1,6 @@
 /**
- * Licensing wired into the app: the bottom bar, the navigation, and the
- * feature gating that follows from the state the main process reports.
+ * Licensing wired into the app: the top bar, the navigation, and the feature
+ * gating that follows from the state the main process reports.
  *
  * The state machine itself is covered in
  * tests/unit/renderer/subscription-monitor.test.ts. What is left, and what
@@ -97,34 +97,42 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('App — the licence in the bottom bar', () => {
+describe('App — the licence in the top bar', () => {
   it('counts the trial down', async () => {
     stubElectronAPI(TRIALING);
     render(<App />);
     await waitFor(() =>
-      expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent(/free trial \(2 days \d{2}:\d{2} left\)/),
+      expect(screen.getByTestId('subscription-status-top')).toHaveTextContent(/Trial · 2 days \d{2}:\d{2} left/),
     );
   });
 
-  it('names the plan, and drops the prompt, once one is in force', async () => {
+  it('names the plan once one is in force', async () => {
     stubElectronAPI(LICENSED);
     render(<App />);
     await waitFor(() =>
-      expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('Subscription: Yearly'),
+      expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Subscribed · Yearly'),
     );
-    expect(screen.queryByTestId('status-bar-subscribe')).toBeNull();
   });
 
   it('follows a state the main process pushes, without being asked again', async () => {
     const { push } = stubElectronAPI(TRIALING);
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId('status-bar-subscribe')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Trial'));
 
     // A payment settling, or the trial running out, arrives this way.
     push(LICENSED);
     await waitFor(() =>
-      expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('Subscription: Yearly'),
+      expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Subscribed · Yearly'),
     );
+  });
+
+  it('has no strip along the bottom any more', async () => {
+    // The status moved up; leaving the old one behind would say the same
+    // thing twice, in two different sets of words.
+    stubElectronAPI(TRIALING);
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('subscription-status-top')).toBeInTheDocument());
+    expect(screen.queryByTestId('status-bar')).toBeNull();
   });
 });
 
@@ -132,7 +140,7 @@ describe('App — what the licence unlocks', () => {
   it('greys out temporal fill on a trial, with the subscription as the reason', async () => {
     const { api } = stubElectronAPI(TRIALING);
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId('status-bar-subscribe')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('subscription-status-top')).toHaveTextContent(/Trial|Expired|Not activated/));
     await loadVideo(api);
 
     const temporal = screen.getByTestId('method-temporal');
@@ -145,7 +153,7 @@ describe('App — what the licence unlocks', () => {
     const { api } = stubElectronAPI(LICENSED);
     render(<App />);
     await waitFor(() =>
-      expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('Yearly'),
+      expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Yearly'),
     );
     await loadVideo(api);
 
@@ -159,18 +167,19 @@ describe('App — what the licence unlocks', () => {
       graceDaysLeft: 2,
     }));
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('grace'));
+    await waitFor(() => expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Grace period'));
     await loadVideo(api);
 
     expect(screen.getByTestId('method-temporal')).toBeEnabled();
-    // Still asked to renew: the grace period is the last chance to notice.
-    expect(screen.getByTestId('status-bar-subscribe')).toBeInTheDocument();
+    // Still told the clock is running: the grace period is the last chance
+    // to notice before the features go.
+    expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('2 days left');
   });
 
   it('takes the paid features away again when a pushed state expires', async () => {
     const { api, push } = stubElectronAPI(LICENSED);
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('Yearly'));
+    await waitFor(() => expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Yearly'));
     await loadVideo(api);
     expect(screen.getByTestId('method-temporal')).toBeEnabled();
 
@@ -180,12 +189,13 @@ describe('App — what the licence unlocks', () => {
 });
 
 
-describe('App — the demo licence', () => {
+describe('App — a demo licence in force', () => {
   /**
-   * The end of the wire: the page is reached, the button goes to the main
-   * process, and the licence that comes back unlocks the features the demo
-   * exists to show off. That last step is the reason this lives here and not
-   * in the page's own tests — the gating is App's.
+   * The button that took one is gone with the demo card — the licence box on
+   * the subscription page replaced both doors. What still has to hold is the
+   * far end of the wire: a demo licence the main process issued unlocks the
+   * features it exists to show off, is named as a demo while it runs, and
+   * takes them back when it ends.
    */
   const DEMO_LICENSED = state('active', {
     payload: {
@@ -196,38 +206,26 @@ describe('App — the demo licence', () => {
     daysRemaining: 7,
   });
 
-  it('unlocks temporal fill once a demo is taken, and names it a demo', async () => {
+  it('unlocks temporal fill while it runs, and names it a demo', async () => {
     const { api, push } = stubElectronAPI(TRIALING);
-    (api.licenseActivateDemo as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-      // The main process pushes the new state, exactly as it does for a
-      // settled payment.
-      (api.licenseState as ReturnType<typeof vi.fn>).mockResolvedValue(DEMO_LICENSED);
-      return { success: true, demo: { used: true, durationDays: 7, issuedAt: null, expiresAt: null } };
-    });
-
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId('status-bar-subscribe')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Trial'));
     await loadVideo(api);
     expect(screen.getByTestId('method-temporal')).toBeDisabled();
 
-    fireEvent.click(screen.getByTestId('nav-subscription'));
-    fireEvent.click(screen.getByTestId('demo-activate'));
-
-    await waitFor(() => expect(api.licenseActivateDemo).toHaveBeenCalled());
     push(DEMO_LICENSED);
 
     await waitFor(() =>
-      expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('Subscription: Demo licence'),
+      expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Demo · '),
     );
-    fireEvent.click(screen.getByTestId('nav-editor'));
     expect(screen.getByTestId('method-temporal')).toBeEnabled();
     expect(screen.queryByTestId('preview-locked')).toBeNull();
   });
 
-  it('locks the features again when the demo runs out, and asks for a plan', async () => {
+  it('locks the features again when it runs out, and asks for a plan', async () => {
     const { api, push } = stubElectronAPI(DEMO_LICENSED);
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('Demo licence'));
+    await waitFor(() => expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Demo'));
     await loadVideo(api);
     expect(screen.getByTestId('method-temporal')).toBeEnabled();
 
@@ -236,37 +234,63 @@ describe('App — the demo licence', () => {
 
     await waitFor(() => expect(screen.getByTestId('method-temporal')).toBeDisabled());
     expect(screen.getByTestId('method-temporal')).toHaveTextContent('Needs a subscription');
-    expect(screen.getByTestId('status-bar-subscribe')).toBeInTheDocument();
+    expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Expired');
   });
 
-  it('does not offer one where the main process says the build has no demo', async () => {
-    const { api } = stubElectronAPI(TRIALING);
-    (api.licenseConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-      orderPollIntervalMs: 1, orderPollTimeoutMs: 10, demoLicenseEnabled: false,
-    });
-
+  it('offers no way to take one from the subscription page', async () => {
+    stubElectronAPI(TRIALING);
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId('status-bar-subscribe')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Trial'));
     fireEvent.click(screen.getByTestId('nav-subscription'));
 
-    await waitFor(() => expect(api.licenseConfig).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId('subscription-page')).toBeInTheDocument());
     expect(screen.queryByTestId('demo-license')).toBeNull();
+    expect(screen.queryByTestId('demo-activate')).toBeNull();
+    // What stands there instead is the box for a key somebody already has.
+    expect(screen.getByTestId('license-input')).toBeInTheDocument();
   });
 });
 
 describe('App — navigation', () => {
-  it('opens the subscription page from the top bar and from the status bar', async () => {
+  it('moves between the three screens from the sidebar', async () => {
     stubElectronAPI(TRIALING);
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId('status-bar-subscribe')).toBeInTheDocument());
-
-    fireEvent.click(screen.getByTestId('status-bar-subscribe'));
-    expect(screen.getByTestId('subscription-page')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId('nav-editor'));
-    expect(screen.queryByTestId('subscription-page')).toBeNull();
+    await waitFor(() => expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Trial'));
 
     fireEvent.click(screen.getByTestId('nav-subscription'));
     expect(screen.getByTestId('subscription-page')).toBeInTheDocument();
+    expect(screen.getByTestId('nav-subscription')).toHaveAttribute('aria-current', 'page');
+
+    // Settings is reachable from the same rail; what it renders needs the
+    // ThemeProvider the real entry point wraps App in, so it is covered by
+    // its own tests rather than mounted here.
+    expect(screen.getByTestId('nav-settings')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('nav-editor'));
+    expect(screen.queryByTestId('subscription-page')).toBeNull();
+    expect(screen.getByTestId('nav-editor')).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('opens the subscription screen from the account panel too', async () => {
+    stubElectronAPI(TRIALING);
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Trial'));
+
+    fireEvent.click(screen.getByTestId('user-avatar'));
+    fireEvent.click(screen.getByTestId('account-subscribe'));
+    expect(screen.getByTestId('subscription-page')).toBeInTheDocument();
+  });
+
+  it("keeps the editor's video and its running job behind the other screens", async () => {
+    // Hidden, not unmounted: a user checking a price mid-export must not come
+    // back to an empty canvas.
+    const { api } = stubElectronAPI(TRIALING);
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('subscription-status-top')).toHaveTextContent('Trial'));
+    await loadVideo(api);
+
+    fireEvent.click(screen.getByTestId('nav-subscription'));
+    fireEvent.click(screen.getByTestId('nav-editor'));
+    expect(screen.getByTestId('btn-export')).toBeInTheDocument();
   });
 });

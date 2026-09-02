@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **The subscription centre has been rebuilt around the SootheVoice layout**,
+  which this app now shares with the licence service behind it. Nothing about
+  how a licence is issued, checked or enforced has changed — this is the
+  interface over the same calls.
+  - **The licence moved to a bar across the top of the window**, beside an
+    avatar and the language picker, and the strip along the bottom is gone. It
+    says one of three things — not activated, something running with the time
+    left on it, or the plan that was bought — and the two states worth acting
+    on, a trial counting down and the grace period, still say so rather than
+    being folded into "subscribed". Clicking the avatar opens what this device
+    is licensed for, and the way to the subscription screen.
+  - **Navigation is a rail down the left**: workbench, subscription, settings.
+    The product's name went with it, since the top bar is now about the person
+    using the app rather than the app itself — and on macOS, where the window
+    has no system title bar, the rail is the only place it appears.
+  - **Choosing a plan and paying for it are two steps.** The cards select;
+    one button below the payment methods spends. Nothing is chosen for the
+    user, so nobody pays for a plan they never picked, and the button says
+    which choice is still missing rather than failing silently on a click.
+  - **A licence key can be typed in on any build.** The box sits where the
+    demo card used to, takes the `SOOTHEVOICE-XXXX-XXXX-XXXX` keys the shop
+    issues, and goes through the same online verification a purchase does. It
+    replaces both the demo entry and the activation box that was hidden behind
+    a build flag.
+  - **What a subscription unlocks is shown once it has been unlocked**, in a
+    dialog after a key is accepted, instead of sitting halfway up the page as
+    a list of promises.
+  - The three questions people actually write in about — what happens when the
+    trial ends, how to upgrade, which methods are supported — are folded away
+    at the foot of the page.
+
 - **Temporal fill keeps hard edges sharp.** A caption, a logo or black text
   behind the mark used to come back as a soft grey ramp, and the repaired
   patch read as smoother than the picture around it. Four changes, all in the
@@ -198,6 +229,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only. A two-core machine with a large graphics card runs the deep engine
   faster than an eight-core one runs the flow engine; refusing it for want of
   cores would refuse the fastest job the app can do.
+
+### Removed
+- **The demo-licence card and its one-click button.** The licence box above
+  replaced both doors. The main process still issues, signs and records a demo
+  exactly as before (`electron/demo-license.js`), and a demo already in force
+  is still named as a demo, still counts down and still unlocks what it always
+  did — there is simply no longer a button in the interface that asks for one.
+- **The subscription strip along the bottom of the window**, which said the
+  same thing the top bar now says, in the place people stop looking.
 
 ## [1.1.0] - 2026-08-30
 

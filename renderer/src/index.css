@@ -183,13 +183,64 @@ body {
   -webkit-app-region: no-drag;
 }
 
+/* ── The subscription page ─────────────────────────────────────────────────
+   The page is laid out with inline styles like the rest of the app; what
+   lives here is the handful of states inline styles cannot express — hover
+   and focus — so a card, a method or the licence box reacts to the pointer
+   before it is clicked. Every colour still comes from a token, so both
+   themes follow along without a second rule. */
+.plan-card:hover,
+.pay-method:hover {
+  border-color: var(--border-strong);
+}
+.plan-card[data-selected='true']:hover,
+.pay-method[aria-pressed='true']:hover {
+  /* Already chosen: the accent border says so, and dulling it on hover would
+     read as the choice coming undone. */
+  border-color: var(--accent);
+}
+.plan-card:focus-visible,
+.pay-method:focus-visible,
+.app-nav-item:focus-visible,
+.license-key:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.license-key:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.app-nav-item:hover {
+  background: var(--bg);
+}
+/* The disclosure triangle is removed by `list-style: none` in the component;
+   Safari needs the pseudo-element taken away as well. */
+.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+.faq-item summary:hover {
+  color: var(--text);
+}
+
 /* ── Narrow windows ────────────────────────────────────────────────────────
    The window minimum is 900×600, so this is not about phones: it is about a
    user dragging the window narrow or working on a small laptop beside other
-   apps. Below 820px the fixed sidebar leaves too little canvas, so the two
-   panes stack and the sidebar takes a capped, scrollable strip. */
+   apps. Below 820px the fixed editor panel leaves too little canvas, so the
+   two panes stack and the panel takes a capped, scrollable strip. The
+   navigation rail turns into a row at the same point, for the same reason:
+   168px of it is 168px the canvas does not get. */
 @media (max-width: 820px) {
-  .app-shell {
+  .app-main {
+    flex-direction: column;
+  }
+  .app-nav {
+    flex-direction: row;
+    width: 100% !important;
+    min-width: 0 !important;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .app-body {
     flex-direction: column;
   }
   .app-sidebar {

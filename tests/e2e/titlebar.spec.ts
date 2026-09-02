@@ -35,17 +35,19 @@ test.describe('the top bar', () => {
   test('gives every control back to the pointer', async ({ page }) => {
     // A control left inside the drag region starts a window move instead of
     // firing, so this asserts the exemption rather than the appearance.
-    for (const selector of ['[data-testid="nav-editor"]', '[data-testid="language-select"]']) {
+    for (const selector of ['[data-testid="user-avatar"]', '[data-testid="language-select"]']) {
       expect(await appRegion(page, selector), selector).toBe('no-drag');
     }
   });
 
-  test('still navigates when clicked, not merely styled to', async ({ page }) => {
+  test('still takes a click, not merely styled to', async ({ page }) => {
     // The regression this guards: `drag` on the strip swallowing the click.
-    await page.getByTestId('nav-subscription').click();
+    // The navigation itself moved to the sidebar, which is outside the drag
+    // region — the account panel is what is left inside it.
+    await page.getByTestId('user-avatar').click();
+    await expect(page.getByTestId('account-panel')).toBeVisible();
+    await page.getByTestId('account-subscribe').click();
     await expect(page.getByTestId('subscription-page')).toBeVisible();
-    await page.getByTestId('nav-editor').click();
-    await expect(page.getByTestId('subscription-page')).toBeHidden();
   });
 
   test('keeps its contents clear of the corner the window controls use', async ({ page }) => {

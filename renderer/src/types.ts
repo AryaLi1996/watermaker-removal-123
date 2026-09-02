@@ -131,8 +131,9 @@ export interface LicenseConfig {
   orderPollIntervalMs: number;
   orderPollTimeoutMs: number;
   usingDefaultSigningSecret: boolean;
-  /** Whether to offer the box for entering a licence by hand. Off unless the
-   *  build sets ENABLE_MANUAL_ACTIVATION. */
+  /** Whether the build asked for the box for entering a licence by hand. The
+   *  interface no longer reads it — the box is on in every build — but the
+   *  main process still reports what ENABLE_MANUAL_ACTIVATION said. */
   manualActivationEnabled?: boolean;
   /** Whether this build issues demo licences at all. On unless the build sets
    *  VITE_DISABLE_DEMO_LICENSE — see electron/demo-license.js. */

@@ -1,18 +1,18 @@
 /**
  * The subscription page against the payment flow it actually drives.
  *
- * The flow is the thing worth covering here: a click creates an order with
- * the service, a checkout opens, and the page waits — it never decides for
- * itself that a payment succeeded, because the only thing that could make
- * that work is trusting the client's word for it.
+ * The flow is the thing worth covering here: a plan and a method are chosen,
+ * one button creates the order with the service, a checkout opens, and the
+ * page waits — it never decides for itself that a payment succeeded, because
+ * the only thing that could make that work is trusting the client's word for
+ * it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import SubscriptionPage from './SubscriptionPage';
-import SubscriptionStatusBar from '../components/SubscriptionStatusBar';
 import {
-  DEMO_ALREADY_USED, DEMO_CODE_INVALID, DEMO_PLAN_ID, LOADING_STATE,
+  DEMO_PLAN_ID, LOADING_STATE,
   type LicenseState, type LicenseStatus, type PaymentMethod, type Plan, type TrialState,
 } from '../subscription';
 import { setLocale } from '../i18n';
@@ -69,6 +69,15 @@ function renderPage(licenseState = TRIALING, over: Partial<Parameters<typeof Sub
   return { createOrder, watchOrder, refresh };
 }
 
+/** Choose a plan, then spend on it — the two steps the page now separates. */
+function choosePlan(id: string) {
+  fireEvent.click(screen.getByTestId(`subscribe-${id}`));
+}
+
+function payNow() {
+  fireEvent.click(screen.getByTestId('pay-now'));
+}
+
 let api: ReturnType<typeof stubElectronAPI>;
 
 beforeEach(() => {
@@ -107,6 +116,35 @@ describe('the plans', () => {
     expect(screen.getByTestId('plans-loading')).toBeInTheDocument();
     expect(screen.queryByTestId('plan-monthly')).toBeNull();
   });
+
+  it('carry the popularity chip the row is read by', () => {
+    renderPage();
+    expect(screen.getByTestId('plan-monthly')).toHaveTextContent('Good for trying it out');
+    expect(screen.getByTestId('plan-quarterly')).toHaveTextContent('Most popular');
+    expect(screen.getByTestId('plan-semi_annual')).toHaveTextContent('Great value');
+    expect(screen.getByTestId('plan-annual')).toHaveTextContent('Best price');
+  });
+
+  it('start with nothing chosen, so nobody pays for a plan they never picked', () => {
+    renderPage();
+    for (const id of ['monthly', 'quarterly', 'semi_annual', 'annual']) {
+      expect(screen.getByTestId(`plan-${id}`)).toHaveAttribute('aria-pressed', 'false');
+    }
+    expect(screen.getByTestId('pay-hint')).toHaveTextContent('Choose a plan');
+  });
+
+  it('mark the chosen one, and only that one', () => {
+    renderPage();
+    fireEvent.click(screen.getByTestId('plan-annual'));
+
+    expect(screen.getByTestId('plan-annual')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('plan-monthly')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('pay-hint')).toHaveTextContent('Yearly');
+
+    // The choice moves rather than accumulating.
+    fireEvent.click(screen.getByTestId('plan-monthly'));
+    expect(screen.getByTestId('plan-annual')).toHaveAttribute('aria-pressed', 'false');
+  });
 });
 
 describe('the payment methods', () => {
@@ -128,11 +166,30 @@ describe('the payment methods', () => {
 });
 
 describe('paying', () => {
+  it('will not spend anything until a plan has been chosen', () => {
+    const { createOrder } = renderPage();
+
+    // The method defaults to the first the service listed, so the plan is the
+    // only thing still missing — and the button says so rather than failing
+    // silently on a click.
+    expect(screen.getByTestId('pay-now')).toBeDisabled();
+    payNow();
+    expect(createOrder).not.toHaveBeenCalled();
+  });
+
+  it('says which choice is missing when no method is on offer', () => {
+    renderPage(TRIALING, { methods: [] });
+    choosePlan('annual');
+    expect(screen.getByTestId('pay-now')).toBeDisabled();
+    expect(screen.getByTestId('pay-hint')).toHaveTextContent('payment method');
+  });
+
   it('creates an order for the chosen plan and method, then opens the checkout', async () => {
     const { createOrder } = renderPage();
 
     fireEvent.click(screen.getByTestId('pay-alipay'));
-    fireEvent.click(screen.getByTestId('subscribe-quarterly'));
+    choosePlan('quarterly');
+    payNow();
 
     await waitFor(() => expect(createOrder).toHaveBeenCalledWith('quarterly', 'alipay'));
     // A QR-code method gets its own window; the checkout page is never
@@ -147,7 +204,8 @@ describe('paying', () => {
     });
     renderPage(TRIALING, { createOrder });
 
-    fireEvent.click(screen.getByTestId('subscribe-annual'));
+    choosePlan('annual');
+    payNow();
     await waitFor(() => expect(api.paymentOpenExternal).toHaveBeenCalledWith('https://pay.example/o-2'));
     expect(api.paymentOpenEmbedded).not.toHaveBeenCalled();
   });
@@ -158,14 +216,16 @@ describe('paying', () => {
     const watchOrder = vi.fn(() => new Promise<'paid'>(() => {}));
     renderPage(TRIALING, { watchOrder });
 
-    fireEvent.click(screen.getByTestId('subscribe-monthly'));
+    choosePlan('monthly');
+    payNow();
     await waitFor(() => expect(screen.getByTestId('payment-dialog')).toBeInTheDocument());
     expect(screen.queryByText(/I have paid/i)).toBeNull();
   });
 
   it('reports success once the order is paid', async () => {
     renderPage();
-    fireEvent.click(screen.getByTestId('subscribe-quarterly'));
+    choosePlan('quarterly');
+    payNow();
     await waitFor(() => expect(screen.getByTestId('subscribe-success')).toBeInTheDocument());
     expect(api.paymentCloseEmbedded).toHaveBeenCalled();
   });
@@ -174,7 +234,8 @@ describe('paying', () => {
     const createOrder = vi.fn().mockResolvedValue({ error: 'payment method not available' });
     renderPage(TRIALING, { createOrder });
 
-    fireEvent.click(screen.getByTestId('subscribe-monthly'));
+    choosePlan('monthly');
+    payNow();
     await waitFor(() => expect(screen.getByTestId('subscribe-error')).toHaveTextContent('payment method not available'));
     expect(api.paymentOpenEmbedded).not.toHaveBeenCalled();
   });
@@ -185,7 +246,8 @@ describe('paying', () => {
     const createOrder = vi.fn().mockResolvedValue({ error: 'appId mismatch', code: 'app_mismatch' });
     renderPage(TRIALING, { createOrder });
 
-    fireEvent.click(screen.getByTestId('subscribe-monthly'));
+    choosePlan('monthly');
+    payNow();
     await waitFor(() => expect(screen.getByTestId('subscribe-error')).toHaveTextContent(/different app/i));
     expect(screen.getByTestId('subscribe-error')).not.toHaveTextContent('appId mismatch');
   });
@@ -196,7 +258,8 @@ describe('paying', () => {
     const watchOrder = vi.fn().mockResolvedValue('mismatch');
     renderPage(TRIALING, { watchOrder });
 
-    fireEvent.click(screen.getByTestId('subscribe-monthly'));
+    choosePlan('monthly');
+    payNow();
     await waitFor(() => expect(screen.getByTestId('subscribe-error')).toHaveTextContent(/different app/i));
     expect(screen.queryByTestId('subscribe-success')).toBeNull();
   });
@@ -205,7 +268,8 @@ describe('paying', () => {
     const watchOrder = vi.fn().mockResolvedValue('timeout');
     renderPage(TRIALING, { watchOrder });
 
-    fireEvent.click(screen.getByTestId('subscribe-monthly'));
+    choosePlan('monthly');
+    payNow();
     await waitFor(() => expect(screen.getByTestId('subscribe-timeout')).toBeInTheDocument());
   });
 
@@ -215,7 +279,8 @@ describe('paying', () => {
       new Promise<'cancelled'>((resolve) => { stop = () => { signal.cancelled = true; resolve('cancelled'); }; }));
     renderPage(TRIALING, { watchOrder });
 
-    fireEvent.click(screen.getByTestId('subscribe-monthly'));
+    choosePlan('monthly');
+    payNow();
     await waitFor(() => expect(screen.getByTestId('payment-dialog')).toBeInTheDocument());
 
     fireEvent.click(screen.getByTestId('payment-cancel'));
@@ -223,28 +288,36 @@ describe('paying', () => {
     await waitFor(() => expect(screen.queryByTestId('payment-dialog')).toBeNull());
     expect(api.paymentCloseEmbedded).toHaveBeenCalled();
   });
+
+  it('will not start a second order while one is in flight', async () => {
+    const watchOrder = vi.fn(() => new Promise<'paid'>(() => {}));
+    const { createOrder } = renderPage(TRIALING, { watchOrder });
+
+    choosePlan('monthly');
+    payNow();
+    await waitFor(() => expect(screen.getByTestId('payment-dialog')).toBeInTheDocument());
+
+    payNow();
+    expect(createOrder).toHaveBeenCalledTimes(1);
+  });
 });
 
-describe('activating by hand', () => {
+describe('the licence box', () => {
   /**
-   * The box is for internal testing and the occasional offline or redeemed
-   * activation, so the first thing worth pinning is that it is not there by
-   * default: a field asking for a code the shop never issues would mostly
-   * generate support questions.
+   * The box that takes a key somebody already has. It stands where the demo
+   * card used to and is always on now: the shop issues these keys, so hiding
+   * it behind a build flag only generates support questions.
    */
-  it('is absent unless the build asks for it', () => {
+  it('is always there, with the key format it accepts in the box', () => {
     renderPage();
-    expect(screen.queryByTestId('manual-activation')).toBeNull();
-  });
-
-  it('appears when the build enables it', () => {
-    renderPage(TRIALING, { manualActivation: true });
-    expect(screen.getByTestId('manual-activation')).not.toBeNull();
+    expect(screen.getByTestId('license-input')).toBeInTheDocument();
+    expect(screen.getByTestId('activation-code'))
+      .toHaveAttribute('placeholder', 'SOOTHEVOICE-XXXX-XXXX-XXXX');
   });
 
   it('passes what was typed to the same verification a purchase uses', async () => {
     const activate = vi.fn().mockResolvedValue({ success: true });
-    renderPage(TRIALING, { manualActivation: true, activate });
+    renderPage(TRIALING, { activate });
 
     fireEvent.change(screen.getByTestId('activation-code'), { target: { value: '  KEY12345  ' } });
     fireEvent.click(screen.getByTestId('activation-submit'));
@@ -254,29 +327,46 @@ describe('activating by hand', () => {
     await waitFor(() => expect(screen.getByTestId('activation-success')).toBeTruthy());
   });
 
-  it('will not submit an empty box', () => {
-    const activate = vi.fn();
-    renderPage(TRIALING, { manualActivation: true, activate });
+  it('shows what the key unlocked, rather than listing it before there is one', async () => {
+    // The benefits used to sit halfway up the page as a promise. They appear
+    // once, here, at the moment they have stopped being one.
+    const activate = vi.fn().mockResolvedValue({ success: true });
+    renderPage(TRIALING, { activate });
+    expect(screen.queryByTestId('unlocked-dialog')).toBeNull();
 
-    expect((screen.getByTestId('activation-submit') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByTestId('activation-code'), { target: { value: 'KEY12345' } });
     fireEvent.click(screen.getByTestId('activation-submit'));
-    expect(activate).not.toHaveBeenCalled();
+
+    const dialog = await screen.findByTestId('unlocked-dialog');
+    expect(dialog).toHaveTextContent('Temporal fill');
+    fireEvent.click(screen.getByTestId('unlocked-close'));
+    await waitFor(() => expect(screen.queryByTestId('unlocked-dialog')).toBeNull());
   });
 
-  it('says what was wrong with a code that was refused', async () => {
+  it('says nothing was unlocked when the key was refused', async () => {
     const activate = vi.fn().mockResolvedValue({ success: false, error: 'License key not accepted' });
-    renderPage(TRIALING, { manualActivation: true, activate });
+    renderPage(TRIALING, { activate });
 
     fireEvent.change(screen.getByTestId('activation-code'), { target: { value: 'NOPE1234' } });
     fireEvent.click(screen.getByTestId('activation-submit'));
 
     await waitFor(() => expect(screen.getByTestId('activation-error'))
       .toHaveTextContent('License key not accepted'));
+    expect(screen.queryByTestId('unlocked-dialog')).toBeNull();
+  });
+
+  it('will not submit an empty box', () => {
+    const activate = vi.fn();
+    renderPage(TRIALING, { activate });
+
+    expect((screen.getByTestId('activation-submit') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId('activation-submit'));
+    expect(activate).not.toHaveBeenCalled();
   });
 
   it('words an expired licence as expired, not as a typo', async () => {
     const activate = vi.fn().mockResolvedValue({ success: false, code: 'expired', error: 'This license has already expired' });
-    renderPage(TRIALING, { manualActivation: true, activate });
+    renderPage(TRIALING, { activate });
 
     fireEvent.change(screen.getByTestId('activation-code'), { target: { value: 'a.b.c' } });
     fireEvent.click(screen.getByTestId('activation-submit'));
@@ -286,7 +376,7 @@ describe('activating by hand', () => {
 
   it('words a licence bought for another app as such', async () => {
     const activate = vi.fn().mockResolvedValue({ success: false, code: 'app_mismatch', error: 'belongs to soothevoice' });
-    renderPage(TRIALING, { manualActivation: true, activate });
+    renderPage(TRIALING, { activate });
 
     fireEvent.change(screen.getByTestId('activation-code'), { target: { value: 'a.b.c' } });
     fireEvent.click(screen.getByTestId('activation-submit'));
@@ -296,7 +386,7 @@ describe('activating by hand', () => {
 
   it('submits on Enter, since a pasted token is long enough to want it', async () => {
     const activate = vi.fn().mockResolvedValue({ success: true });
-    renderPage(TRIALING, { manualActivation: true, activate });
+    renderPage(TRIALING, { activate });
 
     const box = screen.getByTestId('activation-code');
     fireEvent.change(box, { target: { value: 'a.b.c' } });
@@ -309,7 +399,7 @@ describe('activating by hand', () => {
       value: { readText: vi.fn().mockResolvedValue(' pasted.token.here ') },
       configurable: true,
     });
-    renderPage(TRIALING, { manualActivation: true, activate: vi.fn() });
+    renderPage(TRIALING, { activate: vi.fn() });
 
     fireEvent.click(screen.getByTestId('activation-paste'));
     await waitFor(() => expect((screen.getByTestId('activation-code') as HTMLInputElement).value)
@@ -321,7 +411,7 @@ describe('activating by hand', () => {
       value: { readText: vi.fn().mockRejectedValue(new Error('denied')) },
       configurable: true,
     });
-    renderPage(TRIALING, { manualActivation: true, activate: vi.fn() });
+    renderPage(TRIALING, { activate: vi.fn() });
 
     fireEvent.click(screen.getByTestId('activation-paste'));
     await waitFor(() => expect((screen.getByTestId('activation-code') as HTMLInputElement).value).toBe(''));
@@ -330,111 +420,46 @@ describe('activating by hand', () => {
 });
 
 
-describe('the demo licence', () => {
+describe('a demo licence in force', () => {
   /**
-   * The entry that hands out seven days with no payment. What matters here is
-   * that it is only ever shown where the build offers it, that a device which
-   * has spent its demo is told so rather than finding out by clicking, and
-   * that offering one never takes the paid entry away.
+   * The demo card and its code box are gone from this page — the licence box
+   * above replaced both. What is left is a demo the main process issued
+   * earlier, which the page still has to name honestly and still has to sell
+   * a subscription over the top of.
    */
-  const DEMO_STATE = { used: false, durationDays: 7, issuedAt: null, expiresAt: null };
-
-  const demoProps = (over: Record<string, unknown> = {}) => ({
-    demoEnabled: true,
-    demo: DEMO_STATE,
-    activateDemo: vi.fn().mockResolvedValue({ success: true }),
+  const running = (over: Partial<LicenseState> = {}) => state('active', {
+    payload: {
+      userId: 'u1', appId: 'smoothvoice', planId: DEMO_PLAN_ID,
+      licenseKey: 'DEMO-ABC', expiresAt: 0, issuedAt: 0,
+    },
     ...over,
   });
 
-  it('is not there at all in a build that does not offer it', () => {
-    renderPage(TRIALING, demoProps({ demoEnabled: false }));
-    expect(screen.queryByTestId('demo-license')).toBeNull();
-  });
+  it('is named as a demo, not as a plan somebody bought, and counts down', () => {
+    renderPage(running(), { licenseMsRemaining: 6 * DAY + 3 * 60 * 60 * 1000 });
 
-  it('offers seven free days, and says it needs no payment', () => {
-    renderPage(TRIALING, demoProps());
-    expect(screen.getByTestId('demo-license')).toHaveTextContent('7 days');
-    expect(screen.getByTestId('demo-license')).toHaveTextContent('no payment');
-    expect(screen.getByTestId('demo-activate')).toBeEnabled();
-  });
-
-  it('takes one on a click, with no code to type', async () => {
-    const activateDemo = vi.fn().mockResolvedValue({ success: true });
-    renderPage(TRIALING, demoProps({ activateDemo }));
-
-    fireEvent.click(screen.getByTestId('demo-activate'));
-
-    await waitFor(() => expect(screen.getByTestId('demo-success')).toBeInTheDocument());
-    // Called with nothing: the button is the whole interaction.
-    expect(activateDemo).toHaveBeenCalledWith(undefined);
-  });
-
-  it('takes one from an activation code as well', async () => {
-    const activateDemo = vi.fn().mockResolvedValue({ success: true });
-    renderPage(TRIALING, demoProps({ activateDemo }));
-
-    fireEvent.change(screen.getByTestId('demo-code'), { target: { value: ' demo-2026 ' } });
-    fireEvent.click(screen.getByTestId('demo-code-submit'));
-
-    await waitFor(() => expect(activateDemo).toHaveBeenCalledWith('demo-2026'));
-    expect(screen.getByTestId('demo-success')).toBeInTheDocument();
-  });
-
-  it('says so, in its own words, when a code is not one of ours', async () => {
-    const activateDemo = vi.fn().mockResolvedValue({ success: false, code: DEMO_CODE_INVALID });
-    renderPage(TRIALING, demoProps({ activateDemo }));
-
-    fireEvent.change(screen.getByTestId('demo-code'), { target: { value: 'NOPE' } });
-    fireEvent.click(screen.getByTestId('demo-code-submit'));
-
-    await waitFor(() => expect(screen.getByTestId('demo-error')).toBeInTheDocument());
-    expect(screen.getByTestId('demo-error')).toHaveTextContent('not a demo activation code');
-  });
-
-  it('tells a device that has already had one, rather than letting it click', () => {
-    renderPage(TRIALING, demoProps({ demo: { ...DEMO_STATE, used: true } }));
-    expect(screen.getByTestId('demo-activate')).toBeDisabled();
-    expect(screen.getByTestId('demo-code-submit')).toBeDisabled();
-  });
-
-  it('says the demo is spent when the main process refuses a second one', async () => {
-    const activateDemo = vi.fn().mockResolvedValue({ success: false, code: DEMO_ALREADY_USED });
-    renderPage(TRIALING, demoProps({ activateDemo }));
-
-    fireEvent.click(screen.getByTestId('demo-activate'));
-
-    await waitFor(() => expect(screen.getByTestId('demo-error')).toBeInTheDocument());
-    expect(screen.getByTestId('demo-error')).toHaveTextContent('already used its demo');
-    // And it points at the paid plans rather than leaving it there.
-    expect(screen.getByTestId('demo-error')).toHaveTextContent('Subscribe');
-  });
-
-  it('counts a running demo down instead of offering another', () => {
-    const running = state('active', {
-      payload: {
-        userId: 'u1', appId: 'smoothvoice', planId: DEMO_PLAN_ID,
-        licenseKey: 'DEMO-ABC', expiresAt: 0, issuedAt: 0,
-      },
-    });
-    renderPage(running, demoProps({ licenseMsRemaining: 6 * DAY + 3 * 60 * 60 * 1000 }));
-
-    expect(screen.getByTestId('demo-remaining')).toHaveTextContent('6 days 03:00 left');
-    expect(screen.queryByTestId('demo-activate')).toBeNull();
-    // The demo is named as what it is, not as a plan someone bought.
     expect(screen.getByTestId('subscription-status')).toHaveTextContent('Demo licence');
+    expect(screen.getByTestId('subscription-status')).toHaveTextContent('6 days 03:00 left');
+  });
+
+  it('says a demo cannot be extended, since the service never issued it', () => {
+    renderPage(running());
+    expect(screen.getByTestId('manage-subscription')).toHaveTextContent('not a purchase');
   });
 
   it('leaves the paid plans buyable throughout, so a demo can be upgraded', async () => {
-    const running = state('active', {
-      payload: {
-        userId: 'u1', planId: DEMO_PLAN_ID, licenseKey: 'DEMO-ABC', expiresAt: 0, issuedAt: 0,
-      },
-    });
-    const { createOrder } = renderPage(running, demoProps());
+    const { createOrder } = renderPage(running());
 
-    fireEvent.click(screen.getByTestId('subscribe-annual'));
+    choosePlan('annual');
+    payNow();
 
     await waitFor(() => expect(createOrder).toHaveBeenCalledWith('annual', 'wechat_pay'));
+  });
+
+  it('offers no way to take another one', () => {
+    renderPage(running());
+    expect(screen.queryByTestId('demo-license')).toBeNull();
+    expect(screen.queryByTestId('demo-activate')).toBeNull();
   });
 });
 
@@ -490,40 +515,16 @@ describe('what the page says about the current state', () => {
     renderPage();
     expect(screen.getByTestId('plan-quarterly')).toHaveTextContent('季卡');
     expect(screen.getByTestId('subscription-status')).toHaveTextContent('免费试用');
-  });
-});
-
-describe('SubscriptionStatusBar', () => {
-  const bar = (s: LicenseState, ms = s.trial.msRemaining, loading = false) =>
-    render(<SubscriptionStatusBar state={s} trialMsRemaining={ms} loading={loading} onOpen={vi.fn()} />);
-
-  it('counts the trial down and offers the way to subscribe', () => {
-    bar(TRIALING);
-    expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('free trial');
-    expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('2 days');
-    expect(screen.getByTestId('status-bar-subscribe')).toBeInTheDocument();
+    expect(screen.getByTestId('pay-now')).toHaveTextContent('立即支付');
   });
 
-  it('names the plan, and drops the prompt, once one is in force', () => {
-    bar(state('active', { payload: { userId: 'u', planId: 'monthly', licenseKey: 'K', expiresAt: 0, issuedAt: 0 } }));
-    expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('Subscription: Monthly');
-    expect(screen.queryByTestId('status-bar-subscribe')).toBeNull();
-  });
-
-  it('says the grace period is running, and still offers to renew', () => {
-    bar(state('grace_period', { graceDaysLeft: 2 }));
-    expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('2 days of grace');
-    expect(screen.getByTestId('status-bar-subscribe')).toBeInTheDocument();
-  });
-
-  it('says the trial has ended once it has', () => {
-    bar(state('unlicensed', { trial: trial({ used: true, active: false }) }));
-    expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('trial ended');
-  });
-
-  it('claims nothing before the state has been read', () => {
-    bar(LOADING_STATE, 0, true);
-    expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('');
-    expect(screen.queryByTestId('status-bar-subscribe')).toBeNull();
+  it('answers the three questions people write in about, folded away', () => {
+    renderPage();
+    const faq = screen.getByTestId('faq');
+    expect(faq).toHaveTextContent('What happens when the trial ends?');
+    expect(faq).toHaveTextContent('How do I upgrade my plan?');
+    expect(faq).toHaveTextContent('Which payment methods are supported?');
+    // Folded: three answers open at once would bury the plans above them.
+    expect(screen.getByTestId('faq-faqTrial')).not.toHaveAttribute('open');
   });
 });

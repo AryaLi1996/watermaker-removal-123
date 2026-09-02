@@ -9,8 +9,8 @@
  */
 import { test, expect } from './fixtures/electron-fixture';
 import {
-  LICENSED_STATE, TRIAL_STATE, demoCalls, paymentCalls, setLicenseState, setTemporalUsage,
-  stubDemoLicense, stubPayments,
+  LICENSED_STATE, TRIAL_STATE, activationCalls, paymentCalls, setLicenseState, setTemporalUsage,
+  stubActivation, stubPayments,
 } from './fixtures/subscription-state';
 import type { ElectronApplication, Page } from '@playwright/test';
 
@@ -38,7 +38,13 @@ const ORDER = {
 async function asState(electronApp: ElectronApplication, page: Page, state: unknown) {
   await setLicenseState(electronApp, state);
   await page.reload();
-  await expect(page.getByTestId('status-bar')).toBeVisible();
+  await expect(page.getByTestId('subscription-status-top')).toBeVisible();
+}
+
+/** Choose a plan, then spend on it — the two steps the page separates. */
+async function choosePlan(page: Page, id: string) {
+  await page.getByTestId(`subscribe-${id}`).click();
+  await page.getByTestId('pay-now').click();
 }
 
 /**
@@ -66,9 +72,8 @@ test.describe('on a free trial', () => {
     await asState(electronApp, page, TRIAL_STATE);
   });
 
-  test('counts the trial down in the bottom bar', async ({ page }) => {
-    await expect(page.getByTestId('subscription-bar-label')).toHaveText(/free trial \([12] days \d{2}:\d{2} left\)/);
-    await expect(page.getByTestId('status-bar-subscribe')).toBeVisible();
+  test('counts the trial down in the top bar', async ({ page }) => {
+    await expect(page.getByTestId('subscription-status-top')).toHaveText(/Trial · [12] days \d{2}:\d{2} left/);
   });
 
   test('caps previews at one second, and says why', async ({ page, electronApp }) => {
@@ -147,19 +152,111 @@ test.describe('the subscription page', () => {
     await expect(page.getByTestId('pay-wechat_pay')).toHaveAttribute('aria-pressed', 'true');
   });
 
-  test('opens from the bottom bar too', async ({ page }) => {
-    await page.getByTestId('status-bar-subscribe').click();
+  test('opens from the account panel too', async ({ page }) => {
+    await page.getByTestId('user-avatar').click();
+    await page.getByTestId('account-subscribe').click();
     await expect(page.getByTestId('subscription-page')).toBeVisible();
+  });
+
+  test('takes a plan, then a method, before it will spend anything', async ({ page }) => {
+    await page.getByTestId('nav-subscription').click();
+
+    // Nothing is chosen for the user: paying for a plan nobody picked is the
+    // one mistake this page must not make.
+    await expect(page.getByTestId('pay-now')).toBeDisabled();
+    await page.getByTestId('plan-annual').click();
+    await expect(page.getByTestId('plan-annual')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('pay-now')).toBeEnabled();
+  });
+
+  test('offers the licence box, with the key format it accepts', async ({ page }) => {
+    await page.getByTestId('nav-subscription').click();
+
+    await expect(page.getByTestId('activation-code'))
+      .toHaveAttribute('placeholder', 'SOOTHEVOICE-XXXX-XXXX-XXXX');
+    // What used to stand here, and no longer does.
+    await expect(page.getByTestId('demo-license')).toBeHidden();
+  });
+
+  test('answers the three questions at the foot of the page', async ({ page }) => {
+    await page.getByTestId('nav-subscription').click();
+
+    const faq = page.getByTestId('faq');
+    await expect(faq).toContainText('What happens when the trial ends?');
+    await expect(faq).toContainText('How do I upgrade my plan?');
+    await expect(faq).toContainText('Which payment methods are supported?');
   });
 });
 
 
-test.describe('the demo licence', () => {
+test.describe('activating a licence key', () => {
   /**
-   * The entry that hands out seven days with no payment, driven through the
-   * real preload bridge and the real IPC channels — what the main process
-   * does at the other end is stubbed, for the reason `stubDemoLicense`
-   * gives.
+   * The box that replaced the demo card, driven through the real preload
+   * bridge and the real IPC channel — what the main process does at the far
+   * end is stubbed, for the reason `stubActivation` gives.
+   */
+  test.beforeEach(async ({ electronApp }) => {
+    await stubPayments(electronApp, { plans: PLANS, methods: METHODS });
+  });
+
+  test('passes the key to the main process exactly as typed, trimmed', async ({ electronApp, page }) => {
+    await stubActivation(electronApp);
+    await asState(electronApp, page, TRIAL_STATE);
+    await page.getByTestId('nav-subscription').click();
+
+    await page.getByTestId('activation-code').fill('  SOOTHEVOICE-1111-2222-3333  ');
+    await page.getByTestId('activation-submit').click();
+    await expect(page.getByTestId('activation-success')).toBeVisible();
+
+    const calls = await activationCalls(electronApp);
+    expect(calls.codes).toEqual(['SOOTHEVOICE-1111-2222-3333']);
+  });
+
+  test('says what the key unlocked, once one has', async ({ electronApp, page }) => {
+    await stubActivation(electronApp);
+    await asState(electronApp, page, TRIAL_STATE);
+    await page.getByTestId('nav-subscription').click();
+
+    await page.getByTestId('activation-code').fill('SOOTHEVOICE-1111-2222-3333');
+    await page.getByTestId('activation-submit').click();
+
+    const dialog = page.getByTestId('unlocked-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('Temporal fill');
+    await page.getByTestId('unlocked-close').click();
+    await expect(dialog).toBeHidden();
+  });
+
+  test('words a key the service refused, and unlocks nothing', async ({ electronApp, page }) => {
+    await stubActivation(electronApp, { success: false, error: 'License key not accepted' });
+    await asState(electronApp, page, TRIAL_STATE);
+    await page.getByTestId('nav-subscription').click();
+
+    await page.getByTestId('activation-code').fill('NOPE-0000-0000-0000');
+    await page.getByTestId('activation-submit').click();
+
+    await expect(page.getByTestId('activation-error')).toContainText('License key not accepted');
+    await expect(page.getByTestId('unlocked-dialog')).toBeHidden();
+  });
+
+  test('words a key bought for another app as such', async ({ electronApp, page }) => {
+    // Retrying never fixes this one, so it must not read as a typo.
+    await stubActivation(electronApp, { success: false, code: 'app_mismatch', error: 'belongs to soothevoice' });
+    await asState(electronApp, page, TRIAL_STATE);
+    await page.getByTestId('nav-subscription').click();
+
+    await page.getByTestId('activation-code').fill('SOOTHEVOICE-9999-9999-9999');
+    await page.getByTestId('activation-submit').click();
+
+    await expect(page.getByTestId('activation-error')).toContainText(/different app/i);
+  });
+});
+
+test.describe('a demo licence in force', () => {
+  /**
+   * The demo card and its one-click button are gone — the licence box above
+   * replaced both doors. A demo the main process issued earlier still has to
+   * be named honestly and still has to unlock what it exists to show off.
    */
   const DEMO_STATE = {
     status: 'active',
@@ -177,65 +274,18 @@ test.describe('the demo licence', () => {
     await stubPayments(electronApp, { plans: PLANS, methods: METHODS });
   });
 
-  test('offers seven free days on the subscription page', async ({ electronApp, page }) => {
-    await stubDemoLicense(electronApp);
-    await asState(electronApp, page, TRIAL_STATE);
-    await page.getByTestId('nav-subscription').click();
-
-    const panel = page.getByTestId('demo-license');
-    await expect(panel).toBeVisible();
-    await expect(panel).toContainText('7 days');
-    await expect(panel).toContainText('no payment');
-  });
-
-  test('activates on one click, with nothing typed in', async ({ electronApp, page }) => {
-    await stubDemoLicense(electronApp);
-    await asState(electronApp, page, TRIAL_STATE);
-    await page.getByTestId('nav-subscription').click();
-
-    await page.getByTestId('demo-activate').click();
-    await expect(page.getByTestId('demo-success')).toBeVisible();
-
-    // It went over the real channel, and it carried no code.
-    const calls = await demoCalls(electronApp);
-    expect(calls.activations).toEqual([{ code: null }]);
-  });
-
-  test('takes an activation code too, and passes it through unchanged', async ({ electronApp, page }) => {
-    await stubDemoLicense(electronApp);
-    await asState(electronApp, page, TRIAL_STATE);
-    await page.getByTestId('nav-subscription').click();
-
-    await page.getByTestId('demo-code').fill('DEMO-2026');
-    await page.getByTestId('demo-code-submit').click();
-    await expect(page.getByTestId('demo-success')).toBeVisible();
-
-    const calls = await demoCalls(electronApp);
-    expect(calls.activations).toEqual([{ code: 'DEMO-2026' }]);
-  });
-
-  test('says a device has already had its demo, rather than offering another', async ({ electronApp, page }) => {
-    await stubDemoLicense(electronApp, { used: true });
-    await asState(electronApp, page, TRIAL_STATE);
-    await page.getByTestId('nav-subscription').click();
-
-    await expect(page.getByTestId('demo-activate')).toBeDisabled();
-  });
-
-  test('counts a running demo down, and still sells a subscription', async ({ electronApp, page }) => {
-    await stubDemoLicense(electronApp, { used: true });
+  test('counts down in the top bar as a demo, and still sells a subscription', async ({ electronApp, page }) => {
     await asState(electronApp, page, DEMO_STATE);
     await page.getByTestId('nav-subscription').click();
 
-    await expect(page.getByTestId('demo-remaining')).toContainText(/[67] days \d{2}:\d{2} left/);
     // Named as a demo everywhere, not as a plan somebody bought.
-    await expect(page.getByTestId('subscription-bar-label')).toHaveText('Subscription: Demo licence');
+    await expect(page.getByTestId('subscription-status-top')).toHaveText(/Demo · [67] days \d{2}:\d{2} left/);
     // And the paid entry is untouched: a demo is upgraded by buying one.
     await expect(page.getByTestId('subscribe-annual')).toBeEnabled();
+    await expect(page.getByTestId('demo-license')).toBeHidden();
   });
 
   test('unlocks temporal fill for as long as it runs', async ({ electronApp, page }) => {
-    await stubDemoLicense(electronApp, { used: true });
     await asState(electronApp, page, DEMO_STATE);
     await loadVideo(page, electronApp);
 
@@ -244,7 +294,6 @@ test.describe('the demo licence', () => {
   });
 
   test('locks them again once it has expired, and asks for a plan', async ({ electronApp, page }) => {
-    await stubDemoLicense(electronApp, { used: true });
     await asState(electronApp, page, {
       ...DEMO_STATE,
       status: 'expired',
@@ -257,7 +306,7 @@ test.describe('the demo licence', () => {
     await loadVideo(page, electronApp);
 
     await expect(page.getByTestId('method-temporal')).toBeDisabled();
-    await expect(page.getByTestId('status-bar-subscribe')).toBeVisible();
+    await expect(page.getByTestId('subscription-status-top')).toHaveText('Expired');
   });
 });
 
@@ -273,7 +322,7 @@ test.describe('paying', () => {
     await asState(electronApp, page, TRIAL_STATE);
 
     await page.getByTestId('nav-subscription').click();
-    await page.getByTestId('subscribe-quarterly').click();
+    await choosePlan(page, 'quarterly');
 
     // The app waits rather than asking the user whether they paid.
     await expect(page.getByTestId('payment-dialog')).toBeVisible();
@@ -297,7 +346,7 @@ test.describe('paying', () => {
 
     await page.getByTestId('nav-subscription').click();
     await page.getByTestId('pay-card').click();
-    await page.getByTestId('subscribe-quarterly').click();
+    await choosePlan(page, 'quarterly');
     await expect(page.getByTestId('subscribe-success')).toBeVisible({ timeout: 30_000 });
 
     const calls = await paymentCalls(electronApp);
@@ -311,7 +360,7 @@ test.describe('paying', () => {
     await asState(electronApp, page, TRIAL_STATE);
 
     await page.getByTestId('nav-subscription').click();
-    await page.getByTestId('subscribe-monthly').click();
+    await choosePlan(page, 'monthly');
 
     await expect(page.getByTestId('subscribe-error')).toContainText('payment method not available');
     expect((await paymentCalls(electronApp)).opened).toEqual([]);
@@ -346,7 +395,7 @@ test.describe('which app the licence is for', () => {
     await asState(electronApp, page, TRIAL_STATE);
 
     await page.getByTestId('nav-subscription').click();
-    await page.getByTestId('subscribe-monthly').click();
+    await choosePlan(page, 'monthly');
 
     await expect(page.getByTestId('subscribe-error')).toContainText(/different app/i);
     await expect(page.getByTestId('subscribe-error')).not.toContainText('appId mismatch');
@@ -360,9 +409,8 @@ test.describe('with a licence in force', () => {
     await asState(electronApp, page, LICENSED_STATE);
   });
 
-  test('names the plan in the bar and drops the prompt', async ({ page }) => {
-    await expect(page.getByTestId('subscription-bar-label')).toHaveText('Subscription: Yearly');
-    await expect(page.getByTestId('status-bar-subscribe')).toBeHidden();
+  test('names the plan in the top bar', async ({ page }) => {
+    await expect(page.getByTestId('subscription-status-top')).toHaveText('Subscribed · Yearly');
   });
 
   test('lifts the preview cap, and stops the licence blocking temporal fill', async ({ page, electronApp }) => {
@@ -399,9 +447,9 @@ test.describe('in the grace period', () => {
       graceDaysLeft: 2,
     });
 
-    await expect(page.getByTestId('subscription-bar-label')).toContainText('2 days of grace');
-    // The prompt stays: the grace period is the last chance to notice.
-    await expect(page.getByTestId('status-bar-subscribe')).toBeVisible();
+    // Not folded into "subscribed": the grace period unlocks everything,
+    // which is exactly why it is the last chance to notice.
+    await expect(page.getByTestId('subscription-status-top')).toHaveText('Grace period · 2 days left');
 
     await loadVideo(page, electronApp);
     // Same as above: the grace period stops the licence being the blocker,

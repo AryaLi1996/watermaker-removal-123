@@ -10,7 +10,7 @@
  * remaining time visibly moves, while the state behind it is unchanged.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { DemoActivation, DemoState, OrderError, TemporalUsage } from '../types';
+import type { OrderError, TemporalUsage } from '../types';
 import {
   APP_MISMATCH,
   entitlementsFor,
@@ -24,7 +24,6 @@ import {
   type Plan,
   type PlanId,
 } from '../subscription';
-import { ENABLE_DEMO_LICENSE } from '../config';
 
 /** How often the trial countdown is redrawn. */
 export const TICK_MS = 60_000;
@@ -47,19 +46,8 @@ export interface UseSubscription {
   /** The trial's remaining temporal-fill exports. Null until the main
    *  process answers, or where it does not meter them at all. */
   temporalUsage: TemporalUsage | null;
-  /** Whether this build offers the box for typing a licence in by hand. */
-  manualActivation: boolean;
   /** Activate from a licence key or a pasted token. */
   activate: (code: string) => Promise<{ success: boolean; error?: string; code?: string }>;
-  /** Whether this build offers the demo licence. Both halves have to agree:
-   *  the bundle was built with it, and the main process still issues it. */
-  demoEnabled: boolean;
-  /** What the main process knows about this device's demo, or null before it
-   *  has answered. */
-  demo: DemoState | null;
-  /** Take this device's demo licence. The code is optional — omitted, it is
-   *  the one-click path. */
-  activateDemo: (code?: string) => Promise<DemoActivation>;
   /** Poll one order until it is paid, the user gives up, or time runs out. */
   watchOrder: (orderId: string, signal: { cancelled: boolean }) => Promise<OrderOutcome>;
   refresh: () => Promise<void>;
@@ -76,9 +64,6 @@ export function useSubscription(locale: string): UseSubscription {
   const [plansAreFallback, setPlansAreFallback] = useState(false);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [now, setNow] = useState(() => Date.now());
-  const [manualActivation, setManualActivation] = useState(false);
-  const [demoAllowed, setDemoAllowed] = useState(false);
-  const [demo, setDemo] = useState<DemoState | null>(null);
   const [temporalUsage, setTemporalUsage] = useState<TemporalUsage | null>(null);
 
   const applyState = useCallback((next: LicenseState) => {
@@ -119,34 +104,6 @@ export function useSubscription(locale: string): UseSubscription {
       cancelled = true;
       api.removeTemporalUsageListeners?.();
     };
-  }, []);
-
-  // Whether to offer manual activation is the main process's to decide: the
-  // environment variable behind it is not visible from here. The demo entry
-  // is decided by both — this bundle was built with it (ENABLE_DEMO_LICENSE)
-  // and that process still issues it — so an entry can never be shown for a
-  // door the main process would refuse to open.
-  useEffect(() => {
-    let cancelled = false;
-    void window.electronAPI.licenseConfig?.()
-      .then((config) => {
-        if (cancelled || !config) return;
-        setManualActivation(!!config.manualActivationEnabled);
-        setDemoAllowed(ENABLE_DEMO_LICENSE && config.demoLicenseEnabled !== false);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-
-  // Whether this device has already had its demo. Asked once, and refreshed
-  // by taking one — so the button says "already used" instead of offering
-  // something that will be refused.
-  useEffect(() => {
-    let cancelled = false;
-    void window.electronAPI.licenseDemoState?.()
-      .then((next) => { if (!cancelled && next) setDemo(next); })
-      .catch(() => {});
-    return () => { cancelled = true; };
   }, []);
 
   // Plans and methods come from the service, and the method list is
@@ -216,28 +173,6 @@ export function useSubscription(locale: string): UseSubscription {
     return result;
   }, [applyState]);
 
-  const activateDemo = useCallback(async (code?: string) => {
-    const api = window.electronAPI;
-    if (!api.licenseActivateDemo) {
-      return { success: false, error: 'the demo license is not available in this build' };
-    }
-    const result = await api.licenseActivateDemo(code);
-    // The main process pushes the new state on success, but reading it back
-    // here is what makes the page update on the same tick as the message.
-    if (result?.success) {
-      const next = await api.licenseState?.().catch(() => null);
-      if (next) applyState(next);
-    }
-    // Whether it worked or not, the answer may carry a fresher demo record —
-    // and a refusal is exactly when the button needs to stop offering one.
-    if (result?.demo) setDemo(result.demo);
-    else {
-      const next = await api.licenseDemoState?.().catch(() => null);
-      if (next) setDemo(next);
-    }
-    return result;
-  }, [applyState]);
-
   const refresh = useCallback(async () => {
     await window.electronAPI.licenseRefresh?.().catch(() => {});
     const next = await window.electronAPI.licenseState?.().catch(() => null);
@@ -274,10 +209,6 @@ export function useSubscription(locale: string): UseSubscription {
     watchOrder,
     refresh,
     temporalUsage,
-    manualActivation,
     activate,
-    demoEnabled: demoAllowed,
-    demo,
-    activateDemo,
   };
 }

@@ -8,7 +8,9 @@ import DonePanel from './components/DonePanel';
 import TemporalFallbackNote from './components/TemporalFallbackNote';
 import DeepNoticeNote from './components/DeepNoticeNote';
 import PresetPicker from './components/PresetPicker';
-import SubscriptionStatusBar from './components/SubscriptionStatusBar';
+import TopBar from './components/TopBar';
+import Sidebar from './components/Sidebar';
+import type { Screen } from './components/Sidebar';
 import SubscriptionPage from './pages/SubscriptionPage';
 import SettingsPage from './pages/SettingsPage';
 import type { AppState, DeepNotice, JobConfig, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
@@ -26,15 +28,11 @@ import { useKeyboardShortcuts, SHORTCUT_HINTS } from './hooks/useKeyboardShortcu
 import { useVideoLoader } from './hooks/useVideoLoader';
 import { useTranslation } from './hooks/useTranslation';
 import { useSubscription } from './hooks/useSubscription';
-import { LOCALES, LOCALE_NAMES } from './i18n';
 import { estimateSecondsRemaining, recordSample } from './eta';
 import { stageLabel, stageState } from './stages';
 import type { ProgressSample } from './eta';
 
 const SIDEBAR_W = 280;
-
-/** Which screen the top nav is showing. */
-type Screen = 'editor' | 'subscription' | 'settings';
 
 /** How a feature reads when the subscription, not the hardware, is what
  *  rules it out. Same shape the capability checks return. */
@@ -44,13 +42,6 @@ const LOCKED: Availability = { available: false, reasonKey: 'subscription.locked
  *  than because the method was never on offer. Different words: one is "buy
  *  this", the other is "you have had your three". */
 const TRIAL_SPENT: Availability = { available: false, reasonKey: 'subscription.temporalTrialSpent' };
-
-/** The screens the top bar switches between, in the order they appear. */
-const NAV_ITEMS: { id: Screen; labelKey: string }[] = [
-  { id: 'editor', labelKey: 'subscription.navEditor' },
-  { id: 'subscription', labelKey: 'subscription.nav' },
-  { id: 'settings', labelKey: 'settings.nav' },
-];
 
 /** Preview clip lengths on offer, shortest (and cheapest) first. */
 const PREVIEW_SECOND_OPTIONS = [
@@ -436,54 +427,23 @@ function App() {
 
   return (
     <div className="app-shell" style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: 'var(--bg)' }}>
-      {/* Top navigation: which screen, and the language the app speaks */}
-      <div
-        className="app-topbar"
-        style={{
-          display: 'flex', alignItems: 'center', gap: 16, height: 40,
-          // Right padding is the ordinary one; the left keeps clear of the
-          // window controls macOS floats over this corner.
-          paddingRight: 14, paddingLeft: topbarInset(systemInfo?.platform, isFullScreen),
-          background: 'var(--surface)', borderBottom: '1px solid var(--border)',
-        }}
-      >
-        <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 500 }}>{t('app.name')}</p>
-        <nav style={{ display: 'flex', gap: 4 }}>
-          {NAV_ITEMS.map(({ id, labelKey }) => {
-            const active = screen === id;
-            return (
-              <button
-                key={id}
-                data-testid={`nav-${id}`}
-                aria-current={active ? 'page' : undefined}
-                onClick={() => setScreen(id)}
-                style={{
-                  background: active ? 'var(--border)' : 'transparent', border: 'none', borderRadius: 6,
-                  padding: '4px 12px', color: active ? 'var(--text)' : 'var(--text-muted)', fontSize: 12,
-                  cursor: 'pointer',
-                }}
-              >
-                {t(labelKey)}
-              </button>
-            );
-          })}
-        </nav>
-        <select
-          data-testid="language-select"
-          aria-label={t('app.language')}
-          value={locale}
-          onChange={(e) => setLocale(e.target.value as typeof locale)}
-          style={{
-            marginLeft: 'auto', background: 'var(--bg)', color: 'var(--text-muted)', border: '1px solid var(--border)',
-            borderRadius: 4, fontSize: 11, padding: '2px 4px', cursor: 'pointer',
-          }}
-        >
-          {LOCALES.map((code) => (
-            <option key={code} value={code}>{LOCALE_NAMES[code]}</option>
-          ))}
-        </select>
-      </div>
+      {/* Who is using the app, what they are licensed for, and in which
+          language. On macOS this strip is also the window's title bar. */}
+      <TopBar
+        state={subscription.state}
+        trialMsRemaining={subscription.trialMsRemaining}
+        licenseMsRemaining={subscription.licenseMsRemaining}
+        loading={subscription.loading}
+        locale={locale}
+        onLocaleChange={setLocale}
+        onOpenSubscription={() => setScreen('subscription')}
+        inset={topbarInset(systemInfo?.platform, isFullScreen)}
+      />
 
+      <div className="app-main" style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+      <Sidebar current={screen} onSelect={setScreen} />
+
+      <div className="app-screens" style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {/* The editor stays mounted behind the subscription page: hiding it
           keeps the loaded video, the box the user drew and a running job. */}
       <div
@@ -715,22 +675,13 @@ function App() {
           createOrder={subscription.createOrder}
           watchOrder={subscription.watchOrder}
           refresh={subscription.refresh}
-          manualActivation={subscription.manualActivation}
           activate={subscription.activate}
-          demoEnabled={subscription.demoEnabled}
-          demo={subscription.demo}
-          activateDemo={subscription.activateDemo}
         />
       )}
 
       {screen === 'settings' && <SettingsPage systemInfo={systemInfo} />}
-
-      <SubscriptionStatusBar
-        state={subscription.state}
-        trialMsRemaining={subscription.trialMsRemaining}
-        loading={subscription.loading}
-        onOpen={() => setScreen('subscription')}
-      />
+      </div>
+      </div>
     </div>
   );
 }

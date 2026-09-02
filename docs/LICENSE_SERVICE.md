@@ -211,25 +211,23 @@ becomes the offline fallback, the same shape `_resolveTrial` already has.
 
 ### Which builds have it
 
-**All of them, unless a build says otherwise.** The flag is a *disable*, and
-unset means on, so a development run, a packaged release and the test suites
-all carry the entry without anyone configuring anything.
+**Every build still issues one, but no build offers it.** The subscription
+page has no demo entry any more — the licence box that replaced it takes a
+key the shop issued, and nothing in the interface asks for a demo. What
+remains is the machinery: `license:activateDemo` still mints, signs and
+records a demo exactly as described above, and a demo already in force is
+still honoured, named as a demo, and counted down.
 
-Both halves of the app read the same variable, and the entry appears only if
-both agree:
+That leaves one flag with anything to gate:
 
 | | |
 |---|---|
-| The button | `VITE_DISABLE_DEMO_LICENSE` → `ENABLE_DEMO_LICENSE` in `renderer/src/config.ts`. Inlined at build time. |
-| The issuing | `demoLicenseEnabled` in `electron/license-config.js`, which gates `license:activateDemo` in `main.js`. A renderer told the entry does not exist can still send the message; this is what refuses it. |
+| The issuing | `demoLicenseEnabled` in `electron/license-config.js`, which gates `license:activateDemo` in `main.js`. Set `DISABLE_DEMO_LICENSE=true` to refuse the channel outright. |
 
-To turn it off for a build, set `VITE_DISABLE_DEMO_LICENSE=true` — in the
-build environment, or in a `renderer/.env.production` that `npm run build`
-picks up. That removes the button. Note the asymmetry: `VITE_` variables are
-build-time values for the *bundle* and do not reach a packaged main process at
-runtime, so a packaged build that must also refuse the IPC needs
-`DISABLE_DEMO_LICENSE=true` in its own environment. In practice the button is
-the entry, and there is no other way to reach the channel from the app.
+`VITE_DISABLE_DEMO_LICENSE` no longer removes anything from the bundle, since
+the bundle no longer has a demo entry to remove. `electron/license-config.js`
+still reads it, which covers an unpackaged run — there the main process sees
+the same environment the bundle was built in.
 
 ---
 
@@ -240,9 +238,8 @@ the entry, and there is no other way to reach the channel from the app.
 | `LICENSE_URL` | The base URL — Function URL or API Gateway stage |
 | `LICENSE_SIGNING_SECRET` | HMAC secret; **must match the deployment's** |
 | `LICENSE_APP_ID` / `VITE_APP_ID` | Which app the service scopes this build to. Defaults to `smoothvoice`; only change it for a test deployment |
-| `VITE_DISABLE_DEMO_LICENSE` | `true` removes the demo licence entry from the bundle. Unset — the default — means the demo is offered |
-| `DISABLE_DEMO_LICENSE` | `true` makes the main process refuse `license:activateDemo`. For a packaged build, which cannot read the `VITE_` one at runtime |
-| `ENABLE_MANUAL_ACTIVATION` | `true` shows the box for typing a licence key or token in by hand |
+| `DISABLE_DEMO_LICENSE` | `true` makes the main process refuse `license:activateDemo`. `VITE_DISABLE_DEMO_LICENSE` does the same for an unpackaged run, which shares the build environment |
+| `ENABLE_MANUAL_ACTIVATION` | No longer read by the interface — the licence box is on in every build. `license:config` still reports what it said |
 
 The signing secret ships with a public default, in this repository and in the
 service's own source. A build still using it can have its tokens forged
