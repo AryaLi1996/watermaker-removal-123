@@ -226,7 +226,8 @@ The service side is `POST /demo/activate` and `GET|POST /demo/status` in
 (`serverless/verify-license/handler.py`), backed by a new `DemosTable`. This
 app deploys no infrastructure — see the note at the top — so a build pointed
 at a deployment that predates those routes gets a 501 and the entry simply
-does not work; nothing falls back to a locally minted licence.
+does not work; nothing falls back to a locally minted licence. Whether the
+deployment this app points at has them yet is the next section.
 
 ### What this is not
 
@@ -265,6 +266,72 @@ the same environment the bundle was built in.
 Turning it off is now a narrower decision than it was. It no longer stands
 between a build and unlimited demos — the service does that — so it is only
 about whether this build should be able to take its one demo at all.
+
+---
+
+## Which deployment this app points at
+
+`DEFAULT_LICENSE_URL` in `license-config.js` is the Function URL of one
+CloudFormation stack, and it is worth naming precisely, because the
+deployment ticket for this work describes a different shape than the one
+that exists:
+
+| | |
+|---|---|
+| Stack | `ruanjian-license`, `us-east-1`, AWS account `641628981129` |
+| Template | `serverless/verify-license/template.yaml` in `ruanjian123` |
+| Endpoint | a **Lambda Function URL**, published as the `LicenseVerifierUrl` stack output |
+| Function | `LicenseVerifier` (python3.11, arm64) |
+| Deployed by | `.github/workflows/deploy-license.yml` in `ruanjian123` |
+
+**There is no API Gateway and no `/prod` stage**, so there is no
+`LicenseApiUrl` output to read and no stage prefix to append. `LICENSE_URL`
+is the Function URL as printed by `sam list stack-outputs`, with its trailing
+slash; routes are matched by path suffix, which is why the client can append
+`demo/activate` to it and why an API Gateway stage *would* also work if one
+were ever put in front.
+
+Nor is `LICENSE_URL` spelled `VITE_LICENSE_API_URL` anywhere in this
+repository — the main process reads `LICENSE_URL`, and `VITE_APP_ID` is
+accepted only as the renderer's alias for `LICENSE_APP_ID`. Setting the app
+id to `shuyin` for this build would strand every licence already bought,
+for the reason "Which app this is" gives above: the value is `smoothvoice`.
+
+### How a deployment happens
+
+Three jobs, and only the last one can change anything: `test` runs the
+handler's unit suite with no AWS credentials at all, `plan` assumes a role
+with no `ExecuteChangeSet` and prints the CloudFormation change-set, and
+`apply` is gated on the `production` GitHub Environment's reviewers. Nothing
+reaches the stack until a human reads that change-set and releases the run.
+The signing secret is a GitHub **environment** secret on both environments;
+`LicenseSigningSecret` has no default in the template and a `MinLength: 32`,
+so a stack cannot come up carrying the public development value at all.
+
+The demo knobs are template parameters with defaults that already match this
+client — `DemoDays: 30`, `DemoPlanId: demo`, `DefaultAppId: smoothvoice` — so
+an ordinary deploy needs no overrides for them. `DemosTable` is a *resource*
+in that template, not a parameter: CloudFormation names it, and passing
+`DemosTable=…` as a parameter override fails before any AWS call is made.
+
+### Where the demo routes are
+
+The service code is merged on `ruanjian123` `main`; the deploy that carries it
+is **created and waiting on its approval gate**, not applied. The change-set
+`plan` produced for that commit adds `DemosTable` and modifies the function
+and its role:
+
+```
++ Add     DemosTable            AWS::DynamoDB::Table
+* Modify  LicenseVerifierRole   AWS::IAM::Role
+* Modify  LicenseVerifier       AWS::Lambda::Function
+```
+
+Until a `production` reviewer releases that run, the live function has no
+`DEMOS_TABLE`, and `demo/activate` and `demo/status` answer 501 — which the
+client already handles as `demo_unavailable`, granting nothing and spending
+nothing. No change is needed in this repository when the deploy lands: the
+Function URL does not move, and the client is already pointed at it.
 
 ---
 
