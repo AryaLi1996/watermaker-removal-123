@@ -138,7 +138,8 @@ export interface LicenseConfig {
   /** Whether this build issues demo licences at all. On unless the build sets
    *  VITE_DISABLE_DEMO_LICENSE — see electron/demo-license.js. */
   demoLicenseEnabled?: boolean;
-  /** How long a demo licence runs, in days. */
+  /** How long a demo licence runs, in days. The service decides; this is
+   *  what the main process falls back to before it has been asked. */
   demoDurationDays?: number;
 }
 
@@ -150,10 +151,18 @@ export interface DemoState {
   /** ISO, or null where no demo has been taken. */
   issuedAt: string | null;
   expiresAt: string | null;
+  /** Whether the service was reached for this answer, or it came from the
+   *  cached record. `local` is not stale by definition — the service holds
+   *  the record and refuses a second demo either way — but it is the reason
+   *  a device that has just deleted its record may still be offered the
+   *  button until the activation itself comes back refused. */
+  source?: 'server' | 'local';
 }
 
-/** Taking a demo licence, as the main process answers it. `code` is set for
- *  the failures with their own wording — see `DemoErrorCode`. */
+/** Taking a demo licence, as the main process answers it. `code` is one of
+ *  `demo_already_used` (final), `demo_unavailable` (the service could not be
+ *  reached, nothing was spent, worth retrying) or `demo_disabled` (this
+ *  build does not offer them). */
 export interface DemoActivation {
   success: boolean;
   error?: string;
@@ -234,9 +243,9 @@ declare global {
       licenseDeactivate?: () => Promise<{ success: boolean }>;
       licenseRefresh?: () => Promise<{ success: boolean; error?: string }>;
       licenseConfig?: () => Promise<LicenseConfig>;
-      /** Take this device's demo licence. The code is optional: omitted, it
-       *  is the one-click path; given, it must be one of the build's. */
-      licenseActivateDemo?: (code?: string) => Promise<DemoActivation>;
+      /** Take this device's demo licence — one click, no code. The service
+       *  grants it on "this device has not taken one for this app". */
+      licenseActivateDemo?: () => Promise<DemoActivation>;
       licenseDemoState?: () => Promise<DemoState>;
       onLicenseState?: (cb: (state: LicenseState) => void) => void;
       removeLicenseListeners?: () => void;

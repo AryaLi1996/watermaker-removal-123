@@ -485,14 +485,19 @@ ipcMain.handle('license:refresh', () => getMonitor().refresh());
 // message, and a build that does not offer demos must refuse it rather than
 // trust that nobody asked. On unless the build sets VITE_DISABLE_DEMO_LICENSE
 // (or this process's DISABLE_DEMO_LICENSE) — see license-config.js.
-ipcMain.handle('license:activateDemo', (_event, code) => (
+// There is no activation code any more: the service grants a demo on "this
+// device has not taken one for this app", so there is nothing for the
+// renderer to pass and nothing shipped in the build to guess.
+ipcMain.handle('license:activateDemo', () => (
   demoLicenseEnabled
-    ? getMonitor().activateDemo(code)
+    ? getMonitor().activateDemo()
     : { success: false, code: DEMO_DISABLED, error: 'demo licenses are disabled in this build' }
 ));
+// The service's answer, not just the cached one — a device that deleted its
+// local record is told again here that its demo is spent.
 ipcMain.handle('license:demoState', () => (
   demoLicenseEnabled
-    ? getMonitor().demoState()
+    ? getMonitor().demoStatus()
     : { used: false, durationDays: DEMO_DURATION_DAYS, issuedAt: null, expiresAt: null }
 ));
 ipcMain.handle('license:getConfig', () => ({

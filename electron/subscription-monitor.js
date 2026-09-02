@@ -31,8 +31,8 @@ const { verifyToken, buildLicenseState, isLicensed } = require('./license-token'
 const secureStore = require('./secure-store');
 const { getDeviceId } = require('./device-id');
 const {
-  DEMO_ALREADY_USED, DEMO_CODE_INVALID, demoUsed, isDemoCode, mintDemoToken, readDemoRecord,
-  writeDemoRecord,
+  DEMO_ALREADY_USED, DEMO_UNAVAILABLE, demoUsed, isAlreadyUsed, readDemoRecord,
+  recordFromService, writeDemoRecord,
 } = require('./demo-license');
 
 const TOKEN_FILE = 'license.enc';
@@ -472,67 +472,121 @@ class SubscriptionMonitor extends EventEmitter {
 
   // ── The demo licence ────────────────────────────────────────────────────
   /**
-   * What this device's demo has come to: whether it has taken one, and when
-   * that one runs out.
+   * What this device's demo has come to, from the cached record alone.
    *
-   * The page asks before it draws the button, so a device that has already
-   * had its demo is told so rather than finding out by clicking.
+   * Synchronous and offline by design: the page asks before it draws the
+   * button, and a device that has already had its demo should be told so
+   * rather than finding out by clicking — including on a launch with no
+   * network. `demoStatus()` is the same answer with the service asked first.
    */
   demoState() {
     const rec = readDemoRecord(this.userDataDir);
     const used = demoUsed(this.userDataDir);
     return {
       used,
-      durationDays: DEMO_DURATION_DAYS,
+      durationDays: (rec && rec.durationDays) || DEMO_DURATION_DAYS,
       issuedAt: used && rec ? new Date(rec.issuedAt * 1000).toISOString() : null,
       expiresAt: used && rec ? new Date(rec.expiresAt * 1000).toISOString() : null,
+      source: 'local',
     };
   }
 
   /**
-   * Take this device's demo licence: seven days of everything, once.
+   * The same, having asked the service.
    *
-   * `code` is optional. Omitted, this is the one-click path; given, it must
-   * be one of the codes in license-config.js — the same licence either way,
-   * because a code that granted something the button did not would be two
-   * features wearing one name.
+   * The service holds the record, so its answer wins and is cached — which
+   * is what closes the hole the old local-only limit left: a device that
+   * deletes `demo.enc` is told again, by the service, that its demo is
+   * spent. An unreachable service falls back to the cache rather than
+   * failing, because "we cannot tell you right now" is not "you may have
+   * another one".
+   */
+  async demoStatus() {
+    const deviceId = this.getDeviceId();
+    try {
+      const reply = await this._request('POST', 'demo/status', { appId: APP_ID, deviceId });
+      const rec = recordFromService(reply, { appId: APP_ID, deviceId });
+      if (rec) {
+        writeDemoRecord(this.userDataDir, rec);
+      } else if (reply && reply.used === false) {
+        // The service has no record for this device, so there is a demo to
+        // be had whatever the local file says. The file is left alone rather
+        // than deleted — it is only a cache, and the activation itself is
+        // what the service decides — but the answer given out is the
+        // service's, dates and all.
+        return {
+          used: false,
+          durationDays: reply.demoDurationDays || DEMO_DURATION_DAYS,
+          issuedAt: null,
+          expiresAt: null,
+          source: 'server',
+        };
+      }
+      return { ...this.demoState(), source: 'server' };
+    } catch {
+      return this.demoState();
+    }
+  }
+
+  /**
+   * Take this device's demo licence: a month of everything, once per app.
    *
-   * The limit is the device record, written only after the token is adopted:
-   * marking a demo as spent and then failing to apply it is the one ordering
-   * that leaves someone with nothing and no way to ask again.
+   * The service issues it — this is the whole of the change from the version
+   * that minted its own. There is no code to type: the credential is "this
+   * device has not taken one for this app", which the service checks against
+   * a record it holds rather than one this machine can delete. Asking again
+   * inside the window returns the *same* window re-signed, so a reinstall or
+   * a lost token recovers without buying more time; asking after it has run
+   * out is `DEMO_ALREADY_USED`, and final.
+   *
+   * A service that cannot be reached is `DEMO_UNAVAILABLE` and nothing else:
+   * there is deliberately no offline path here. Falling back to a locally
+   * signed licence would put back exactly the thing this replaced.
    *
    * Whether this is offered at all is decided a layer up, in main.js, from
    * `demoLicenseEnabled` — a build flag this class deliberately does not read
    * so that the state machine stays testable without one.
    */
-  async activateDemo(code) {
-    const requested = String(code == null ? '' : code).trim();
-    if (requested !== '' && !isDemoCode(requested)) {
-      return { success: false, code: DEMO_CODE_INVALID, error: 'that demo code was not recognised' };
-    }
-
-    if (demoUsed(this.userDataDir)) {
-      return { success: false, code: DEMO_ALREADY_USED, error: 'this device has already used its demo' };
-    }
-
-    const nowSeconds = this._nowSeconds();
+  async activateDemo() {
     const deviceId = this.getDeviceId();
-    const adopted = this._adoptToken(mintDemoToken({
-      userId: this.getUserId(), deviceId, nowSeconds,
-    }));
-    // Only reachable if this build cannot verify what it just signed, which
-    // means the signing secret changed under it. Nothing was spent.
+
+    let reply;
+    try {
+      reply = await this._request('POST', 'demo/activate', { appId: APP_ID, deviceId });
+    } catch (err) {
+      return {
+        success: false,
+        code: DEMO_UNAVAILABLE,
+        error: `The license service could not be reached: ${err.message}`,
+      };
+    }
+
+    if (isAlreadyUsed(reply)) {
+      // Cache what it told us, so the button is not offered again on the
+      // next launch — including one with no network.
+      const rec = recordFromService(reply, { appId: APP_ID, deviceId });
+      if (rec) writeDemoRecord(this.userDataDir, rec);
+      return {
+        success: false,
+        code: DEMO_ALREADY_USED,
+        error: 'this device has already used its demo',
+        demo: this.demoState(),
+      };
+    }
+
+    if (!reply || !reply.success || !reply.token) {
+      return { success: false, error: (reply && reply.error) || 'the demo was not issued' };
+    }
+
+    // Adopted before the record is written: marking a demo as taken and then
+    // failing to apply it is the one ordering that leaves someone with
+    // nothing. The service has already spent it either way, but the token is
+    // in the reply and re-asking returns the same one.
+    const adopted = this._adoptToken(reply.token);
     if (!adopted.success) return adopted;
 
-    writeDemoRecord(this.userDataDir, {
-      appId: APP_ID,
-      deviceId,
-      issuedAt: nowSeconds,
-      expiresAt: nowSeconds + DEMO_DURATION_DAYS * 86400,
-      // Which door it came through, for the support conversation that starts
-      // "I already activated this".
-      via: requested === '' ? 'button' : 'code',
-    });
+    const rec = recordFromService(reply, { appId: APP_ID, deviceId });
+    if (rec) writeDemoRecord(this.userDataDir, rec);
     return { ...adopted, demo: this.demoState() };
   }
 
@@ -566,10 +620,12 @@ class SubscriptionMonitor extends EventEmitter {
         error: `This license belongs to ${payload.appId}, not ${APP_ID}`,
       };
     }
-    // A demo licence is this build's own (electron/demo-license.js): the
-    // service never issued it and has no fresher copy to exchange the key
-    // for, so asking would only ever come back "not accepted" and read as a
-    // licence that had been revoked. Its expiry is the whole of the limit.
+    // A demo licence is the service's, but it is not a purchase, and the
+    // verify route only knows about purchases: exchanging a demo key there
+    // would come back "not accepted" and read as a licence that had been
+    // revoked. `demo/activate` is the route that reissues one, and it
+    // returns the same window rather than a fresher one — so there is
+    // nothing here for a refresh to pick up. Its expiry is the whole of it.
     if (payload && payload.planId === DEMO_PLAN_ID) {
       return { success: false, error: 'a demo license does not refresh' };
     }

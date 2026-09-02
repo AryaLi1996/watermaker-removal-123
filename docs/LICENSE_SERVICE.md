@@ -35,6 +35,8 @@ still ends with `/trial/status`. Point `LICENSE_URL` at either.
 | `GET` | `/payment-history?userId=` | The user's own past orders. |
 | `POST` | `/trial/activate` | Idempotent — creating or returning this device's trial. |
 | `GET` | `/trial/status?deviceId=` | Whether this device has had a trial. |
+| `POST` | `/demo/activate` | Idempotent — issuing or returning this device's demo licence. |
+| `POST` | `/demo/status` | Whether this device has had a demo. State only, never a token. |
 | `POST` | `/` | Exchanges a license key for a fresh token (the refresh path). |
 
 Every one of them also carries `appId` — see below.
@@ -58,7 +60,7 @@ Stored in the app's `userData` directory:
 | File | Contents | Protection |
 |---|---|---|
 | `license.enc` | The signed token | AES-256-GCM, machine-bound, `0600` |
-| `demo.enc` | `{appId, deviceId, issuedAt, expiresAt, via}` — this device's demo licence | Same, and for the same reason as `trial.enc` |
+| `demo.enc` | `{appId, deviceId, issuedAt, expiresAt, durationDays}` — a **cache** of what the service said about this device's demo; the record itself lives in the service | Same, and for the same reason as `trial.enc` |
 | `trial.enc` | `{trialStart, trialEnd, durationDays}` | Same — not because dates are secret, but so they cannot be edited to extend a trial |
 | `.license_ts` | Highest timestamp ever seen | Plaintext; catches a clock wound backwards |
 | `.anon_id` | Anonymous payment id | Plaintext, not secret |
@@ -169,28 +171,62 @@ change that — see the note at the top: this app deploys no infrastructure.
 
 ## The demo licence
 
-Alongside the paid plans, the subscription page offers a **demo licence**:
-seven days of every paid feature, once per device, with no payment. It is for
-an internal test, a demonstration, or someone deciding whether temporal fill
-is worth paying for — cases the three-day device trial either cannot serve or
-has already spent.
+Alongside the paid plans there is a **demo licence**: 30 days of every paid
+feature, once per app per device, with no payment. It is for an internal test,
+a demonstration, an evaluation, or a support conversation that needs the
+licensed experience on someone else's machine — cases the three-day device
+trial either cannot serve or has already spent.
 
-It is the one licence in this app the service does not issue.
+It is issued by the service, like every other licence in this app.
 
 | | |
 |---|---|
-| Issued by | `electron/demo-license.js`, in this process |
-| Signed with | the same HMAC secret this build verifies with |
+| Issued by | `POST demo/activate` on the shared service |
+| Signed with | the service's HMAC secret, verified here like any other token |
 | Plan id | `demo` — no plan in `PLAN_TIERS` uses it |
-| Length | 7 days, then the ordinary grace period, then locked |
-| Limited by | `demo.enc` in the app's `userData`, machine-bound like `trial.enc` |
-| Refreshed | never — see `refresh()`; the service has no fresher copy |
+| Length | `DEMO_DAYS` (30), then the ordinary grace period, then locked |
+| Limited by | the service's `DemosTable`, keyed `"<appId>#<deviceId>"` |
+| Asked about | `POST demo/status` — state only, never a token |
+| Refreshed | never — see `refresh()`; `demo/activate` returns the same window, not a fresher one |
 
-Two doors, one licence: the **Get a demo licence** button sends nothing, and
-the box takes one of the codes in `license-config.js` (`DEMO-2026`,
-`SHUYIN-TRIAL`). Neither grants more than the other — a code that did would be
-two features wearing one name. The codes are not secrets; they ship in that
-file, and what limits a demo is the device record, not knowing the string.
+One door, one click, **no code**. The credential is "this device has not taken
+one for this app", which is a fact the service holds. Asking again inside the
+window returns the *same* window re-signed — so a reinstall or a lost token
+recovers without buying more time — and asking after it has run out is
+`demo_already_used`, which is final. A service that cannot be reached is
+`demo_unavailable`: nothing is granted, nothing is spent, and trying again
+later is the right advice. There is deliberately **no offline path**.
+
+### What changed, and why
+
+This used to be the one licence the service did not issue. The token was
+minted in `electron/demo-license.js` and signed with the HMAC secret this
+build already verifies with; it was unlocked by one of a couple of codes
+hardcoded in `license-config.js` (`DEMO-2026`, `SHUYIN-TRIAL`); and "once per
+device" was `demo.enc`, a file in the app's own `userData`.
+
+Neither half was enforceable:
+
+* **the codes shipped in every installer.** Anyone with the app had them, so
+  "knowing the code" was never a credential. There is now no code at all —
+  nothing to leak, nothing to rotate.
+* **the limit was a file the device owns.** It stopped an honest user clicking
+  twice and stopped nobody who deleted it. The limit is now a conditional put
+  in the service's `DemosTable`, and deleting `demo.enc` gets the *same* demo
+  window back, not a new one.
+
+`demo.enc` survives, demoted to a cache: it holds the dates the service
+reported, so the page can say "this device has already had its demo, until the
+3rd" without a round trip and can still say it with no network. It is still
+encrypted and machine-bound — not as a limit any more, but so a hand-edited
+file cannot lie to the page about how long is left.
+
+The service side is `POST /demo/activate` and `GET|POST /demo/status` in
+[`ruanjian123`](https://github.com/AryaLi1996/ruanjian123)
+(`serverless/verify-license/handler.py`), backed by a new `DemosTable`. This
+app deploys no infrastructure — see the note at the top — so a build pointed
+at a deployment that predates those routes gets a 501 and the entry simply
+does not work; nothing falls back to a locally minted licence.
 
 ### What this is not
 
@@ -200,34 +236,35 @@ checks the signature. `planId: 'demo'` is the field that separates them, and
 names it a demo, counts it down, and keeps the paid entry live throughout so
 it can be upgraded at any point.
 
-The "once per device" limit is a file in the app's own data directory. It
-stops an honest user clicking twice; it stops nobody who deletes the file. A
-real limit needs the *service* to hold the record — a `demo-activate` route
-against `TrialsV2`, refusing a device that has had one, exactly as
-`trial/activate` already does. That belongs in
-[`ruanjian123`](https://github.com/AryaLi1996/ruanjian123) and does not exist
-yet; when it does, `activateDemo` becomes a call to it and this local mint
-becomes the offline fallback, the same shape `_resolveTrial` already has.
+The device id is still a hardware fingerprint computed client-side
+(`electron/device-id.js`), so it is the same honest-user-scale limit the trial
+has: it survives a reinstall, and it does not survive someone determined to
+present as a different machine. What the move buys is that it is now *a* limit
+at all, held somewhere the device cannot reach.
 
 ### Which builds have it
 
-**Every build still issues one, but no build offers it.** The subscription
-page has no demo entry any more — the licence box that replaced it takes a
-key the shop issued, and nothing in the interface asks for a demo. What
-remains is the machinery: `license:activateDemo` still mints, signs and
-records a demo exactly as described above, and a demo already in force is
-still honoured, named as a demo, and counted down.
+**Every build can take one, but no build offers it.** The subscription page
+has no demo entry any more — the licence box that replaced it takes a key the
+shop issued, and nothing in the interface asks for a demo. What remains is the
+machinery: `license:activateDemo` still calls the service and adopts what it
+returns, and a demo already in force is still honoured, named as a demo, and
+counted down.
 
 That leaves one flag with anything to gate:
 
 | | |
 |---|---|
-| The issuing | `demoLicenseEnabled` in `electron/license-config.js`, which gates `license:activateDemo` in `main.js`. Set `DISABLE_DEMO_LICENSE=true` to refuse the channel outright. |
+| The entry | `demoLicenseEnabled` in `electron/license-config.js`, which gates `license:activateDemo` in `main.js`. Set `DISABLE_DEMO_LICENSE=true` to refuse the channel outright. |
 
 `VITE_DISABLE_DEMO_LICENSE` no longer removes anything from the bundle, since
 the bundle no longer has a demo entry to remove. `electron/license-config.js`
 still reads it, which covers an unpackaged run — there the main process sees
 the same environment the bundle was built in.
+
+Turning it off is now a narrower decision than it was. It no longer stands
+between a build and unlimited demos — the service does that — so it is only
+about whether this build should be able to take its one demo at all.
 
 ---
 

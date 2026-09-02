@@ -1,38 +1,40 @@
 'use strict';
 
 /**
- * The demo licence: seven days of everything, issued by this build itself.
+ * The demo licence, as this process remembers it.
  *
- * Every other licence in this app comes from the shared service
- * (docs/LICENSE_SERVICE.md) — a payment settles, its webhook mints a token,
- * and this process adopts it. A demo has no payment to settle, and the
- * service has no route that issues one, so the token is minted here and
- * signed with the same HMAC secret this build already verifies with.
+ * Every licence in this app comes from the shared service
+ * (docs/LICENSE_SERVICE.md), and since `demo/activate` this includes the
+ * demo: the service signs the token and holds the "one per app, per device"
+ * record. What is left in this file is the local copy of that record — the
+ * dates, not the entitlement — so the page can say "this device has already
+ * had its demo, until the 3rd" without a round trip, and can still say it
+ * with no network at all.
  *
- * That is the whole of the honesty problem with this feature, and it is worth
- * stating plainly rather than burying:
+ * This used to be the other half of the feature. The token was minted here
+ * and signed with the HMAC secret this build verifies with, unlocked by one
+ * of a couple of codes that shipped in license-config.js, and limited to one
+ * per device by this very file. Both halves were unenforceable, and it is
+ * worth stating why rather than burying it:
  *
- *  * a demo token is indistinguishable from a purchased one to anything that
- *    only checks the signature, which is why it carries `planId: 'demo'` —
- *    the one field that tells them apart, and the one the interface reads;
- *  * the "once per device" limit is a file in the app's own data directory,
- *    so it stops an honest user clicking twice and stops nobody who deletes
- *    it. A real limit would need the service to hold the record, which is
- *    what `demo-activate` in the infrastructure repo would be for;
- *  * therefore the entry is a build-time decision. `demoLicenseEnabled` in
- *    license-config.js gates it, and `renderer/.env.production` turns it off
- *    for a release.
+ *  * the codes went out with every installer, so "knowing the code" was
+ *    never a credential — and there is now nothing to leak or rotate,
+ *    because there is no code. A demo is granted on "this device has not
+ *    taken one for this app", which is a fact the service holds;
+ *  * the limit was a file in the app's own data directory, so it stopped an
+ *    honest user clicking twice and stopped nobody who deleted it. The limit
+ *    is now a conditional put in the service's DemosTable, and deleting this
+ *    file gets the *same* demo window back, not a new one.
  *
- * The record is encrypted with the same machine-bound store the trial dates
- * use — not because the dates are secret, but so they cannot be edited to
- * take a second demo without also having to find and remove the file.
+ * The record is still encrypted with the machine-bound store the trial dates
+ * use. That is no longer a limit — the service is — but a cache that can be
+ * hand-edited is a cache that lies to the page about how long is left.
  */
 
 const fs = require('fs');
 const path = require('path');
 
-const { APP_ID, DEMO_CODES, DEMO_DURATION_DAYS, DEMO_PLAN_ID } = require('./license-config');
-const { createToken } = require('./license-token');
+const { APP_ID, DEMO_DURATION_DAYS } = require('./license-config');
 const secureStore = require('./secure-store');
 
 /** Sits beside `license.enc` and `trial.enc` in the app's userData. */
@@ -41,40 +43,32 @@ const DEMO_FILE = 'demo.enc';
 /**
  * The failures the interface words differently.
  *
- * Every one of them is final in its own way — a second demo, a code that is
- * not one of ours, a build that does not offer demos at all — so none of them
- * reads as "try again", which is what an uncoded error means everywhere else
- * in this module's neighbours.
+ * `DEMO_ALREADY_USED` and `DEMO_DISABLED` are final in their own ways — a
+ * demo this device has spent, a build that does not offer them — so neither
+ * reads as "try again". `DEMO_UNAVAILABLE` is the opposite and has to be
+ * told apart from them: the service could not be reached, nothing was spent,
+ * and trying again later is exactly the right advice. Before `demo/activate`
+ * that state could not arise, because nothing was asked.
  */
 const DEMO_ALREADY_USED = 'demo_already_used';
-const DEMO_CODE_INVALID = 'demo_code_invalid';
 const DEMO_DISABLED = 'demo_disabled';
+const DEMO_UNAVAILABLE = 'demo_unavailable';
 
-/** Codes are compared case-insensitively and trimmed: they get typed in by
- *  hand and read off a slide, and a capital letter is not a wrong answer. */
-function normalizeCode(input) {
-  return String(input == null ? '' : input).trim().toUpperCase();
-}
-
-/** Whether what was typed is one of this build's demo codes. Not a secret
- *  check — the codes ship in license-config.js — so no constant time here. */
-function isDemoCode(input) {
-  const entered = normalizeCode(input);
-  return entered !== '' && DEMO_CODES.some((code) => normalizeCode(code) === entered);
-}
+/** The service's code for a demo that is spent, as it appears in a reply. */
+const SERVICE_ALREADY_USED = 'demo_already_used';
 
 function demoPath(userDataDir) {
   return path.join(userDataDir, DEMO_FILE);
 }
 
 /**
- * This device's demo record, or null if it has never taken one.
+ * This device's cached demo record, or null if it has never taken one *that
+ * this process has seen*.
  *
  * Anything unreadable — no file, a store that cannot decrypt it, a rewritten
- * file — reads as "no record". The failure mode is granting a demo that was
- * already taken, which is the right way round: refusing one because a file
- * went bad would be a support ticket about a feature that exists to avoid
- * support tickets.
+ * file — reads as "no record", and that is now a cheap failure rather than a
+ * generous one: the worst it does is offer a button the service then refuses,
+ * where before it handed out a second demo.
  */
 function readDemoRecord(userDataDir) {
   try {
@@ -95,19 +89,19 @@ function writeDemoRecord(userDataDir, rec) {
       { mode: 0o600 },
     );
   } catch {
-    // The licence was still issued and is still in force for this session;
-    // only the "one per device" mark is lost.
+    // Only the cache is lost. The licence was still issued, and the service
+    // still knows this device has had its demo.
   }
 }
 
 /**
- * Whether this device has already taken its demo *for this app*.
+ * Whether this device has already taken its demo *for this app*, as far as
+ * the cache knows.
  *
- * Scoped by appId for the reason the whole appId dimension exists: a demo
- * spent in the sibling app on the same machine is not this app's demo. The
- * record is this app's own file, so today the check only matters for a build
- * pointed at a different `LICENSE_APP_ID` — but reading it any other way
- * would make that build inherit a demo it never issued.
+ * Scoped by appId for the reason the whole appId dimension exists, and
+ * matching how the service keys the record: a demo spent in the sibling app
+ * on the same machine is not this app's demo. A record from before this
+ * field existed carries no appId and is read as this app's.
  */
 function demoUsed(userDataDir, appId = APP_ID) {
   const rec = readDemoRecord(userDataDir);
@@ -115,40 +109,45 @@ function demoUsed(userDataDir, appId = APP_ID) {
 }
 
 /**
- * A signed demo token for this device.
+ * The record to cache from a `demo/activate` or `demo/status` reply.
  *
- * The payload is shaped exactly like the service's, so everything downstream
- * — `verifyToken`, `buildLicenseState`, the grace period — treats it as the
- * licence it is. `planId` is what marks it as a demo, and the licence key is
- * derived from the device rather than random so a support conversation about
- * "which demo is this" has an answer.
+ * The dates are the service's, not this clock's: a demo is a window the
+ * service decided and the token was signed for, so a machine whose clock is
+ * off should still be told the truth about when it ends. `durationDays` is
+ * cached for the same reason `trialDurationDays` is — so the two halves do
+ * not each carry their own idea of how long a demo runs.
  */
-function mintDemoToken({
-  userId,
-  deviceId,
-  nowSeconds,
-  appId = APP_ID,
-  durationDays = DEMO_DURATION_DAYS,
-}) {
-  return createToken({
-    userId,
-    appId,
-    planId: DEMO_PLAN_ID,
-    licenseKey: `DEMO-${String(deviceId).slice(0, 16).toUpperCase()}`,
-    issuedAt: nowSeconds,
-    expiresAt: nowSeconds + durationDays * 86400,
-  });
+function recordFromService(reply, { appId = APP_ID, deviceId } = {}) {
+  if (!reply || typeof reply.issuedAt !== 'number' || typeof reply.expiresAt !== 'number') return null;
+  return {
+    appId: typeof reply.appId === 'string' && reply.appId ? reply.appId : appId,
+    deviceId,
+    issuedAt: reply.issuedAt,
+    expiresAt: reply.expiresAt,
+    durationDays: typeof reply.demoDurationDays === 'number' && reply.demoDurationDays > 0
+      ? reply.demoDurationDays
+      : DEMO_DURATION_DAYS,
+  };
+}
+
+/** Whether a reply is the service refusing a demo this device already spent
+ *  — the one refusal that will never come good, however many times it is
+ *  retried. Matched on the code, with the message as a fallback for a reply
+ *  that carries only prose. */
+function isAlreadyUsed(reply) {
+  if (!reply) return false;
+  if (reply.code === SERVICE_ALREADY_USED) return true;
+  return typeof reply.error === 'string' && reply.error.includes('already used');
 }
 
 module.exports = {
   DEMO_FILE,
   DEMO_ALREADY_USED,
-  DEMO_CODE_INVALID,
   DEMO_DISABLED,
-  normalizeCode,
-  isDemoCode,
+  DEMO_UNAVAILABLE,
   readDemoRecord,
   writeDemoRecord,
   demoUsed,
-  mintDemoToken,
+  recordFromService,
+  isAlreadyUsed,
 };
