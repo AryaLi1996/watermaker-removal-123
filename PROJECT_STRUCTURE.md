@@ -107,6 +107,7 @@ renderer/
 │   ├── capabilities.ts             # Whether this machine can run the heavier methods
 │   ├── subscription.ts             # Licence shapes, what each state unlocks, formatting
 │   ├── index.css                   # Theme tokens (light + dark) and global styles
+│   ├── config.ts                   # Build-time switches for the interface (the demo licence)
 │   ├── utils.ts                    # Pure utility functions
 │   ├── test-setup.ts               # Vitest global setup (@testing-library/jest-dom)
 │   ├── components/

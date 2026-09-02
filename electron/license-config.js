@@ -139,6 +139,51 @@ const PAYMENT_METHODS = ['wechat_pay', 'alipay', 'douyin_pay', 'card'];
  */
 const manualActivationEnabled = process.env.ENABLE_MANUAL_ACTIVATION === 'true';
 
+/**
+ * The demo licence: seven days of everything, issued by this build itself.
+ *
+ * It exists for the cases a purchase cannot serve — an internal test, a
+ * demonstration, someone deciding whether temporal fill is worth paying for
+ * — where the three-day device trial is either already spent or too small to
+ * finish anything with.
+ *
+ * It is not a token the service issued, and it deliberately does not pretend
+ * to be one: the plan id below is `demo`, which no plan in `PLAN_TIERS` uses,
+ * so anything reading a licence can tell the two apart. What signs it is the
+ * same HMAC secret this build already verifies with, which is why the demo is
+ * a build-time decision — see `demoLicenseEnabled`.
+ */
+const DEMO_PLAN_ID = 'demo';
+
+/** How long a demo licence runs. Seven days: long enough to finish a real
+ *  clip with temporal fill, short enough not to be a subscription. */
+const DEMO_DURATION_DAYS = 7;
+
+/**
+ * The codes the activation box accepts, alongside the one-click button.
+ *
+ * Not secrets — they ship in this file, and a demo is limited by the device
+ * record rather than by knowing the string. They exist so a demo can be
+ * handed out in writing without also handing out a licence token.
+ */
+const DEMO_CODES = ['DEMO-2026', 'SHUYIN-TRIAL'];
+
+/**
+ * Whether this build offers a demo licence at all.
+ *
+ * On by default, and turned off for a release with
+ * `VITE_DISABLE_DEMO_LICENSE=true` — the renderer's name for it, read here
+ * too so the two halves cannot disagree about whether the entry exists.
+ * `DISABLE_DEMO_LICENSE` is accepted for a main-process-only build.
+ *
+ * Worth being deliberate about: a build that leaves this on gives every
+ * device that asks seven days of the paid features, and the only thing
+ * stopping a second helping is a file in the app's own data directory.
+ * `renderer/.env.production` therefore sets it.
+ */
+const demoLicenseEnabled = process.env.VITE_DISABLE_DEMO_LICENSE !== 'true'
+  && process.env.DISABLE_DEMO_LICENSE !== 'true';
+
 const LICENSE_CONFIG = {
   /** Which app the service should scope this client's trial, orders and
    *  license to. Sent on every route. */
@@ -175,6 +220,10 @@ const usingDefaultSigningSecret = LICENSE_CONFIG.signingSecret === DEFAULT_SIGNI
 
 module.exports = {
   manualActivationEnabled,
+  demoLicenseEnabled,
+  DEMO_PLAN_ID,
+  DEMO_DURATION_DAYS,
+  DEMO_CODES,
   DEFAULT_SIGNING_SECRET,
   DEFAULT_LICENSE_URL,
   DEFAULT_APP_ID,

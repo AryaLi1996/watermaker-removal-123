@@ -49,6 +49,7 @@ Every one of them also carries `appId` — see below.
 | `electron/license-token.js` | Token verification and what an expiry means today |
 | `electron/license-request.js` | The HTTP call, and the timeout that actually hangs up |
 | `electron/subscription-monitor.js` | The state machine, storage, trial resolution, order polling |
+| `electron/demo-license.js` | The demo licence this build issues itself — see below |
 | `electron/device-id.js` | The hardware-derived device id the trial is keyed by |
 | `electron/secure-store.js` | Machine-bound AES-256-GCM for the files below |
 
@@ -57,6 +58,7 @@ Stored in the app's `userData` directory:
 | File | Contents | Protection |
 |---|---|---|
 | `license.enc` | The signed token | AES-256-GCM, machine-bound, `0600` |
+| `demo.enc` | `{appId, deviceId, issuedAt, expiresAt, via}` — this device's demo licence | Same, and for the same reason as `trial.enc` |
 | `trial.enc` | `{trialStart, trialEnd, durationDays}` | Same — not because dates are secret, but so they cannot be edited to extend a trial |
 | `.license_ts` | Highest timestamp ever seen | Plaintext; catches a clock wound backwards |
 | `.anon_id` | Anonymous payment id | Plaintext, not secret |
@@ -165,6 +167,65 @@ change that — see the note at the top: this app deploys no infrastructure.
 
 ---
 
+## The demo licence
+
+Alongside the paid plans, the subscription page offers a **demo licence**:
+seven days of every paid feature, once per device, with no payment. It is for
+an internal test, a demonstration, or someone deciding whether temporal fill
+is worth paying for — cases the three-day device trial either cannot serve or
+has already spent.
+
+It is the one licence in this app the service does not issue.
+
+| | |
+|---|---|
+| Issued by | `electron/demo-license.js`, in this process |
+| Signed with | the same HMAC secret this build verifies with |
+| Plan id | `demo` — no plan in `PLAN_TIERS` uses it |
+| Length | 7 days, then the ordinary grace period, then locked |
+| Limited by | `demo.enc` in the app's `userData`, machine-bound like `trial.enc` |
+| Refreshed | never — see `refresh()`; the service has no fresher copy |
+
+Two doors, one licence: the **Get a demo licence** button sends nothing, and
+the box takes one of the codes in `license-config.js` (`DEMO-2026`,
+`SHUYIN-TRIAL`). Neither grants more than the other — a code that did would be
+two features wearing one name. The codes are not secrets; they ship in that
+file, and what limits a demo is the device record, not knowing the string.
+
+### What this is not
+
+A demo token is indistinguishable from a purchased one to anything that only
+checks the signature. `planId: 'demo'` is the field that separates them, and
+`isDemoLicense` in `renderer/src/subscription.ts` is what reads it — the page
+names it a demo, counts it down, and keeps the paid entry live throughout so
+it can be upgraded at any point.
+
+The "once per device" limit is a file in the app's own data directory. It
+stops an honest user clicking twice; it stops nobody who deletes the file. A
+real limit needs the *service* to hold the record — a `demo-activate` route
+against `TrialsV2`, refusing a device that has had one, exactly as
+`trial/activate` already does. That belongs in
+[`ruanjian123`](https://github.com/AryaLi1996/ruanjian123) and does not exist
+yet; when it does, `activateDemo` becomes a call to it and this local mint
+becomes the offline fallback, the same shape `_resolveTrial` already has.
+
+### Which builds have it
+
+Because of the above, the demo is a build-time decision, and both halves of
+the app decide independently:
+
+| | |
+|---|---|
+| The button | `VITE_DISABLE_DEMO_LICENSE` → `ENABLE_DEMO_LICENSE` in `renderer/src/config.ts`. Unset means on. `renderer/.env.production` sets it, so a release build has no entry. |
+| The issuing | `demoAvailable()` in `electron/main.js`. A **packaged** app refuses `license:activateDemo` outright unless its environment says `ENABLE_DEMO_LICENSE=true`. |
+
+The second is the one that matters: `.env.production` is Vite's and configures
+only the bundle, so hiding the button is not the limit. A development run,
+`npm run dev` and the unit suites are all unpackaged with the flag unset, so
+the demo is simply there.
+
+---
+
 ## Configuration
 
 | Variable | Effect |
@@ -172,6 +233,9 @@ change that — see the note at the top: this app deploys no infrastructure.
 | `LICENSE_URL` | The base URL — Function URL or API Gateway stage |
 | `LICENSE_SIGNING_SECRET` | HMAC secret; **must match the deployment's** |
 | `LICENSE_APP_ID` / `VITE_APP_ID` | Which app the service scopes this build to. Defaults to `smoothvoice`; only change it for a test deployment |
+| `VITE_DISABLE_DEMO_LICENSE` | `true` removes the demo licence entry from the bundle. Set by `renderer/.env.production` |
+| `ENABLE_DEMO_LICENSE` | `true` lets a **packaged** app issue demo licences. Unpackaged runs do not need it |
+| `ENABLE_MANUAL_ACTIVATION` | `true` shows the box for typing a licence key or token in by hand |
 
 The signing secret ships with a public default, in this repository and in the
 service's own source. A build still using it can have its tokens forged

@@ -24,10 +24,16 @@ const { randomUUID } = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const { LICENSE_CONFIG, APP_ID, fallbackPlans, PAYMENT_METHODS } = require('./license-config');
+const {
+  LICENSE_CONFIG, APP_ID, DEMO_DURATION_DAYS, DEMO_PLAN_ID, fallbackPlans, PAYMENT_METHODS,
+} = require('./license-config');
 const { verifyToken, buildLicenseState, isLicensed } = require('./license-token');
 const secureStore = require('./secure-store');
 const { getDeviceId } = require('./device-id');
+const {
+  DEMO_ALREADY_USED, DEMO_CODE_INVALID, demoUsed, isDemoCode, mintDemoToken, readDemoRecord,
+  writeDemoRecord,
+} = require('./demo-license');
 
 const TOKEN_FILE = 'license.enc';
 const TRIAL_FILE = 'trial.enc';
@@ -464,6 +470,72 @@ class SubscriptionMonitor extends EventEmitter {
     return { success: true, state: this._state };
   }
 
+  // ── The demo licence ────────────────────────────────────────────────────
+  /**
+   * What this device's demo has come to: whether it has taken one, and when
+   * that one runs out.
+   *
+   * The page asks before it draws the button, so a device that has already
+   * had its demo is told so rather than finding out by clicking.
+   */
+  demoState() {
+    const rec = readDemoRecord(this.userDataDir);
+    const used = demoUsed(this.userDataDir);
+    return {
+      used,
+      durationDays: DEMO_DURATION_DAYS,
+      issuedAt: used && rec ? new Date(rec.issuedAt * 1000).toISOString() : null,
+      expiresAt: used && rec ? new Date(rec.expiresAt * 1000).toISOString() : null,
+    };
+  }
+
+  /**
+   * Take this device's demo licence: seven days of everything, once.
+   *
+   * `code` is optional. Omitted, this is the one-click path; given, it must
+   * be one of the codes in license-config.js — the same licence either way,
+   * because a code that granted something the button did not would be two
+   * features wearing one name.
+   *
+   * The limit is the device record, written only after the token is adopted:
+   * marking a demo as spent and then failing to apply it is the one ordering
+   * that leaves someone with nothing and no way to ask again.
+   *
+   * Whether this is offered at all is decided a layer up, in main.js, from
+   * `demoLicenseEnabled` — a build flag this class deliberately does not read
+   * so that the state machine stays testable without one.
+   */
+  async activateDemo(code) {
+    const requested = String(code == null ? '' : code).trim();
+    if (requested !== '' && !isDemoCode(requested)) {
+      return { success: false, code: DEMO_CODE_INVALID, error: 'that demo code was not recognised' };
+    }
+
+    if (demoUsed(this.userDataDir)) {
+      return { success: false, code: DEMO_ALREADY_USED, error: 'this device has already used its demo' };
+    }
+
+    const nowSeconds = this._nowSeconds();
+    const deviceId = this.getDeviceId();
+    const adopted = this._adoptToken(mintDemoToken({
+      userId: this.getUserId(), deviceId, nowSeconds,
+    }));
+    // Only reachable if this build cannot verify what it just signed, which
+    // means the signing secret changed under it. Nothing was spent.
+    if (!adopted.success) return adopted;
+
+    writeDemoRecord(this.userDataDir, {
+      appId: APP_ID,
+      deviceId,
+      issuedAt: nowSeconds,
+      expiresAt: nowSeconds + DEMO_DURATION_DAYS * 86400,
+      // Which door it came through, for the support conversation that starts
+      // "I already activated this".
+      via: requested === '' ? 'button' : 'code',
+    });
+    return { ...adopted, demo: this.demoState() };
+  }
+
   async deactivate() {
     this._deleteToken();
     this._applyLicense(null, this._nowSeconds());
@@ -493,6 +565,13 @@ class SubscriptionMonitor extends EventEmitter {
         code: APP_MISMATCH,
         error: `This license belongs to ${payload.appId}, not ${APP_ID}`,
       };
+    }
+    // A demo licence is this build's own (electron/demo-license.js): the
+    // service never issued it and has no fresher copy to exchange the key
+    // for, so asking would only ever come back "not accepted" and read as a
+    // licence that had been revoked. Its expiry is the whole of the limit.
+    if (payload && payload.planId === DEMO_PLAN_ID) {
+      return { success: false, error: 'a demo license does not refresh' };
     }
     if (!payload || !payload.licenseKey) return { success: false, error: 'no license to refresh' };
 

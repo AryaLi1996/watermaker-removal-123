@@ -8,7 +8,11 @@ const { Readable } = require('stream');
 const system = require('./system');
 const { SubscriptionMonitor } = require('./subscription-monitor');
 const { createRequest } = require('./license-request');
-const { LICENSE_CONFIG, usingDefaultSigningSecret, manualActivationEnabled } = require('./license-config');
+const {
+  LICENSE_CONFIG, usingDefaultSigningSecret, manualActivationEnabled, demoLicenseEnabled,
+  DEMO_DURATION_DAYS,
+} = require('./license-config');
+const { DEMO_DISABLED } = require('./demo-license');
 const temporalUsage = require('./temporal-usage');
 
 /**
@@ -475,6 +479,36 @@ ipcMain.handle('license:getState', () => getMonitor().getState());
 ipcMain.handle('license:activate', (_event, licenseKey) => getMonitor().activate(licenseKey));
 ipcMain.handle('license:deactivate', () => getMonitor().deactivate());
 ipcMain.handle('license:refresh', () => getMonitor().refresh());
+
+/**
+ * Whether this process will actually issue a demo licence.
+ *
+ * Two conditions, and the second is the one that matters. `demoLicenseEnabled`
+ * is the build flag (VITE_DISABLE_DEMO_LICENSE), which `renderer/.env.production`
+ * sets for a release — but that file is Vite's, and it configures the *bundle*.
+ * It never reaches this process, which is the half that mints the token. So a
+ * packaged app refuses by default, and a packaged demo build has to say
+ * ENABLE_DEMO_LICENSE=true in its environment on top.
+ *
+ * A development run, the test suites and `npm run dev` are all unpackaged, so
+ * the demo is simply there — which is the point of it.
+ */
+const demoAvailable = () => demoLicenseEnabled
+  && (!app.isPackaged || process.env.ENABLE_DEMO_LICENSE === 'true');
+
+// Enforced here rather than in the state machine: a renderer that has been
+// told the entry does not exist can still send the message, and a build that
+// does not offer demos must refuse it rather than trust that nobody asked.
+ipcMain.handle('license:activateDemo', (_event, code) => (
+  demoAvailable()
+    ? getMonitor().activateDemo(code)
+    : { success: false, code: DEMO_DISABLED, error: 'demo licenses are disabled in this build' }
+));
+ipcMain.handle('license:demoState', () => (
+  demoAvailable()
+    ? getMonitor().demoState()
+    : { used: false, durationDays: DEMO_DURATION_DAYS, issuedAt: null, expiresAt: null }
+));
 ipcMain.handle('license:getConfig', () => ({
   // Enough for the renderer to explain itself, and nothing secret: the
   // signing secret stays in this process.
@@ -491,6 +525,11 @@ ipcMain.handle('license:getConfig', () => ({
   // Whether to show the box for typing a licence in by hand. Off unless
   // ENABLE_MANUAL_ACTIVATION=true — see license-config.js.
   manualActivationEnabled,
+  // Whether this build offers a demo licence. On for a development run
+  // unless VITE_DISABLE_DEMO_LICENSE=true; off in a packaged app that did
+  // not also set ENABLE_DEMO_LICENSE — see `demoAvailable` below.
+  demoLicenseEnabled: demoAvailable(),
+  demoDurationDays: DEMO_DURATION_DAYS,
 }));
 
 // ─── The trial's allowance of temporal exports ───────────────────

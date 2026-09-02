@@ -134,6 +134,30 @@ export interface LicenseConfig {
   /** Whether to offer the box for entering a licence by hand. Off unless the
    *  build sets ENABLE_MANUAL_ACTIVATION. */
   manualActivationEnabled?: boolean;
+  /** Whether this build issues demo licences at all. On unless the build sets
+   *  VITE_DISABLE_DEMO_LICENSE — see electron/demo-license.js. */
+  demoLicenseEnabled?: boolean;
+  /** How long a demo licence runs, in days. */
+  demoDurationDays?: number;
+}
+
+/** What the main process knows about this device's demo licence. */
+export interface DemoState {
+  /** Whether this device has already taken its one demo. */
+  used: boolean;
+  durationDays: number;
+  /** ISO, or null where no demo has been taken. */
+  issuedAt: string | null;
+  expiresAt: string | null;
+}
+
+/** Taking a demo licence, as the main process answers it. `code` is set for
+ *  the failures with their own wording — see `DemoErrorCode`. */
+export interface DemoActivation {
+  success: boolean;
+  error?: string;
+  code?: string;
+  demo?: DemoState;
 }
 
 /** A create-order that did not produce an order. `code` is set only when the
@@ -209,6 +233,10 @@ declare global {
       licenseDeactivate?: () => Promise<{ success: boolean }>;
       licenseRefresh?: () => Promise<{ success: boolean; error?: string }>;
       licenseConfig?: () => Promise<LicenseConfig>;
+      /** Take this device's demo licence. The code is optional: omitted, it
+       *  is the one-click path; given, it must be one of the build's. */
+      licenseActivateDemo?: (code?: string) => Promise<DemoActivation>;
+      licenseDemoState?: () => Promise<DemoState>;
       onLicenseState?: (cb: (state: LicenseState) => void) => void;
       removeLicenseListeners?: () => void;
 

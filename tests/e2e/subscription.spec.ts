@@ -9,7 +9,8 @@
  */
 import { test, expect } from './fixtures/electron-fixture';
 import {
-  LICENSED_STATE, TRIAL_STATE, paymentCalls, setLicenseState, setTemporalUsage, stubPayments,
+  LICENSED_STATE, TRIAL_STATE, demoCalls, paymentCalls, setLicenseState, setTemporalUsage,
+  stubDemoLicense, stubPayments,
 } from './fixtures/subscription-state';
 import type { ElectronApplication, Page } from '@playwright/test';
 
@@ -149,6 +150,114 @@ test.describe('the subscription page', () => {
   test('opens from the bottom bar too', async ({ page }) => {
     await page.getByTestId('status-bar-subscribe').click();
     await expect(page.getByTestId('subscription-page')).toBeVisible();
+  });
+});
+
+
+test.describe('the demo licence', () => {
+  /**
+   * The entry that hands out seven days with no payment, driven through the
+   * real preload bridge and the real IPC channels — what the main process
+   * does at the other end is stubbed, for the reason `stubDemoLicense`
+   * gives.
+   */
+  const DEMO_STATE = {
+    status: 'active',
+    payload: {
+      userId: 'e2e-user', appId: 'smoothvoice', planId: 'demo',
+      licenseKey: 'DEMO-E2E', expiresAt: 4_102_444_800, issuedAt: 0,
+    },
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    daysRemaining: 7,
+    graceDaysLeft: 0,
+    trial: { ...TRIAL_STATE.trial, active: false },
+  };
+
+  test.beforeEach(async ({ electronApp }) => {
+    await stubPayments(electronApp, { plans: PLANS, methods: METHODS });
+  });
+
+  test('offers seven free days on the subscription page', async ({ electronApp, page }) => {
+    await stubDemoLicense(electronApp);
+    await asState(electronApp, page, TRIAL_STATE);
+    await page.getByTestId('nav-subscription').click();
+
+    const panel = page.getByTestId('demo-license');
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText('7 days');
+    await expect(panel).toContainText('no payment');
+  });
+
+  test('activates on one click, with nothing typed in', async ({ electronApp, page }) => {
+    await stubDemoLicense(electronApp);
+    await asState(electronApp, page, TRIAL_STATE);
+    await page.getByTestId('nav-subscription').click();
+
+    await page.getByTestId('demo-activate').click();
+    await expect(page.getByTestId('demo-success')).toBeVisible();
+
+    // It went over the real channel, and it carried no code.
+    const calls = await demoCalls(electronApp);
+    expect(calls.activations).toEqual([{ code: null }]);
+  });
+
+  test('takes an activation code too, and passes it through unchanged', async ({ electronApp, page }) => {
+    await stubDemoLicense(electronApp);
+    await asState(electronApp, page, TRIAL_STATE);
+    await page.getByTestId('nav-subscription').click();
+
+    await page.getByTestId('demo-code').fill('DEMO-2026');
+    await page.getByTestId('demo-code-submit').click();
+    await expect(page.getByTestId('demo-success')).toBeVisible();
+
+    const calls = await demoCalls(electronApp);
+    expect(calls.activations).toEqual([{ code: 'DEMO-2026' }]);
+  });
+
+  test('says a device has already had its demo, rather than offering another', async ({ electronApp, page }) => {
+    await stubDemoLicense(electronApp, { used: true });
+    await asState(electronApp, page, TRIAL_STATE);
+    await page.getByTestId('nav-subscription').click();
+
+    await expect(page.getByTestId('demo-activate')).toBeDisabled();
+  });
+
+  test('counts a running demo down, and still sells a subscription', async ({ electronApp, page }) => {
+    await stubDemoLicense(electronApp, { used: true });
+    await asState(electronApp, page, DEMO_STATE);
+    await page.getByTestId('nav-subscription').click();
+
+    await expect(page.getByTestId('demo-remaining')).toContainText(/[67] days \d{2}:\d{2} left/);
+    // Named as a demo everywhere, not as a plan somebody bought.
+    await expect(page.getByTestId('subscription-bar-label')).toHaveText('Subscription: Demo licence');
+    // And the paid entry is untouched: a demo is upgraded by buying one.
+    await expect(page.getByTestId('subscribe-annual')).toBeEnabled();
+  });
+
+  test('unlocks temporal fill for as long as it runs', async ({ electronApp, page }) => {
+    await stubDemoLicense(electronApp, { used: true });
+    await asState(electronApp, page, DEMO_STATE);
+    await loadVideo(page, electronApp);
+
+    await expect(page.getByTestId('method-temporal')).not.toContainText('Needs a subscription');
+    await expect(page.getByTestId('preview-locked')).toBeHidden();
+  });
+
+  test('locks them again once it has expired, and asks for a plan', async ({ electronApp, page }) => {
+    await stubDemoLicense(electronApp, { used: true });
+    await asState(electronApp, page, {
+      ...DEMO_STATE,
+      status: 'expired',
+      expiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+      daysRemaining: 0,
+      trial: { ...TRIAL_STATE.trial, active: false },
+    });
+    await setTemporalUsage(electronApp, { used: 3, remaining: 0, allowed: false });
+    await page.reload();
+    await loadVideo(page, electronApp);
+
+    await expect(page.getByTestId('method-temporal')).toBeDisabled();
+    await expect(page.getByTestId('status-bar-subscribe')).toBeVisible();
   });
 });
 

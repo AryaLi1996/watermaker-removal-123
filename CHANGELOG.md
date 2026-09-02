@@ -70,6 +70,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   executables are named from `build.productName`, so they change with it.
 
 ### Added
+- **A demo licence on the subscription page** — seven days of every paid
+  feature, once per device, with no payment. It is for an internal test, a
+  demonstration, or someone deciding whether temporal fill is worth paying
+  for: cases the three-day device trial has either already spent or is too
+  short to serve.
+  - Two doors, one licence. **Get a demo licence** sends nothing; the box
+    beside it takes one of the codes in `electron/license-config.js`. Neither
+    grants more than the other.
+  - It is the one licence the shared service does not issue.
+    `electron/demo-license.js` mints and signs it here, marks it
+    `planId: 'demo'` so nothing mistakes it for a purchase, and records the
+    device in `demo.enc` so the offer is made once. It is never sent to the
+    service to be refreshed — there is no fresher copy to fetch.
+  - The page names it a demo, counts it down, and leaves the paid plans
+    buyable throughout, so a demo can be upgraded at any point. When it ends
+    the features lock again and the page asks for a plan.
+  - **Off in a release.** The "once per device" limit is a file in the app's
+    own data directory: it stops an honest user clicking twice and stops
+    nobody who deletes it. So `renderer/.env.production` sets
+    `VITE_DISABLE_DEMO_LICENSE=true`, which removes the entry from the
+    bundle, and a *packaged* app refuses to issue one at all unless its
+    environment also says `ENABLE_DEMO_LICENSE=true`. Hiding the button was
+    never going to be the limit. A real one needs the service to hold the
+    record — see the note in [`docs/LICENSE_SERVICE.md`](docs/LICENSE_SERVICE.md).
+
 - **Light and dark themes**, with "follow the system" as the default, under a
   new **Settings** screen in the top bar.
   - The choice is kept in `localStorage` and applied to `<html>`, so it takes

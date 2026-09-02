@@ -10,7 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import App from './App';
-import { LOADING_STATE, type LicenseState, type LicenseStatus, type TrialState } from './subscription';
+import {
+  DEMO_PLAN_ID, LOADING_STATE, type LicenseState, type LicenseStatus, type TrialState,
+} from './subscription';
 import { setLocale } from './i18n';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -49,7 +51,13 @@ function stubElectronAPI(licenseState: LicenseState) {
 
     licenseState: vi.fn().mockResolvedValue(licenseState),
     licenseRefresh: vi.fn().mockResolvedValue({ success: true }),
-    licenseConfig: vi.fn().mockResolvedValue({ orderPollIntervalMs: 1, orderPollTimeoutMs: 10 }),
+    licenseConfig: vi.fn().mockResolvedValue({
+      orderPollIntervalMs: 1, orderPollTimeoutMs: 10, demoLicenseEnabled: true,
+    }),
+    licenseDemoState: vi.fn().mockResolvedValue({
+      used: false, durationDays: 7, issuedAt: null, expiresAt: null,
+    }),
+    licenseActivateDemo: vi.fn(),
     onLicenseState: (cb: (s: LicenseState) => void) => { listeners.push(cb); },
     removeLicenseListeners: noop,
     paymentPlans: vi.fn().mockResolvedValue({ plans: [], source: 'server' }),
@@ -168,6 +176,81 @@ describe('App — what the licence unlocks', () => {
 
     push(state('expired', { trial: trial({ used: true }) }));
     await waitFor(() => expect(screen.getByTestId('method-temporal')).toBeDisabled());
+  });
+});
+
+
+describe('App — the demo licence', () => {
+  /**
+   * The end of the wire: the page is reached, the button goes to the main
+   * process, and the licence that comes back unlocks the features the demo
+   * exists to show off. That last step is the reason this lives here and not
+   * in the page's own tests — the gating is App's.
+   */
+  const DEMO_LICENSED = state('active', {
+    payload: {
+      userId: 'u', appId: 'smoothvoice', planId: DEMO_PLAN_ID,
+      licenseKey: 'DEMO-ABC', expiresAt: 0, issuedAt: 0,
+    },
+    expiresAt: new Date(Date.now() + 7 * DAY).toISOString(),
+    daysRemaining: 7,
+  });
+
+  it('unlocks temporal fill once a demo is taken, and names it a demo', async () => {
+    const { api, push } = stubElectronAPI(TRIALING);
+    (api.licenseActivateDemo as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      // The main process pushes the new state, exactly as it does for a
+      // settled payment.
+      (api.licenseState as ReturnType<typeof vi.fn>).mockResolvedValue(DEMO_LICENSED);
+      return { success: true, demo: { used: true, durationDays: 7, issuedAt: null, expiresAt: null } };
+    });
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('status-bar-subscribe')).toBeInTheDocument());
+    await loadVideo(api);
+    expect(screen.getByTestId('method-temporal')).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId('nav-subscription'));
+    fireEvent.click(screen.getByTestId('demo-activate'));
+
+    await waitFor(() => expect(api.licenseActivateDemo).toHaveBeenCalled());
+    push(DEMO_LICENSED);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('Subscription: Demo licence'),
+    );
+    fireEvent.click(screen.getByTestId('nav-editor'));
+    expect(screen.getByTestId('method-temporal')).toBeEnabled();
+    expect(screen.queryByTestId('preview-locked')).toBeNull();
+  });
+
+  it('locks the features again when the demo runs out, and asks for a plan', async () => {
+    const { api, push } = stubElectronAPI(DEMO_LICENSED);
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('subscription-bar-label')).toHaveTextContent('Demo licence'));
+    await loadVideo(api);
+    expect(screen.getByTestId('method-temporal')).toBeEnabled();
+
+    // Seven days later, and past the grace period the main process allows.
+    push(state('expired', { trial: trial({ used: true }) }));
+
+    await waitFor(() => expect(screen.getByTestId('method-temporal')).toBeDisabled());
+    expect(screen.getByTestId('method-temporal')).toHaveTextContent('Needs a subscription');
+    expect(screen.getByTestId('status-bar-subscribe')).toBeInTheDocument();
+  });
+
+  it('does not offer one where the main process says the build has no demo', async () => {
+    const { api } = stubElectronAPI(TRIALING);
+    (api.licenseConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      orderPollIntervalMs: 1, orderPollTimeoutMs: 10, demoLicenseEnabled: false,
+    });
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('status-bar-subscribe')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('nav-subscription'));
+
+    await waitFor(() => expect(api.licenseConfig).toHaveBeenCalled());
+    expect(screen.queryByTestId('demo-license')).toBeNull();
   });
 });
 
