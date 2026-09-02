@@ -17,6 +17,12 @@
  * and point at RSA — server signs with a private key, the app verifies with
  * an embedded public one — as the fix. Verification is centralised here so
  * that change lands in one place.
+ *
+ * The same centralisation is what makes rotating the HMAC secret survivable.
+ * Signing uses exactly one secret; verification accepts the previous one too
+ * while a rotation is in flight, so the service can switch which one it signs
+ * with without every token already issued reading as revoked. See
+ * `PREVIOUS_SIGNING_SECRET` in license-config.js for the sequence.
  */
 
 const { createHmac, timingSafeEqual } = require('crypto');
@@ -36,27 +42,49 @@ function createToken(payload, secret = LICENSE_CONFIG.signingSecret) {
 }
 
 /**
+ * Every secret a token may have been signed with, most recent first.
+ *
+ * Order matters only for speed: the current secret verifies all but the
+ * tokens issued before a rotation, so trying it first means the fallback
+ * costs one extra HMAC on exactly those.
+ */
+function acceptedSecrets(secret) {
+  if (Array.isArray(secret)) return secret.filter(Boolean);
+  if (typeof secret === 'string') return [secret];
+  return [LICENSE_CONFIG.signingSecret, LICENSE_CONFIG.previousSigningSecret].filter(Boolean);
+}
+
+/** Whether `signature` is what `secret` would produce over `data`. */
+function signatureMatches(data, signature, secret) {
+  const expected = sign(data, secret);
+  try {
+    // Constant time: a signature check that returns faster for a closer guess
+    // is a signature check that can be walked to a valid one.
+    return timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'));
+  } catch {
+    // Non-hex, or a length mismatch that timingSafeEqual refuses to compare.
+    return false;
+  }
+}
+
+/**
  * The payload of a token this app can prove it issued, or null.
  *
  * Null covers every failure the same way — wrong shape, bad signature,
  * unparseable payload — because none of them is a license and telling them
  * apart only helps someone trying to forge one.
+ *
+ * `secret` is for tests and for `verifiedWithPreviousSecret` below; left off,
+ * this accepts the current secret and, during a rotation, the previous one.
  */
-function verifyToken(token, secret = LICENSE_CONFIG.signingSecret) {
+function verifyToken(token, secret) {
   if (typeof token !== 'string') return null;
   const parts = token.split('.');
   if (parts.length !== 3) return null;
   const [header, body, signature] = parts;
 
-  const expected = sign(`${header}.${body}`, secret);
-  try {
-    // Constant time: a signature check that returns faster for a closer guess
-    // is a signature check that can be walked to a valid one.
-    if (!timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'))) return null;
-  } catch {
-    // Non-hex, or a length mismatch that timingSafeEqual refuses to compare.
-    return null;
-  }
+  const secrets = acceptedSecrets(secret);
+  if (!secrets.some((s) => signatureMatches(`${header}.${body}`, signature, s))) return null;
 
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
@@ -65,6 +93,25 @@ function verifyToken(token, secret = LICENSE_CONFIG.signingSecret) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether this token only verifies under the *previous* secret.
+ *
+ * A licence that is genuine but signed with the outgoing secret: still
+ * honoured, and worth re-fetching, because the window in which the old secret
+ * is accepted is meant to close. `refresh()` uses it to swap the token for one
+ * signed with the current secret at the first opportunity rather than waiting
+ * for the licence to lapse.
+ *
+ * False when no rotation is in flight, and false for a forgery — a token that
+ * verifies under neither secret is not a licence at all.
+ */
+function verifiedWithPreviousSecret(token) {
+  const previous = LICENSE_CONFIG.previousSigningSecret;
+  if (!previous) return false;
+  return verifyToken(token, LICENSE_CONFIG.signingSecret) === null
+    && verifyToken(token, previous) !== null;
 }
 
 /**
@@ -104,4 +151,7 @@ function buildLicenseState(payload, nowSeconds) {
   };
 }
 
-module.exports = { HEADER, sign, createToken, verifyToken, resolveStatus, isLicensed, buildLicenseState };
+module.exports = {
+  HEADER, sign, createToken, verifyToken, verifiedWithPreviousSecret, acceptedSecrets,
+  resolveStatus, isLicensed, buildLicenseState,
+};

@@ -860,6 +860,134 @@ describe('the demo licence', () => {
   });
 });
 
+describe('rotating the signing secret', () => {
+  /**
+   * Both ends hold the same HMAC secret, so the moment the service starts
+   * signing with a new one every token already issued stops verifying — which
+   * to this app reads as a licence that was revoked, for people whose
+   * subscription is perfectly current. These cover the two-step way out:
+   * a build that accepts the outgoing secret as well, and a refresh that
+   * swaps the token onto the current one so the window can close.
+   */
+  const OLD_SECRET = 'the-outgoing-secret-v1';
+
+  function storeToken(value: string) {
+    writeFileSync(path.join(dir, 'license.enc'), secureStore.encrypt(dir, value));
+  }
+
+  function readStoredToken(): string {
+    return secureStore.decrypt(dir, readFileSync(path.join(dir, 'license.enc')));
+  }
+
+  /** Puts the module in the state a mid-rotation build is in: signing with
+   *  the current secret, still accepting OLD_SECRET. */
+  function rotating() {
+    const config = require('../../../electron/license-config.js').LICENSE_CONFIG;
+    const previous = config.previousSigningSecret;
+    config.previousSigningSecret = OLD_SECRET;
+    return () => { config.previousSigningSecret = previous; };
+  }
+
+  const oldToken = (expiresAt: number) => token.createToken({
+    userId: 'u1', appId: APP_ID, planId: 'monthly', licenseKey: 'KEY12345',
+    expiresAt, issuedAt: NOW,
+  }, OLD_SECRET);
+
+  it('honours a token signed with the outgoing secret', () => {
+    const stale = oldToken(NOW + 30 * DAY);
+    // Before the rotation build: indistinguishable from a forgery.
+    expect(token.verifyToken(stale)).toBeNull();
+
+    const restore = rotating();
+    try {
+      expect(token.verifyToken(stale)?.licenseKey).toBe('KEY12345');
+      expect(token.verifiedWithPreviousSecret(stale)).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  it('still refuses a token signed with neither secret', () => {
+    const restore = rotating();
+    try {
+      const forged = token.createToken({
+        userId: 'u1', appId: APP_ID, planId: 'annual', licenseKey: 'KEY12345',
+        expiresAt: NOW + 300 * DAY, issuedAt: NOW,
+      }, 'not-either-of-them');
+      expect(token.verifyToken(forged)).toBeNull();
+      // And a forgery is not "signed with the previous secret" either — that
+      // flag drives a refresh, not an admission.
+      expect(token.verifiedWithPreviousSecret(forged)).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it('does not accept the outgoing secret once the rotation is over', () => {
+    // The default state: previousSigningSecret is empty, and a token from
+    // before the rotation is exactly as good as a forgery.
+    expect(token.verifyToken(oldToken(NOW + 30 * DAY))).toBeNull();
+    expect(token.verifiedWithPreviousSecret(oldToken(NOW + 30 * DAY))).toBe(false);
+  });
+
+  it('starts licensed on a stale token, and swaps it for a current one', async () => {
+    const restore = rotating();
+    try {
+      const fresh = token.createToken({
+        userId: 'u1', appId: APP_ID, planId: 'monthly', licenseKey: 'KEY12345',
+        expiresAt: NOW + 60 * DAY, issuedAt: NOW,
+      });
+      const { request, calls } = stubService({
+        'trial/status': { trialUsed: true, trialStart: NOW - 9 * DAY, trialEnd: NOW - 6 * DAY, trialDurationDays: 3 },
+        '': { valid: true, token: fresh },
+      });
+      storeToken(oldToken(NOW + 30 * DAY));
+
+      const monitor = makeMonitor(request);
+      await monitor.initialize();
+
+      // Licensed from the first moment — not signed out and waiting on a
+      // network call that may never succeed.
+      expect(monitor.isLicensedNow()).toBe(true);
+
+      // And the exchange happens on its own, so the build that eventually
+      // drops the old secret does not lock this person out.
+      await vi.waitFor(() => {
+        expect(calls.some((c: { path: string }) => c.path === '')).toBe(true);
+      });
+      await vi.waitFor(() => {
+        expect(token.verifiedWithPreviousSecret(readStoredToken())).toBe(false);
+      });
+      expect(monitor.getState().payload.expiresAt).toBe(NOW + 60 * DAY);
+    } finally {
+      restore();
+    }
+  });
+
+  it('leaves a token already on the current secret alone', async () => {
+    const restore = rotating();
+    try {
+      const { request, calls } = stubService({
+        'trial/status': { trialUsed: true, trialStart: NOW - 9 * DAY, trialEnd: NOW - 6 * DAY, trialDurationDays: 3 },
+      });
+      storeToken(token.createToken({
+        userId: 'u1', appId: APP_ID, planId: 'monthly', licenseKey: 'KEY12345',
+        expiresAt: NOW + 60 * DAY, issuedAt: NOW,
+      }));
+
+      const monitor = makeMonitor(request);
+      await monitor.initialize();
+
+      expect(monitor.isLicensedNow()).toBe(true);
+      // No exchange: there is nothing to swap, and a refresh on every launch
+      // would be a call made for nothing.
+      expect(calls.some((c: { path: string }) => c.path === '')).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe('state changes', () => {
   it('are pushed, so the window does not have to poll for them', async () => {
     const { request } = stubService({
