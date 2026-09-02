@@ -25,6 +25,37 @@
 const DEFAULT_SIGNING_SECRET = 'ruanjian-dev-signing-secret-v1-change-in-production';
 
 /**
+ * The secret this build accepts *in addition* to the current one, and never
+ * signs with.
+ *
+ * Rotating the service's HMAC secret is not a server-side change. The service
+ * only ever signs; this app is the half that verifies (license-token.js), so
+ * the moment the service starts signing with a new secret, every installed
+ * build holding only the old one reads the next token it fetches as invalid —
+ * which the interface words as a licence that stopped being valid. Stored
+ * tokens survive, because they were signed with the secret their build still
+ * has; it is the first refresh that breaks.
+ *
+ * So the window has to exist here, and it has to ship before the service
+ * rotates:
+ *
+ *   1. release a build whose `signingSecret` is the new value and whose
+ *      `previousSigningSecret` is the outgoing one — it verifies tokens from
+ *      either, so it works before and after the rotation;
+ *   2. wait for that build to reach people;
+ *   3. rotate `LicenseSigningSecret` on the service;
+ *   4. drop `previousSigningSecret` in a later release.
+ *
+ * Unset in ordinary builds, which is why it defaults to empty: a build with
+ * no rotation in flight should accept exactly one signature.
+ */
+const PREVIOUS_SIGNING_SECRET = String(
+  process.env.LICENSE_PREVIOUS_SIGNING_SECRET
+  || process.env.VITE_LICENSE_PREVIOUS_SIGNING_SECRET
+  || '',
+).trim();
+
+/**
  * Which application this client is, as far as the license service is
  * concerned.
  *
@@ -197,6 +228,9 @@ const LICENSE_CONFIG = {
   /** Function URL or API Gateway stage — both work, see the note above. */
   verificationUrl: process.env.LICENSE_URL || DEFAULT_LICENSE_URL,
   signingSecret: process.env.LICENSE_SIGNING_SECRET || DEFAULT_SIGNING_SECRET,
+  /** Accepted when verifying, never used to sign. Empty unless a rotation is
+   *  in flight — see PREVIOUS_SIGNING_SECRET above. */
+  previousSigningSecret: PREVIOUS_SIGNING_SECRET,
 
   /** Days after expiry that the app keeps working, so a failed network call
    *  or a flight does not lock someone out of what they paid for. */
@@ -223,6 +257,19 @@ const LICENSE_CONFIG = {
 
 const usingDefaultSigningSecret = LICENSE_CONFIG.signingSecret === DEFAULT_SIGNING_SECRET;
 
+/**
+ * Whether a rotation window is open in this build.
+ *
+ * Worth reporting rather than inferring from the secret itself, which is not
+ * something to hand to the renderer or a log line. A build with this on
+ * accepts two signatures and is meant to be temporary: it is the state that
+ * step 4 above exists to end.
+ */
+const acceptingPreviousSigningSecret = Boolean(
+  LICENSE_CONFIG.previousSigningSecret
+  && LICENSE_CONFIG.previousSigningSecret !== LICENSE_CONFIG.signingSecret,
+);
+
 module.exports = {
   manualActivationEnabled,
   demoLicenseEnabled,
@@ -242,4 +289,5 @@ module.exports = {
   fallbackPlans,
   LICENSE_CONFIG,
   usingDefaultSigningSecret,
+  acceptingPreviousSigningSecret,
 };

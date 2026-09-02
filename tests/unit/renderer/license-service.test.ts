@@ -122,6 +122,115 @@ describe('the license token', () => {
   });
 });
 
+describe('rotating the signing secret', () => {
+  const payload = { userId: 'u1', planId: 'monthly', licenseKey: 'KEY12345', expiresAt: NOW + 30 * DAY, issuedAt: NOW };
+  const CURRENT = 'current-secret-abcdefghijklmnop';
+  const OUTGOING = 'outgoing-secret-abcdefghijklmnop';
+
+  const CONFIG = '../../../electron/license-config.js';
+  const TOKEN = '../../../electron/license-token.js';
+
+  /**
+   * Both modules re-required against a given environment. The secrets are read
+   * once at load, which is the point — a build ships with them baked in — so a
+   * test that wants a different pair has to load the pair again.
+   */
+  function withEnv(env: Record<string, string | undefined>, fn: (m: {
+    token: typeof token, config: typeof config,
+  }) => void) {
+    const previous = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+    const reload = () => {
+      delete require.cache[require.resolve(CONFIG)];
+      delete require.cache[require.resolve(TOKEN)];
+    };
+    for (const [k, v] of Object.entries(env)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try {
+      reload();
+      fn({ config: require(CONFIG), token: require(TOKEN) });
+    } finally {
+      for (const [k, v] of Object.entries(previous)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      reload();
+    }
+  }
+
+  const rotating = {
+    LICENSE_SIGNING_SECRET: CURRENT,
+    LICENSE_PREVIOUS_SIGNING_SECRET: OUTGOING,
+  };
+
+  it('accepts a token signed with the outgoing secret while the window is open', () => {
+    // The case the window exists for: the service has rotated, and this
+    // build is holding a token signed before it did.
+    withEnv(rotating, ({ token: t }) => {
+      expect(t.verifyToken(t.createToken(payload, OUTGOING))).toMatchObject(payload);
+    });
+  });
+
+  it('still accepts one signed with the current secret', () => {
+    withEnv(rotating, ({ token: t }) => {
+      expect(t.verifyToken(t.createToken(payload, CURRENT))).toMatchObject(payload);
+    });
+  });
+
+  it('refuses the outgoing secret once the window is closed', () => {
+    // Which is what step 4 of the rotation buys: one secret again.
+    withEnv({ LICENSE_SIGNING_SECRET: CURRENT, LICENSE_PREVIOUS_SIGNING_SECRET: undefined }, ({ token: t }) => {
+      expect(t.verifyToken(t.createToken(payload, OUTGOING))).toBeNull();
+    });
+  });
+
+  it('refuses a third secret either way — the window is two, not any', () => {
+    withEnv(rotating, ({ token: t }) => {
+      expect(t.verifyToken(t.createToken(payload, 'some-other-secret'))).toBeNull();
+    });
+  });
+
+  it('signs with the current secret only, so nothing new is issued under the old one', () => {
+    withEnv(rotating, ({ token: t }) => {
+      const [header, body, signature] = t.createToken(payload).split('.');
+      expect(signature).toBe(t.sign(`${header}.${body}`, CURRENT));
+      expect(signature).not.toBe(t.sign(`${header}.${body}`, OUTGOING));
+    });
+  });
+
+  it('opens no window for a previous secret that is unset, blank, or the current one', () => {
+    for (const value of [undefined, '', '   ', CURRENT]) {
+      withEnv({ LICENSE_SIGNING_SECRET: CURRENT, LICENSE_PREVIOUS_SIGNING_SECRET: value }, ({ config: c, token: t }) => {
+        expect(c.acceptingPreviousSigningSecret, String(value)).toBe(false);
+        expect(t.verificationSecrets(), String(value)).toEqual([CURRENT]);
+      });
+    }
+  });
+
+  it('reads the renderer\'s spelling of the variable too', () => {
+    // Same reason LICENSE_APP_ID and VITE_APP_ID are both read: a build that
+    // sets only one must not leave the two halves disagreeing.
+    withEnv({
+      LICENSE_SIGNING_SECRET: CURRENT,
+      LICENSE_PREVIOUS_SIGNING_SECRET: undefined,
+      VITE_LICENSE_PREVIOUS_SIGNING_SECRET: OUTGOING,
+    }, ({ config: c, token: t }) => {
+      expect(c.acceptingPreviousSigningSecret).toBe(true);
+      expect(t.verifyToken(t.createToken(payload, OUTGOING))).toMatchObject(payload);
+    });
+  });
+
+  it('does not let a named secret fall back to the other one', () => {
+    // A caller that names a secret is asking about that secret. Falling back
+    // would make `verifyToken(x, s)` unable to answer "was this signed with s".
+    withEnv(rotating, ({ token: t }) => {
+      expect(t.verifyToken(t.createToken(payload, OUTGOING), CURRENT)).toBeNull();
+      expect(t.verifyToken(t.createToken(payload, CURRENT), OUTGOING)).toBeNull();
+    });
+  });
+});
+
 describe('what a token means today', () => {
   const at = (expiresAt: number) => ({ expiresAt });
 

@@ -9,8 +9,8 @@ const system = require('./system');
 const { SubscriptionMonitor } = require('./subscription-monitor');
 const { createRequest } = require('./license-request');
 const {
-  LICENSE_CONFIG, usingDefaultSigningSecret, manualActivationEnabled, demoLicenseEnabled,
-  DEMO_DURATION_DAYS,
+  LICENSE_CONFIG, usingDefaultSigningSecret, acceptingPreviousSigningSecret,
+  manualActivationEnabled, demoLicenseEnabled, DEMO_DURATION_DAYS,
 } = require('./license-config');
 const { DEMO_DISABLED } = require('./demo-license');
 const temporalUsage = require('./temporal-usage');
@@ -782,6 +782,19 @@ app.whenReady().then(() => {
       + 'tokens with the public default from license-config.js. Tokens can be forged '
       + 'offline. Set it to the same private value as the deployed service before '
       + 'accepting real payments.',
+    );
+  }
+
+  // A rotation window is meant to close. Saying so at startup is what stops a
+  // build shipping with the outgoing secret still in it long after the
+  // service stopped signing with it — at which point it is one more secret
+  // that can forge a token, for no remaining reason.
+  if (acceptingPreviousSigningSecret) {
+    console.warn(
+      '[license] LICENSE_PREVIOUS_SIGNING_SECRET is set — this build also accepts '
+      + 'license tokens signed with the previous secret. That is correct only while '
+      + 'a rotation is in flight; drop it once the service has rotated and this '
+      + 'build has reached people.',
     );
   }
 

@@ -344,6 +344,7 @@ is not live yet — a trial spent in the sibling app still arrives here used.
 |---|---|
 | `LICENSE_URL` | The base URL — Function URL or API Gateway stage |
 | `LICENSE_SIGNING_SECRET` | HMAC secret; **must match the deployment's** |
+| `LICENSE_PREVIOUS_SIGNING_SECRET` | A second secret this build also *accepts*, and never signs with. Empty except during a rotation — see below. `VITE_LICENSE_PREVIOUS_SIGNING_SECRET` is read too |
 | `LICENSE_APP_ID` / `VITE_APP_ID` | Which app the service scopes this build to. Defaults to `smoothvoice`; only change it for a test deployment |
 | `DISABLE_DEMO_LICENSE` | `true` makes the main process refuse `license:activateDemo`. `VITE_DISABLE_DEMO_LICENSE` does the same for an unpackaged run, which shares the build environment |
 | `ENABLE_MANUAL_ACTIVATION` | No longer read by the interface — the licence box is on in every build. `license:config` still reports what it said |
@@ -355,6 +356,37 @@ ends holding the same symmetric secret is inherent to HMAC; the service's docs
 name the fix (RSA — server signs, client verifies with an embedded public
 key), and verification is centralised in `license-token.js` so that change
 lands in one place.
+
+### Rotating the signing secret
+
+The secret is the service's to change and this app's to survive, and those
+are not the same end. **The service never verifies a licence token** — the
+only HMAC comparisons in `handler.py` are the Stripe and Douyin webhook
+checks, and `_sign` is called in exactly one place, when it mints a token.
+This app is the verifier. So rotating `LicenseSigningSecret` on the stack
+does not invalidate anything by itself; what it does is start signing tokens
+that installed builds cannot verify, and the break arrives on the next
+refresh, worded as a licence that stopped being valid.
+
+That puts the order the other way round from how it looks:
+
+| | |
+|---|---|
+| 1 | Ship a build with `LICENSE_SIGNING_SECRET` = the **new** value and `LICENSE_PREVIOUS_SIGNING_SECRET` = the outgoing one. It verifies either, so it is correct both before and after the rotation, and can go out early. |
+| 2 | Wait for that build to reach people. This is the long step, and its length is an adoption question, not a token-lifetime one. |
+| 3 | Rotate `LicenseSigningSecret` on the service and deploy. |
+| 4 | Drop `LICENSE_PREVIOUS_SIGNING_SECRET` in a later release. |
+
+A build with the window open says so at startup, next to the default-secret
+warning, because step 4 is the one that gets forgotten: a build still holding
+the outgoing secret after step 3 is one more secret that can forge a token,
+for no remaining reason.
+
+**Both clients need step 1.** SootheVoice verifies against the same service
+with the same secret, so a rotation that only this app is ready for locks
+that one out instead. Doing nothing is also a choice with a cost — the
+current secret is public in both repositories' source, so anyone can mint a
+token that either app accepts.
 
 **Tests never reach the real service.** The E2E fixtures set
 `LICENSE_URL=http://127.0.0.1:9/` and stub the licence and payment IPC, so a
