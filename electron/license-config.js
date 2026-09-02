@@ -25,6 +25,31 @@
 const DEFAULT_SIGNING_SECRET = 'ruanjian-dev-signing-secret-v1-change-in-production';
 
 /**
+ * The secret this build *also* accepts a token from, and never signs with.
+ *
+ * Rotating an HMAC secret is not like rotating a password: both ends hold the
+ * same string, and the moment the service starts signing with a new one every
+ * token already in a customer's hands stops verifying. To this app that reads
+ * as a licence that was revoked — grace period, then locked — for people whose
+ * subscription is perfectly current, and the only way out is an update they
+ * have not installed yet.
+ *
+ * So a rotation runs in two steps. First ship a build that accepts both, and
+ * wait for it to reach people. Then let the service switch which one it signs
+ * with: an old token still verifies here, and the next background refresh
+ * exchanges it for one signed with the new secret. Once the old secret's
+ * tokens have all expired or been refreshed, a later build drops this.
+ *
+ * Empty means "one secret", which is the normal state — this is set only
+ * while a rotation is in flight.
+ */
+const PREVIOUS_SIGNING_SECRET = String(
+  process.env.PREVIOUS_LICENSE_SIGNING_SECRET
+  || process.env.VITE_PREVIOUS_LICENSE_SIGNING_SECRET
+  || '',
+).trim();
+
+/**
  * Which application this client is, as far as the license service is
  * concerned.
  *
@@ -196,7 +221,10 @@ const LICENSE_CONFIG = {
 
   /** Function URL or API Gateway stage — both work, see the note above. */
   verificationUrl: process.env.LICENSE_URL || DEFAULT_LICENSE_URL,
+  /** The one this build signs with, and the first one it tries. */
   signingSecret: process.env.LICENSE_SIGNING_SECRET || DEFAULT_SIGNING_SECRET,
+  /** Also accepted, never signed with — see PREVIOUS_SIGNING_SECRET. */
+  previousSigningSecret: PREVIOUS_SIGNING_SECRET,
 
   /** Days after expiry that the app keeps working, so a failed network call
    *  or a flight does not lock someone out of what they paid for. */
@@ -223,6 +251,16 @@ const LICENSE_CONFIG = {
 
 const usingDefaultSigningSecret = LICENSE_CONFIG.signingSecret === DEFAULT_SIGNING_SECRET;
 
+/**
+ * Whether a rotation is in flight, for the startup log.
+ *
+ * Worth saying out loud in both directions: while this is on, a token signed
+ * with the old secret is still honoured, which is the point — and also means
+ * a leaked old secret can still forge one. It is a window to get through, not
+ * a state to sit in.
+ */
+const rotatingSigningSecret = LICENSE_CONFIG.previousSigningSecret !== '';
+
 module.exports = {
   manualActivationEnabled,
   demoLicenseEnabled,
@@ -242,4 +280,5 @@ module.exports = {
   fallbackPlans,
   LICENSE_CONFIG,
   usingDefaultSigningSecret,
+  rotatingSigningSecret,
 };

@@ -27,7 +27,9 @@ const path = require('path');
 const {
   LICENSE_CONFIG, APP_ID, DEMO_DURATION_DAYS, DEMO_PLAN_ID, fallbackPlans, PAYMENT_METHODS,
 } = require('./license-config');
-const { verifyToken, buildLicenseState, isLicensed } = require('./license-token');
+const {
+  verifyToken, verifiedWithPreviousSecret, buildLicenseState, isLicensed,
+} = require('./license-token');
 const secureStore = require('./secure-store');
 const { getDeviceId } = require('./device-id');
 const {
@@ -309,6 +311,16 @@ class SubscriptionMonitor extends EventEmitter {
     if (payload) {
       this._saveMaxSeenTs(nowSeconds);
       this._startRefreshTimer();
+      // A licence signed with the outgoing secret is honoured, but the window
+      // in which that secret is accepted is meant to close. Swapping it now
+      // for one signed with the current secret is what makes a rotation
+      // finish on its own, rather than leaving people to be locked out by the
+      // build that eventually drops the old secret. Silent and best-effort:
+      // it is an optimisation, and the token in hand already works.
+      const token = this._loadToken();
+      if (token && verifiedWithPreviousSecret(token)) {
+        void this.refresh().catch(() => {});
+      }
     }
   }
 

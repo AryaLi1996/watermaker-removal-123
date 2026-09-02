@@ -344,6 +344,7 @@ is not live yet — a trial spent in the sibling app still arrives here used.
 |---|---|
 | `LICENSE_URL` | The base URL — Function URL or API Gateway stage |
 | `LICENSE_SIGNING_SECRET` | HMAC secret; **must match the deployment's** |
+| `PREVIOUS_LICENSE_SIGNING_SECRET` | Also accepted when verifying, never signed with. Set only while a rotation is in flight — see *Rotating it* below. `VITE_PREVIOUS_LICENSE_SIGNING_SECRET` does the same for an unpackaged run |
 | `LICENSE_APP_ID` / `VITE_APP_ID` | Which app the service scopes this build to. Defaults to `smoothvoice`; only change it for a test deployment |
 | `DISABLE_DEMO_LICENSE` | `true` makes the main process refuse `license:activateDemo`. `VITE_DISABLE_DEMO_LICENSE` does the same for an unpackaged run, which shares the build environment |
 | `ENABLE_MANUAL_ACTIVATION` | No longer read by the interface — the licence box is on in every build. `license:config` still reports what it said |
@@ -355,6 +356,46 @@ ends holding the same symmetric secret is inherent to HMAC; the service's docs
 name the fix (RSA — server signs, client verifies with an embedded public
 key), and verification is centralised in `license-token.js` so that change
 lands in one place.
+
+### Rotating it
+
+Rotating an HMAC secret is not like rotating a password. Both ends hold the
+same string, so the moment the service starts signing with a new one, every
+token already in a customer's hands stops verifying — and to this app that
+reads as a licence that was **revoked**: grace period, then locked, for people
+whose subscription is perfectly current. The only way out would be an update
+they have not installed yet.
+
+So it goes in two steps, and the first one has to reach people before the
+second happens:
+
+| | |
+|---|---|
+| 1. Ship a build that accepts both | `PREVIOUS_LICENSE_SIGNING_SECRET=<the current secret>` in the build environment, alongside the unchanged `LICENSE_SIGNING_SECRET`. Nothing changes for anyone yet. |
+| 2. Wait | Until enough of the install base is on that build. There is no way to hurry it, and going early is what the whole exercise exists to avoid. |
+| 3. Switch the service | `sam deploy --parameter-overrides LicenseSigningSecret=<new>`. New tokens are signed with the new secret; old ones still verify here. |
+| 4. Let it settle | Each client swaps its own token on the next launch — see below. |
+| 5. Ship a build that drops it | Unset `PREVIOUS_LICENSE_SIGNING_SECRET`. The old secret stops being accepted. |
+
+`verifyToken` tries the current secret first and the previous one only on a
+miss, so the cost is one extra HMAC on exactly the tokens issued before the
+switch. Signing — `createToken`, used by tests and nothing else in a shipped
+build — always uses the current secret alone.
+
+**Step 4 completes itself.** On launch, a stored token that verifies only
+under the previous secret triggers an immediate refresh
+(`verifiedWithPreviousSecret` in `license-token.js`, read in `initialize()`),
+which exchanges the licence key for a token signed with the current secret.
+Best-effort and silent: the token in hand already works, so a failed exchange
+costs nothing and the next launch tries again. Without it, a client would sit
+on its old token until expiry and be locked out by the step-5 build.
+
+**What accepting two secrets costs.** A token signed with the old secret still
+verifies, so if the reason for rotating is that the old secret *leaked*, the
+leak is still exploitable for the length of the window. That is the trade:
+a window in which a leaked secret still works, against logging out every
+paying customer. It is a window to get through, not a state to sit in —
+`rotatingSigningSecret` is warned about at startup for exactly that reason.
 
 **Tests never reach the real service.** The E2E fixtures set
 `LICENSE_URL=http://127.0.0.1:9/` and stub the licence and payment IPC, so a

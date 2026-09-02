@@ -9,7 +9,8 @@ const system = require('./system');
 const { SubscriptionMonitor } = require('./subscription-monitor');
 const { createRequest } = require('./license-request');
 const {
-  LICENSE_CONFIG, usingDefaultSigningSecret, manualActivationEnabled, demoLicenseEnabled,
+  LICENSE_CONFIG, usingDefaultSigningSecret, rotatingSigningSecret,
+  manualActivationEnabled, demoLicenseEnabled,
   DEMO_DURATION_DAYS,
 } = require('./license-config');
 const { DEMO_DISABLED } = require('./demo-license');
@@ -513,6 +514,9 @@ ipcMain.handle('license:getConfig', () => ({
   orderPollIntervalMs: LICENSE_CONFIG.orderPollIntervalMs,
   orderPollTimeoutMs: LICENSE_CONFIG.orderPollTimeoutMs,
   usingDefaultSigningSecret,
+  // Whether a signing-secret rotation is in flight. The interface does not
+  // read it today; it is here so a support conversation can see it.
+  rotatingSigningSecret,
   // Whether to show the box for typing a licence in by hand. Off unless
   // ENABLE_MANUAL_ACTIVATION=true — see license-config.js.
   manualActivationEnabled,
@@ -782,6 +786,18 @@ app.whenReady().then(() => {
       + 'tokens with the public default from license-config.js. Tokens can be forged '
       + 'offline. Set it to the same private value as the deployed service before '
       + 'accepting real payments.',
+    );
+  }
+
+  // Worth saying in both directions: accepting the outgoing secret is what
+  // stops a rotation logging every current subscriber out, and it also means
+  // a token signed with a leaked old secret still verifies here. It is a
+  // window to get through, not a state to sit in.
+  if (rotatingSigningSecret) {
+    console.warn(
+      '[license] PREVIOUS_LICENSE_SIGNING_SECRET is set — this build also accepts '
+      + 'tokens signed with the outgoing secret, and refreshes them onto the current '
+      + 'one. Unset it in the build after the rotation has settled.',
     );
   }
 

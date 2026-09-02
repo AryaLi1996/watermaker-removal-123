@@ -135,6 +135,11 @@ export interface LicenseConfig {
    *  interface no longer reads it — the box is on in every build — but the
    *  main process still reports what ENABLE_MANUAL_ACTIVATION said. */
   manualActivationEnabled?: boolean;
+  /** Whether a signing-secret rotation is in flight — this build accepts
+   *  tokens signed with the outgoing secret as well as the current one. Set
+   *  by PREVIOUS_LICENSE_SIGNING_SECRET; nothing in the interface reads it,
+   *  it is here for a support conversation. */
+  rotatingSigningSecret?: boolean;
   /** Whether this build issues demo licences at all. On unless the build sets
    *  VITE_DISABLE_DEMO_LICENSE — see electron/demo-license.js. */
   demoLicenseEnabled?: boolean;
