@@ -65,11 +65,13 @@ describe('the fallback plan prices', () => {
 });
 
 describe('which app this client is', () => {
-  it('is the id the service already holds this app\'s rows under', () => {
-    // The migration stamps the existing, appId-less rows with this value, and
-    // it is what the service falls back to for a request that carries none.
-    // Renaming it would strand every licence bought before the change.
-    expect(config.DEFAULT_APP_ID).toBe('smoothvoice');
+  it('is this app\'s own id, not the sibling\'s', () => {
+    // The service keys a demo by "<appId>#<deviceId>" and a trial by
+    // (deviceId, appId), so sharing SootheVoice's `smoothvoice` meant a demo
+    // or trial spent there arrived here already used — the exact leak the
+    // appId dimension exists to close. Pinned because the value is
+    // contractual: the service and the sibling client have to agree on it.
+    expect(config.DEFAULT_APP_ID).toBe('shuyin');
     expect(config.LICENSE_CONFIG.appId).toBe(config.APP_ID);
   });
 

@@ -199,7 +199,7 @@ describe('App — a demo licence in force', () => {
    */
   const DEMO_LICENSED = state('active', {
     payload: {
-      userId: 'u', appId: 'smoothvoice', planId: DEMO_PLAN_ID,
+      userId: 'u', appId: 'shuyin', planId: DEMO_PLAN_ID,
       licenseKey: 'DEMO-ABC', expiresAt: 0, issuedAt: 0,
     },
     expiresAt: new Date(Date.now() + 7 * DAY).toISOString(),

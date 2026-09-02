@@ -261,7 +261,7 @@ test.describe('a demo licence in force', () => {
   const DEMO_STATE = {
     status: 'active',
     payload: {
-      userId: 'e2e-user', appId: 'smoothvoice', planId: 'demo',
+      userId: 'e2e-user', appId: 'shuyin', planId: 'demo',
       licenseKey: 'DEMO-E2E', expiresAt: 4_102_444_800, issuedAt: 0,
     },
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
@@ -382,7 +382,7 @@ test.describe('which app the licence is for', () => {
     // the wrong appId looks exactly like one whose subscription vanished.
     const appId = await page.evaluate(async () =>
       (await (window as any).electronAPI.licenseConfig()).appId);
-    expect(appId).toBe('smoothvoice');
+    expect(appId).toBe('shuyin');
   });
 
   test('explains a subscription that belongs to another app', async ({ page, electronApp }) => {
