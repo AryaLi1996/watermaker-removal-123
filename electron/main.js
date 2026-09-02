@@ -480,32 +480,18 @@ ipcMain.handle('license:activate', (_event, licenseKey) => getMonitor().activate
 ipcMain.handle('license:deactivate', () => getMonitor().deactivate());
 ipcMain.handle('license:refresh', () => getMonitor().refresh());
 
-/**
- * Whether this process will actually issue a demo licence.
- *
- * Two conditions, and the second is the one that matters. `demoLicenseEnabled`
- * is the build flag (VITE_DISABLE_DEMO_LICENSE), which `renderer/.env.production`
- * sets for a release — but that file is Vite's, and it configures the *bundle*.
- * It never reaches this process, which is the half that mints the token. So a
- * packaged app refuses by default, and a packaged demo build has to say
- * ENABLE_DEMO_LICENSE=true in its environment on top.
- *
- * A development run, the test suites and `npm run dev` are all unpackaged, so
- * the demo is simply there — which is the point of it.
- */
-const demoAvailable = () => demoLicenseEnabled
-  && (!app.isPackaged || process.env.ENABLE_DEMO_LICENSE === 'true');
-
-// Enforced here rather than in the state machine: a renderer that has been
-// told the entry does not exist can still send the message, and a build that
-// does not offer demos must refuse it rather than trust that nobody asked.
+// The demo licence is enforced here rather than in the state machine: a
+// renderer that has been told the entry does not exist can still send the
+// message, and a build that does not offer demos must refuse it rather than
+// trust that nobody asked. On unless the build sets VITE_DISABLE_DEMO_LICENSE
+// (or this process's DISABLE_DEMO_LICENSE) — see license-config.js.
 ipcMain.handle('license:activateDemo', (_event, code) => (
-  demoAvailable()
+  demoLicenseEnabled
     ? getMonitor().activateDemo(code)
     : { success: false, code: DEMO_DISABLED, error: 'demo licenses are disabled in this build' }
 ));
 ipcMain.handle('license:demoState', () => (
-  demoAvailable()
+  demoLicenseEnabled
     ? getMonitor().demoState()
     : { used: false, durationDays: DEMO_DURATION_DAYS, issuedAt: null, expiresAt: null }
 ));
@@ -525,10 +511,9 @@ ipcMain.handle('license:getConfig', () => ({
   // Whether to show the box for typing a licence in by hand. Off unless
   // ENABLE_MANUAL_ACTIVATION=true — see license-config.js.
   manualActivationEnabled,
-  // Whether this build offers a demo licence. On for a development run
-  // unless VITE_DISABLE_DEMO_LICENSE=true; off in a packaged app that did
-  // not also set ENABLE_DEMO_LICENSE — see `demoAvailable` below.
-  demoLicenseEnabled: demoAvailable(),
+  // Whether this build offers a demo licence. On unless the build sets
+  // VITE_DISABLE_DEMO_LICENSE=true.
+  demoLicenseEnabled,
   demoDurationDays: DEMO_DURATION_DAYS,
 }));
 
