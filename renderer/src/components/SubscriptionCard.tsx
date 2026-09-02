@@ -1,24 +1,26 @@
 /**
- * SubscriptionCard — one plan: what it costs, what it saves, and the button
- * that starts paying for it.
+ * SubscriptionCard — one plan: what it costs, what it saves, and whether it
+ * is the one about to be paid for.
+ *
+ * The card chooses; it does not buy. Payment is a separate button below the
+ * methods, so the plan and the method are both settled before an order is
+ * created — which is also the only order the service will accept, since it
+ * takes the two together.
  *
  * Every number on the card comes from the service. The card computes nothing:
  * a client that works out its own price is a client that can show one figure
  * and charge another.
  */
-import { formatPrice, planBadgeKey, planNameKey, planTaglineKey, type Plan, type PlanId } from '../subscription';
+import { formatPrice, planNameKey, planTaglineKey, type Plan, type PlanId } from '../subscription';
 import { useTranslation } from '../hooks/useTranslation';
 
 interface SubscriptionCardProps {
   plan: Plan;
+  /** The plan the pay button would buy. */
+  selected: boolean;
   /** True once a license is in force, so the button reads "Renew". */
   licensed: boolean;
-  /** The plan currently in force, if it is this one. */
-  current: boolean;
-  /** True while an order is being created, so a second click cannot start a
-   *  second order for the same thing. */
-  busy: boolean;
-  onSubscribe: (plan: Plan) => void;
+  onSelect: (plan: Plan) => void;
 }
 
 /** The unit the price is quoted in — the service's `period`, not a guess. */
@@ -29,39 +31,42 @@ const PERIOD_KEY: Record<Plan['period'], string> = {
   year: 'subscription.perYear',
 };
 
-export default function SubscriptionCard({ plan, licensed, current, busy, onSubscribe }: SubscriptionCardProps) {
+export default function SubscriptionCard({ plan, selected, licensed, onSelect }: SubscriptionCardProps) {
   const { t, locale } = useTranslation();
-  const badgeKey = planBadgeKey(plan.id as PlanId);
-  const featured = plan.id === 'quarterly';
 
   return (
     <div
+      className="plan-card"
       data-testid={`plan-${plan.id}`}
+      data-selected={selected ? 'true' : undefined}
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      onClick={() => onSelect(plan)}
+      onKeyDown={(e) => {
+        // A card that only answers the mouse is a control half the keyboard
+        // users cannot reach.
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(plan);
+        }
+      }}
       style={{
         position: 'relative',
         display: 'flex',
         flexDirection: 'column',
         gap: 6,
-        background: current ? 'var(--accent-soft)' : 'var(--surface)',
-        border: `1px solid ${current || featured ? 'var(--accent)' : 'var(--border)'}`,
+        background: selected ? 'var(--accent-soft)' : 'var(--surface)',
+        // Two pixels in both states: a border that grows on selection shifts
+        // every other card by a pixel as the choice moves along the row.
+        border: `2px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
         borderRadius: 10,
-        padding: '18px 16px 16px',
+        padding: '16px 16px 14px',
+        cursor: 'pointer',
       }}
     >
-      {badgeKey && (
-        <span
-          style={{
-            position: 'absolute', top: -9, left: 16,
-            background: featured ? 'var(--accent)' : 'var(--accent-soft)',
-            color: featured ? 'var(--accent-contrast)' : 'var(--accent-soft-text)',
-            fontSize: 10, borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap',
-          }}
-        >
-          {t(badgeKey)}
-        </span>
-      )}
-
       <p style={{ color: 'var(--text)', fontSize: 13, fontWeight: 500 }}>{t(planNameKey(plan.id as PlanId))}</p>
+
       <p style={{ color: 'var(--text)', fontSize: 20, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
         {t(PERIOD_KEY[plan.period], { price: formatPrice(plan, locale) })}
       </p>
@@ -80,20 +85,32 @@ export default function SubscriptionCard({ plan, licensed, current, busy, onSubs
         <p style={{ color: 'var(--text-faint)', fontSize: 11 }}>{t('subscription.noDiscount')}</p>
       )}
 
-      <p style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t(planTaglineKey(plan.id as PlanId))}</p>
+      {/* The popularity chip. Every plan has one, so the row reads as four
+          choices rather than three also-rans beside a recommendation. */}
+      <span
+        style={{
+          alignSelf: 'flex-start',
+          background: selected ? 'var(--accent)' : 'var(--accent-soft)',
+          color: selected ? 'var(--accent-contrast)' : 'var(--accent-soft-text)',
+          fontSize: 10, borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap',
+        }}
+      >
+        {t(planTaglineKey(plan.id as PlanId))}
+      </span>
 
       <button
         data-testid={`subscribe-${plan.id}`}
-        onClick={() => onSubscribe(plan)}
-        disabled={busy}
+        aria-pressed={selected}
+        // The card handles the click; this is the affordance that says so.
+        tabIndex={-1}
+        onClick={(e) => { e.stopPropagation(); onSelect(plan); }}
         style={{
           marginTop: 'auto',
-          background: featured || current ? 'var(--accent)' : 'transparent',
-          border: `1px solid ${featured || current ? 'var(--accent)' : 'var(--border)'}`,
+          background: selected ? 'var(--accent)' : 'transparent',
+          border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
           borderRadius: 6, padding: '7px 0',
-          color: featured || current ? 'var(--accent-contrast)' : 'var(--text-secondary)',
-          fontSize: 12, fontWeight: 500, cursor: busy ? 'wait' : 'pointer',
-          opacity: busy ? 0.6 : 1,
+          color: selected ? 'var(--accent-contrast)' : 'var(--text-secondary)',
+          fontSize: 12, fontWeight: 500, cursor: 'pointer',
         }}
       >
         {t(licensed ? 'subscription.renew' : 'subscription.subscribe')}

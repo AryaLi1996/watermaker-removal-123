@@ -1,5 +1,12 @@
 /**
- * SubscriptionPage — what is in force, the plans, and paying for one.
+ * SubscriptionPage — choose a plan, choose how to pay, pay. Or type in a key
+ * you already have.
+ *
+ * The order of the page is the order of the decisions: the plans, the payment
+ * method, the one button that spends money, and only then the side door for a
+ * licence somebody already owns. What a subscription unlocks is no longer a
+ * list sitting in the middle of all that — it is shown once, in a dialog,
+ * when a key has actually unlocked it.
  *
  * The payment is real: creating an order returns a checkout URL from the
  * service's provider, which opens in the system browser or in a child window
@@ -11,12 +18,14 @@
  * make one work is trusting the client's word for it.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import FAQ from '../components/FAQ';
+import LicenseInput from '../components/LicenseInput';
+import PaymentMethods from '../components/PaymentMethods';
 import SubscriptionCard from '../components/SubscriptionCard';
 import { useTranslation } from '../hooks/useTranslation';
-import type { DemoActivation, DemoState, OrderError } from '../types';
+import type { OrderError } from '../types';
 import {
   APP_MISMATCH,
-  demoErrorKey,
   formatRemaining,
   isDemoLicense,
   isLicensed,
@@ -39,28 +48,15 @@ interface SubscriptionPageProps {
   methods: PaymentMethod[];
   trialMsRemaining: number;
   /** Milliseconds left on the licence in force, ticking in the renderer.
-   *  Only the demo licence shows it — a subscription is shown as a date. */
+   *  Only a demo licence shows it — a subscription is shown as a date. */
   licenseMsRemaining?: number;
   createOrder: (planId: PlanId, method: PaymentMethodId) => Promise<Order | OrderError>;
   watchOrder: (orderId: string, signal: { cancelled: boolean }) => Promise<OrderOutcome>;
   refresh: () => Promise<void>;
-  /** Whether this build offers the box for typing a licence in by hand. */
-  manualActivation?: boolean;
   activate?: (code: string) => Promise<{ success: boolean; error?: string; code?: string }>;
-  /** Whether this build offers the demo licence at all. */
-  demoEnabled?: boolean;
-  /** What the main process knows about this device's demo, or null before it
-   *  has answered. */
-  demo?: DemoState | null;
-  activateDemo?: (code?: string) => Promise<DemoActivation>;
 }
 
-const FAQ = [
-  { q: 'subscription.faqTrial', a: 'subscription.faqTrialBody' },
-  { q: 'subscription.faqRefund', a: 'subscription.faqRefundBody' },
-  { q: 'subscription.faqDevices', a: 'subscription.faqDevicesBody' },
-];
-
+/** What a licence turns on, shown in the dialog once one is in force. */
 const BENEFITS = [
   'subscription.benefitTemporal',
   'subscription.benefitPreview',
@@ -79,39 +75,20 @@ type Phase =
   // license belonging to another app, which no amount of retrying fixes.
   | { kind: 'error'; message: string; code?: string };
 
-/** Where the manual activation box has got to. */
-type Activation =
-  | { kind: 'idle' }
-  | { kind: 'working' }
-  | { kind: 'ok' }
-  | { kind: 'failed'; message: string; code?: string };
-
-/** Where taking the demo licence has got to. Its own state, not `phase`'s:
- *  the two are separate doors and a failure at one should not clear the
- *  other. */
-type Demo =
-  | { kind: 'idle' }
-  | { kind: 'working' }
-  | { kind: 'ok' }
-  | { kind: 'failed'; message: string; code?: string };
-
 export default function SubscriptionPage({
   state, plans, plansAreFallback, methods, trialMsRemaining, licenseMsRemaining = 0,
-  createOrder, watchOrder, refresh,
-  manualActivation = false, activate,
-  demoEnabled = false, demo = null, activateDemo,
+  createOrder, watchOrder, refresh, activate,
 }: SubscriptionPageProps) {
   const { t, locale } = useTranslation();
+  // The plan the pay button would buy. Nothing is chosen for the user: a
+  // preselected plan is one somebody pays for without ever choosing it.
+  const [planId, setPlanId] = useState<PlanId | null>(null);
   // The chosen method, or none chosen yet.
   const [picked, setPicked] = useState<PaymentMethodId | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
-  // The manual activation box, kept apart from `phase`: it is a side door,
-  // and a failure there should not clear a payment the user is watching.
-  const [code, setCode] = useState('');
-  const [activation, setActivation] = useState<Activation>({ kind: 'idle' });
-  // The demo panel, likewise kept to itself.
-  const [demoCode, setDemoCode] = useState('');
-  const [demoPhase, setDemoPhase] = useState<Demo>({ kind: 'idle' });
+  // Shown after a licence key is accepted: the one place the feature list
+  // still appears, at the moment it has stopped being a sales pitch.
+  const [showUnlocked, setShowUnlocked] = useState(false);
   // Shared with the in-flight poll so cancelling actually stops it, rather
   // than leaving it to finish and overwrite whatever the user did next.
   const watching = useRef<{ cancelled: boolean }>({ cancelled: false });
@@ -121,6 +98,7 @@ export default function SubscriptionPage({
   // Derived rather than written into state on arrival: nothing to keep in
   // sync when the list changes under it.
   const method: PaymentMethodId | null = picked ?? methods[0]?.id ?? null;
+  const plan = plans.find((p) => p.id === planId) ?? null;
 
   // A closed checkout window is not a failed payment — the order may already
   // be paid — so this only takes down the dialog, and the poll continues.
@@ -132,8 +110,8 @@ export default function SubscriptionPage({
 
   useEffect(() => () => { watching.current.cancelled = true; }, []);
 
-  const startOrder = useCallback(async (plan: Plan) => {
-    if (!method) return;
+  const pay = useCallback(async () => {
+    if (!plan || !method) return;
     setPhase({ kind: 'creating', planId: plan.id });
 
     const created = await createOrder(plan.id, method);
@@ -159,51 +137,7 @@ export default function SubscriptionPage({
     else if (outcome === 'timeout') setPhase({ kind: 'timeout' });
     else if (outcome === 'mismatch') setPhase({ kind: 'error', message: '', code: APP_MISMATCH });
     else setPhase({ kind: 'idle' });
-  }, [createOrder, method, watchOrder]);
-
-  const submitCode = useCallback(async () => {
-    const entered = code.trim();
-    if (!entered || !activate) return;
-    setActivation({ kind: 'working' });
-    const result = await activate(entered);
-    if (result.success) {
-      setActivation({ kind: 'ok' });
-      setCode('');
-      return;
-    }
-    setActivation({ kind: 'failed', message: result.error ?? '', code: result.code });
-  }, [activate, code]);
-
-  /** The clipboard, for a token far too long to retype. Silently ignored
-   *  where the browser refuses it: the field still accepts a paste. */
-  const pasteCode = useCallback(async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text) setCode(text.trim());
-    } catch {
-      // No clipboard permission. Ctrl/Cmd-V still works.
-    }
-  }, []);
-
-  /**
-   * Take the demo licence.
-   *
-   * One handler for both doors: the button calls it with nothing, the box
-   * with what was typed. They grant the same licence, so anything else would
-   * be two features wearing one name — and the main process is what decides
-   * either way, since it holds the device record the "once" is counted in.
-   */
-  const takeDemo = useCallback(async (entered?: string) => {
-    if (!activateDemo) return;
-    setDemoPhase({ kind: 'working' });
-    const result = await activateDemo(entered);
-    if (result.success) {
-      setDemoPhase({ kind: 'ok' });
-      setDemoCode('');
-      return;
-    }
-    setDemoPhase({ kind: 'failed', message: result.error ?? '', code: result.code });
-  }, [activateDemo]);
+  }, [createOrder, method, plan, watchOrder]);
 
   const stopWaiting = useCallback(() => {
     watching.current.cancelled = true;
@@ -214,18 +148,13 @@ export default function SubscriptionPage({
   // A failure with wording of its own — a licence belonging to another app —
   // or null, in which case the reason the service gave is what to show.
   const errorKey = phase.kind === 'error' ? licenseErrorKey(phase.code) : null;
-  const activationErrorKey = activation.kind === 'failed' ? licenseErrorKey(activation.code) : null;
-  const demoFailureKey = demoPhase.kind === 'failed' ? demoErrorKey(demoPhase.code) : null;
 
   const licensed = isLicensed(state.status);
   // A demo in force. Its countdown comes in on the same ticking clock as the
-  // trial's rather than being read off the wall clock here, so it moves once
-  // a minute without this page keeping a second timer honest.
+  // trial's rather than being read off the wall clock here.
   const demoLicensed = licensed && isDemoLicense(state);
-  // Already spent: either the record says so, or one is running right now —
-  // which is the same answer as far as offering another goes.
-  const demoSpent = demoLicensed || !!demo?.used;
-  const demoDays = demo?.durationDays ?? 7;
+  const busy = phase.kind === 'creating' || phase.kind === 'waiting';
+  const canPay = !!plan && !!method && !busy;
   const expiry = state.expiresAt
     ? new Date(state.expiresAt).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-GB')
     : '';
@@ -235,8 +164,9 @@ export default function SubscriptionPage({
       data-testid="subscription-page"
       style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)', padding: '28px 32px 40px' }}
     >
-      <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
-        {/* What is in force */}
+      <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 22 }}>
+        {/* What is in force. The top bar carries the short version on every
+            screen; this is the same answer with its dates attached. */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <h1 style={{ color: 'var(--text)', fontSize: 20, fontWeight: 600 }}>💎 {t('subscription.heading')}</h1>
           <p data-testid="subscription-status" style={{ color: 'var(--text-muted)', fontSize: 12 }}>
@@ -244,8 +174,8 @@ export default function SubscriptionPage({
             {state.status === 'active' && expiry && ` (${t('subscription.expiresOn', { date: expiry })})`}
             {state.status === 'grace_period' && ` (${t('subscription.graceLeft', { days: state.graceDaysLeft })})`}
             {!licensed && state.trial.active && ` (${formatRemaining(trialMsRemaining, t)})`}
+            {demoLicensed && ` (${formatRemaining(licenseMsRemaining, t)})`}
           </p>
-          <p style={{ color: 'var(--text-faint)', fontSize: 12 }}>{t('subscription.subheading')}</p>
         </div>
 
         {/* A trial that has run out is the one moment this page must explain
@@ -298,82 +228,65 @@ export default function SubscriptionPage({
           </div>
         )}
 
-        {/* Plans */}
-        {plans.length === 0 ? (
-          <p data-testid="plans-loading" style={{ color: 'var(--text-faint)', fontSize: 12 }}>
-            {t('subscription.plansLoading')}
-          </p>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
-            {plans.map((plan) => (
-              <SubscriptionCard
-                key={plan.id}
-                plan={plan}
-                licensed={licensed}
-                current={state.payload?.planId === plan.id && licensed}
-                busy={phase.kind === 'creating' || phase.kind === 'waiting'}
-                onSubscribe={(chosen) => { void startOrder(chosen); }}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Said plainly rather than hidden: these are last known prices, and
-            the checkout will quote the real ones. */}
-        {plansAreFallback && (
-          <p data-testid="plans-offline" style={{ color: 'var(--text-faint)', fontSize: 11 }}>
-            {t('subscription.plansOffline')}
-          </p>
-        )}
-
-        {/* Payment method */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-            {t('subscription.paymentHeading')}
-          </p>
-          {methods.length === 0 ? (
-            <p data-testid="methods-unavailable" style={{ color: 'var(--text-faint)', fontSize: 11 }}>
-              {t('subscription.methodsUnavailable')}
+        {/* Choose a plan */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ color: 'var(--text)', fontSize: 14, fontWeight: 600 }}>{t('subscription.planHeading')}</p>
+          {plans.length === 0 ? (
+            <p data-testid="plans-loading" style={{ color: 'var(--text-faint)', fontSize: 12 }}>
+              {t('subscription.plansLoading')}
             </p>
           ) : (
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {methods.map((option) => {
-                const active = method === option.id;
-                // The service sends a colour for the branded methods and
-                // omits it for the card, which takes the app's accent.
-                const brand = option.color || 'var(--accent)';
-                return (
-                  <button
-                    key={option.id}
-                    data-testid={`pay-${option.id}`}
-                    aria-pressed={active}
-                    onClick={() => setPicked(option.id)}
-                    style={{
-                      background: active ? brand : 'transparent',
-                      border: `1px solid ${active ? brand : 'var(--border)'}`,
-                      borderRadius: 6, padding: '6px 16px',
-                      color: active ? '#ffffff' : 'var(--text-secondary)',
-                      fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-                    }}
-                  >
-                    {option.icon && <span aria-hidden="true">{option.icon}</span>}
-                    {option.name}
-                  </button>
-                );
-              })}
+            <div className="plan-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 14 }}>
+              {plans.map((option) => (
+                <SubscriptionCard
+                  key={option.id}
+                  plan={option}
+                  selected={planId === option.id}
+                  licensed={licensed}
+                  onSelect={(chosen) => setPlanId(chosen.id)}
+                />
+              ))}
             </div>
           )}
-          <p style={{ color: 'var(--text-faint)', fontSize: 11 }}>{t('subscription.paymentHint')}</p>
+
+          {/* Said plainly rather than hidden: these are last known prices, and
+              the checkout will quote the real ones. */}
+          {plansAreFallback && (
+            <p data-testid="plans-offline" style={{ color: 'var(--text-faint)', fontSize: 11 }}>
+              {t('subscription.plansOffline')}
+            </p>
+          )}
         </div>
 
-        {/* What the money buys */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-            {t('subscription.benefitsHeading')}
+        <PaymentMethods methods={methods} selected={method} onSelect={setPicked} />
+
+        {/* The one button that spends money. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <button
+            data-testid="pay-now"
+            onClick={() => { void pay(); }}
+            disabled={!canPay}
+            style={{
+              alignSelf: 'flex-start', minWidth: 180,
+              background: canPay ? 'var(--accent)' : 'var(--accent-soft)',
+              border: 'none', borderRadius: 8, padding: '10px 26px',
+              color: canPay ? 'var(--accent-contrast)' : 'var(--accent-disabled-text)',
+              fontSize: 13, fontWeight: 500,
+              cursor: busy ? 'wait' : canPay ? 'pointer' : 'not-allowed',
+            }}
+          >
+            {busy ? t('subscription.payWorking') : t('subscription.payNow')}
+          </button>
+
+          {/* Why the button is not doing anything, where the button is. */}
+          <p data-testid="pay-hint" style={{ color: 'var(--text-faint)', fontSize: 11 }}>
+            {!plan
+              ? t('subscription.payChoosePlan')
+              : !method
+                ? t('subscription.payChooseMethod')
+                : `${t('subscription.planSelected')}: ${t(planNameKey(plan.id))}`}
           </p>
-          {BENEFITS.map((key) => (
-            <p key={key} style={{ color: 'var(--text-secondary)', fontSize: 12 }}>· {t(key)}</p>
-          ))}
+          <p style={{ color: 'var(--text-faint)', fontSize: 11 }}>⚠ {t('subscription.paymentHint')}</p>
         </div>
 
         {/* Managing a license that exists */}
@@ -409,175 +322,54 @@ export default function SubscriptionPage({
           </div>
         )}
 
-        {/* The demo licence: seven days of everything, once per device, no
-            payment. Grey and understated on purpose — it sits beside the paid
-            plans, not in front of them, and the paid entry above stays live
-            throughout so a demo can be upgraded at any point.
-            Hidden entirely where the build does not offer it
-            (VITE_DISABLE_DEMO_LICENSE), and the main process refuses the
-            activation independently — see electron/demo-license.js. */}
-        {demoEnabled && (
+        <hr style={{ border: 'none', borderTop: '1px solid var(--border)' }} />
+
+        <LicenseInput activate={activate} onActivated={() => setShowUnlocked(true)} />
+
+        <hr style={{ border: 'none', borderTop: '1px solid var(--border)' }} />
+
+        <FAQ />
+      </div>
+
+      {/* What the licence just unlocked. It only appears once something has
+          been unlocked, which is why it is a dialog and not a list of
+          promises halfway up the page. */}
+      {showUnlocked && (
+        <div
+          data-testid="unlocked-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('subscription.unlockedHeading')}
+          style={{
+            position: 'fixed', inset: 0, background: 'var(--overlay)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', zIndex: 50,
+          }}
+        >
           <div
-            data-testid="demo-license"
             style={{
-              background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
-              padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8,
+              background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
+              padding: 24, display: 'flex', flexDirection: 'column', gap: 10,
+              minWidth: 300, maxWidth: 380,
             }}
           >
-            <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-              {t('subscription.demoHeading')}
-            </p>
-            <p style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-              {t('subscription.demoBody', { days: demoDays })}
-            </p>
-
-            {demoLicensed ? (
-              <p data-testid="demo-remaining" style={{ color: 'var(--text)', fontSize: 12 }}>
-                {t('subscription.demoRunning', { remaining: formatRemaining(licenseMsRemaining, t) })}
-              </p>
-            ) : (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <button
-                  data-testid="demo-activate"
-                  onClick={() => { void takeDemo(); }}
-                  disabled={demoSpent || demoPhase.kind === 'working'}
-                  style={{
-                    background: demoSpent ? 'var(--border)' : 'var(--accent)', border: 'none', borderRadius: 6,
-                    padding: '6px 16px', fontSize: 12,
-                    color: demoSpent ? 'var(--text-disabled)' : 'var(--accent-contrast)',
-                    cursor: demoSpent ? 'default' : 'pointer',
-                  }}
-                >
-                  {demoPhase.kind === 'working' ? t('subscription.demoWorking') : t('subscription.demoGet')}
-                </button>
-                <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>{t('subscription.demoOr')}</span>
-                <input
-                  data-testid="demo-code"
-                  aria-label={t('subscription.demoCodeLabel')}
-                  value={demoCode}
-                  onChange={(e) => { setDemoCode(e.target.value); setDemoPhase({ kind: 'idle' }); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && demoCode.trim()) void takeDemo(demoCode.trim()); }}
-                  placeholder={t('subscription.demoCodePlaceholder')}
-                  spellCheck={false}
-                  autoComplete="off"
-                  disabled={demoSpent}
-                  style={{
-                    flex: '1 1 160px', minWidth: 0, background: 'var(--bg)', color: 'var(--text)',
-                    border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px',
-                    fontSize: 12, fontFamily: 'monospace',
-                  }}
-                />
-                <button
-                  data-testid="demo-code-submit"
-                  onClick={() => { void takeDemo(demoCode.trim()); }}
-                  disabled={demoSpent || !demoCode.trim() || demoPhase.kind === 'working'}
-                  style={{
-                    background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
-                    padding: '6px 14px', color: 'var(--text-secondary)', fontSize: 11,
-                    cursor: demoSpent || !demoCode.trim() ? 'default' : 'pointer',
-                  }}
-                >
-                  {t('subscription.activate')}
-                </button>
-              </div>
-            )}
-
-            {demoPhase.kind === 'ok' && (
-              <p data-testid="demo-success" style={{ color: 'var(--success-text)', fontSize: 11 }}>
-                {t('subscription.demoSuccess', { days: demoDays })}
-              </p>
-            )}
-            {demoPhase.kind === 'failed' && (
-              <p data-testid="demo-error" style={{ color: 'var(--danger-text)', fontSize: 11 }}>
-                {demoFailureKey ? t(demoFailureKey) : t('subscription.demoFailed', { reason: demoPhase.message })}
-              </p>
-            )}
-            {/* Said whether or not one has been taken: a demo is not a
-                subscription, and the difference is the point. */}
-            <p style={{ color: 'var(--text-faint)', fontSize: 11 }}>{t('subscription.demoHint')}</p>
+            <p style={{ color: 'var(--text)', fontSize: 14, fontWeight: 500 }}>✅ {t('subscription.unlockedHeading')}</p>
+            {BENEFITS.map((key) => (
+              <p key={key} style={{ color: 'var(--text-secondary)', fontSize: 12 }}>· {t(key)}</p>
+            ))}
+            <button
+              data-testid="unlocked-close"
+              onClick={() => setShowUnlocked(false)}
+              style={{
+                alignSelf: 'flex-end', marginTop: 4, background: 'var(--accent)', border: 'none',
+                borderRadius: 6, padding: '6px 18px', color: 'var(--accent-contrast)',
+                fontSize: 12, cursor: 'pointer',
+              }}
+            >
+              {t('subscription.unlockedClose')}
+            </button>
           </div>
-        )}
-
-        {/* Activating by hand: a licence key, or a token pasted whole.
-            Hidden unless the build asks for it — the shop issues neither, so
-            an always-on box would mostly generate support questions. The
-            verification is the online one: see `activate` in
-            electron/subscription-monitor.js. */}
-        {manualActivation && (
-          <details data-testid="manual-activation">
-            <summary style={{ color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer', padding: '4px 0' }}>
-              {t('subscription.activateHeading')}
-            </summary>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 8 }}>
-              <p style={{ color: 'var(--text-faint)', fontSize: 11 }}>{t('subscription.activateHint')}</p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  data-testid="activation-code"
-                  aria-label={t('subscription.activateHeading')}
-                  value={code}
-                  onChange={(e) => { setCode(e.target.value); setActivation({ kind: 'idle' }); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') void submitCode(); }}
-                  placeholder={t('subscription.activatePlaceholder')}
-                  spellCheck={false}
-                  autoComplete="off"
-                  style={{
-                    flex: 1, minWidth: 0, background: 'var(--bg)', color: 'var(--text)',
-                    border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px',
-                    fontSize: 12, fontFamily: 'monospace',
-                  }}
-                />
-                <button
-                  data-testid="activation-paste"
-                  onClick={() => { void pasteCode(); }}
-                  style={{
-                    background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
-                    padding: '6px 12px', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer',
-                  }}
-                >
-                  {t('subscription.activatePaste')}
-                </button>
-                <button
-                  data-testid="activation-submit"
-                  onClick={() => { void submitCode(); }}
-                  disabled={!code.trim() || activation.kind === 'working'}
-                  style={{
-                    background: code.trim() ? 'var(--accent)' : 'var(--border)', border: 'none', borderRadius: 6,
-                    padding: '6px 16px', color: code.trim() ? 'var(--accent-contrast)' : 'var(--text-disabled)',
-                    fontSize: 12, cursor: code.trim() ? 'pointer' : 'default',
-                  }}
-                >
-                  {activation.kind === 'working' ? t('subscription.activateWorking') : t('subscription.activate')}
-                </button>
-              </div>
-              {activation.kind === 'ok' && (
-                <p data-testid="activation-success" style={{ color: 'var(--success-text)', fontSize: 11 }}>
-                  {t('subscription.activateSuccess')}
-                </p>
-              )}
-              {activation.kind === 'failed' && (
-                <p data-testid="activation-error" style={{ color: 'var(--danger-text)', fontSize: 11 }}>
-                  {activationErrorKey
-                    ? t(activationErrorKey)
-                    : t('subscription.activateFailed', { reason: activation.message })}
-                </p>
-              )}
-            </div>
-          </details>
-        )}
-
-        {/* FAQ and the refund policy */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid var(--surface)', paddingTop: 16 }}>
-          <p style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-            ❓ {t('subscription.faqHeading')}
-          </p>
-          {FAQ.map(({ q, a }) => (
-            <details key={q}>
-              <summary style={{ color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer', padding: '4px 0' }}>{t(q)}</summary>
-              <p style={{ color: 'var(--text-faint)', fontSize: 11, paddingBottom: 6 }}>{t(a)}</p>
-            </details>
-          ))}
         </div>
-      </div>
+      )}
 
       {/* Waiting for the provider */}
       {phase.kind === 'waiting' && (

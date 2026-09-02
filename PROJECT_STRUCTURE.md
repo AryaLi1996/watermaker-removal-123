@@ -115,12 +115,16 @@ renderer/
 │   │   ├── MethodPicker.tsx        # Sidebar: radio group + dynamic method controls
 │   │   ├── ProgressPanel.tsx       # Progress bar + Cancel button (processing state)
 │   │   ├── DonePanel.tsx           # Completion view — output path + open button
-│   │   ├── SubscriptionCard.tsx    # One plan: price, discount, subscribe button
-│   │   ├── SubscriptionStatusBar.tsx # Bottom bar — plan or trial countdown
+│   │   ├── TopBar.tsx              # Avatar, what the licence is, and the language
+│   │   ├── Sidebar.tsx             # The rail: workbench / subscription / settings
+│   │   ├── SubscriptionCard.tsx    # One plan: price, discount, and choosing it
+│   │   ├── PaymentMethods.tsx      # Which channel the money goes through
+│   │   ├── LicenseInput.tsx        # Activating a licence key somebody already has
+│   │   ├── FAQ.tsx                 # The three questions, folded away
 │   │   ├── ThemePicker.tsx         # Light / dark / follow-the-system
 │   │   └── EmptyState.tsx          # Idle state — drop zone / open prompt
 │   ├── pages/
-│   │   ├── SubscriptionPage.tsx    # Plan comparison, payment, and managing a plan
+│   │   ├── SubscriptionPage.tsx    # Choose a plan, pay for it, or type a key in
 │   │   └── SettingsPage.tsx        # Appearance and About
 │   └── theme/
 │       ├── theme.ts                # The preference, where it is stored, what it resolves to

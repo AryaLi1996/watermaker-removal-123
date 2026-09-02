@@ -16,7 +16,6 @@ import {
   isLicensed,
   LOADING_STATE,
   PLAN_ORDER,
-  planBadgeKey,
   planNameKey,
   planTaglineKey,
   remainingParts,
@@ -156,12 +155,6 @@ describe('plan labels', () => {
         expect(t(planTaglineKey(id)), `${id} tagline in ${locale}`).not.toContain('subscription.');
       }
     }
-  });
-
-  it('badges the recommended plans and leaves the entry one plain', () => {
-    expect(planBadgeKey('monthly')).toBeNull();
-    expect(planBadgeKey('quarterly')).toBe('subscription.badgePopular');
-    expect(planBadgeKey('annual')).toBe('subscription.badgeBest');
   });
 
   it('defines every key the page builds from a plan id', () => {

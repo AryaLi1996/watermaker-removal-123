@@ -74,42 +74,34 @@ export async function setTemporalUsage(
 }
 
 /**
- * Stub the demo licence, so a spec never takes the *real* one.
+ * Stub activation by licence key.
  *
- * The real handlers mint a token and write a "this device has had its demo"
- * record into the app's userData — which is the runner's own, not a temporary
- * one. A spec that let them run would spend the developer's demo, and would
- * pass exactly once. So the channels are replaced, and what is left to test
- * is the whole of what this app decides: that the entry is offered, that the
- * click reaches the main process through the real bridge, and that the answer
- * is worded correctly.
+ * Same reasoning as `stubDemoLicense`: the real handler reaches the licence
+ * service, and there is no key a test could type that it would accept. What
+ * is left to cover is this app — that the box reaches the main process
+ * through the real bridge, carrying exactly what was typed, and words the
+ * answer that comes back correctly.
  */
-export async function stubDemoLicense(
+export async function stubActivation(
   electronApp: ElectronApplication,
-  options: { used?: boolean; result?: unknown } = {},
+  result: unknown = { success: true },
 ) {
-  await electronApp.evaluate(({ ipcMain, app }, opts) => {
-    const store = app as unknown as { __demo: { activations: unknown[] } };
-    store.__demo = { activations: [] };
+  await electronApp.evaluate(({ ipcMain, app }, res) => {
+    const store = app as unknown as { __activation: { codes: string[] } };
+    store.__activation = { codes: [] };
 
-    for (const channel of ['license:demoState', 'license:activateDemo']) {
-      ipcMain.removeHandler(channel);
-    }
-
-    const demo = { used: !!opts.used, durationDays: 7, issuedAt: null, expiresAt: null };
-    ipcMain.handle('license:demoState', () => demo);
-    ipcMain.handle('license:activateDemo', (_e: unknown, code?: string) => {
-      store.__demo.activations.push({ code: code ?? null });
-      return opts.result ?? { success: true, demo: { ...demo, used: true } };
+    ipcMain.removeHandler('license:activate');
+    ipcMain.handle('license:activate', (_e: unknown, code: string) => {
+      store.__activation.codes.push(code);
+      return res;
     });
-  }, options);
+  }, result);
 }
 
-/** What `stubDemoLicense` recorded — one entry per activation attempt, with
- *  the code it carried (null for the one-click path). */
-export function demoCalls(electronApp: ElectronApplication) {
+/** The codes `stubActivation` was handed, in order. */
+export function activationCalls(electronApp: ElectronApplication) {
   return electronApp.evaluate(({ app }) =>
-    (app as unknown as { __demo: { activations: { code: string | null }[] } }).__demo);
+    (app as unknown as { __activation: { codes: string[] } }).__activation);
 }
 
 /** Stub the payment routes, so no spec talks to the real service. */
