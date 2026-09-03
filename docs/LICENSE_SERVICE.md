@@ -64,7 +64,7 @@ Stored in the app's `userData` directory:
 | `trial.enc` | `{trialStart, trialEnd, durationDays}` | Same — not because dates are secret, but so they cannot be edited to extend a trial |
 | `.license_ts` | Highest timestamp ever seen | Plaintext; catches a clock wound backwards |
 | `.anon_id` | Anonymous payment id | Plaintext, not secret |
-| `.device_id` | Hardware-derived device fingerprint | Plaintext, not secret |
+| `.device_id` | Device fingerprint — the OS machine id where there is one, a filtered MAC signal otherwise. Whatever is stored always wins, so an id never changes under a user | Plaintext, not secret |
 
 States: `loading → unlicensed | active | grace_period | expired`. The grace
 period (3 days past expiry) is why an unreachable service or a flight does not
