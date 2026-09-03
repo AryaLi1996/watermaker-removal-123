@@ -112,6 +112,23 @@ jobs:
             echo "No notarization credentials — the macOS build will not be notarized."
           fi
 
+      # The main process is not bundled — files: ['electron/**'] copies it into
+      # the asar as-is — so process.env inside license-config.js is read on the
+      # end user's machine, where none of this is set. Passing these to the
+      # packaging step directly would do nothing at all; they have to be
+      # written into the tree before electron-builder copies it. The writer
+      # prints names, never values, and writes nothing when a secret is unset,
+      # in which case the build falls back to the public defaults and says so
+      # at startup. See scripts/write-build-config.js.
+      - name: Bake the licence configuration into the build
+        shell: bash
+        env:
+          LICENSE_SIGNING_SECRET: ${{ secrets.LICENSE_SIGNING_SECRET }}
+          PREVIOUS_LICENSE_SIGNING_SECRET: ${{ secrets.PREVIOUS_LICENSE_SIGNING_SECRET }}
+          LICENSE_URL: ${{ secrets.LICENSE_URL }}
+          LICENSE_APP_ID: ${{ vars.LICENSE_APP_ID }}
+        run: node scripts/write-build-config.js
+
       # scripts/build.js is local and deterministic, so it runs once. Packaging
       # is not: on a cold cache electron-builder fetches the ~117 MB Electron
       # runtime from GitHub release assets, and app-builder abandons the whole

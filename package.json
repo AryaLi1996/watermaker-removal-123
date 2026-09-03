@@ -10,7 +10,7 @@
     "dev": "concurrently -k \"npm run dev:renderer\" \"npm run dev:electron\"",
     "build:renderer": "npm run build --prefix renderer",
     "build": "npm run build:renderer",
-    "dist": "node scripts/build.js && electron-builder --publish never",
+    "dist": "node scripts/write-build-config.js && node scripts/build.js && electron-builder --publish never",
     "test:backend": "cd backend && .venv/bin/python -m pytest ../tests/unit/backend -v",
     "test:frontend": "npm run test:run --prefix renderer",
     "test:frontend:ci": "npm run test:run:ci --prefix renderer",
@@ -22,10 +22,10 @@
     "test:e2e:debug": "playwright test --debug",
     "screenshots": "cross-env SCREENSHOTS=1 playwright test capture-screenshots --reporter=line",
     "build:backend": "backend/.venv/bin/python scripts/build_backend.py",
-    "dist:mac": "node scripts/build.js && electron-builder --mac --publish never",
-    "dist:win": "node scripts/build.js && electron-builder --win --publish never",
-    "dist:linux": "node scripts/build.js && electron-builder --linux --publish never",
-    "release": "node scripts/build.js && electron-builder --publish always"
+    "dist:mac": "node scripts/write-build-config.js && node scripts/build.js && electron-builder --mac --publish never",
+    "dist:win": "node scripts/write-build-config.js && node scripts/build.js && electron-builder --win --publish never",
+    "dist:linux": "node scripts/write-build-config.js && node scripts/build.js && electron-builder --linux --publish never",
+    "release": "node scripts/write-build-config.js && node scripts/build.js && electron-builder --publish always"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

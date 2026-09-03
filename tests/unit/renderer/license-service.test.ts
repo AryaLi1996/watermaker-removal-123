@@ -7,7 +7,7 @@
  * through the app.
  */
 import { createRequire } from 'module';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -61,6 +61,94 @@ describe('the fallback plan prices', () => {
     const monthly = config.fallbackPlans().find((p: { id: string }) => p.id === 'monthly');
     expect(monthly.amount).toBe(9900);
     expect(monthly.currency).toBe('cny');
+  });
+});
+
+describe('what the build bakes in', () => {
+  /**
+   * The main process is not bundled — `files: ['electron/**']` copies it into
+   * the asar as-is — so `process.env.LICENSE_SIGNING_SECRET` inside
+   * license-config.js is read on the end user's machine at launch, where it
+   * is never set. Until scripts/write-build-config.js existed there was no
+   * path from a release job to a packaged build at all, and every shipped
+   * build verified licences with the public default from this repository.
+   */
+  const CONFIG_PATH = require.resolve('../../../electron/license-config.js');
+  const BUILD_CONFIG = path.join(__dirname, '../../../electron/build-config.json');
+
+  /** Load license-config.js afresh, with `contents` as the baked-in file (or
+   *  none at all when null), and put the tree back afterwards. */
+  function withBuildConfig<T>(contents: Record<string, string> | null, body: (c: any) => T): T {
+    const had = existsSync(BUILD_CONFIG);
+    const previous = had ? readFileSync(BUILD_CONFIG, 'utf8') : null;
+    try {
+      if (contents === null) { if (had) rmSync(BUILD_CONFIG); }
+      else writeFileSync(BUILD_CONFIG, JSON.stringify(contents));
+      delete require.cache[CONFIG_PATH];
+      // build-config.json is require()d by license-config.js, so its own
+      // cache entry has to go too or the previous test's file wins.
+      try { delete require.cache[require.resolve('../../../electron/build-config.json')]; } catch { /* absent */ }
+      return body(require(CONFIG_PATH));
+    } finally {
+      if (previous === null) { try { rmSync(BUILD_CONFIG); } catch { /* never existed */ } }
+      else writeFileSync(BUILD_CONFIG, previous);
+      delete require.cache[CONFIG_PATH];
+    }
+  }
+
+  it('falls back to the public defaults when the build baked nothing', () => {
+    withBuildConfig(null, (c) => {
+      // Exactly today's behaviour for an unconfigured build, which is what
+      // keeps `npm run dev` and a developer's own `npm run dist` working.
+      expect(c.usingDefaultSigningSecret).toBe(true);
+      expect(c.rotatingSigningSecret).toBe(false);
+      expect(c.APP_ID).toBe('shuyin');
+    });
+  });
+
+  it('reads the secrets the build baked in', () => {
+    withBuildConfig(
+      { LICENSE_SIGNING_SECRET: 'a-real-one', PREVIOUS_LICENSE_SIGNING_SECRET: 'the-outgoing-one' },
+      (c) => {
+        expect(c.LICENSE_CONFIG.signingSecret).toBe('a-real-one');
+        expect(c.LICENSE_CONFIG.previousSigningSecret).toBe('the-outgoing-one');
+        // The two flags the startup warnings read must follow, or a packaged
+        // build would keep claiming it is on the public default.
+        expect(c.usingDefaultSigningSecret).toBe(false);
+        expect(c.rotatingSigningSecret).toBe(true);
+      },
+    );
+  });
+
+  it('lets the environment override a baked value', () => {
+    // So a packaged build can be pointed at a test deployment without being
+    // rebuilt, and so `npm run dev` keeps behaving as documented.
+    const previous = process.env.LICENSE_URL;
+    process.env.LICENSE_URL = 'https://example.invalid/test/';
+    try {
+      withBuildConfig({ LICENSE_URL: 'https://baked.invalid/' }, (c) => {
+        expect(c.LICENSE_CONFIG.verificationUrl).toBe('https://example.invalid/test/');
+      });
+    } finally {
+      if (previous === undefined) delete process.env.LICENSE_URL;
+      else process.env.LICENSE_URL = previous;
+    }
+  });
+
+  it('survives a malformed baked file rather than refusing to start', () => {
+    const had = existsSync(BUILD_CONFIG);
+    const previous = had ? readFileSync(BUILD_CONFIG, 'utf8') : null;
+    try {
+      writeFileSync(BUILD_CONFIG, '{ not json');
+      delete require.cache[CONFIG_PATH];
+      // A broken install is a licence question, not a reason to fail launch.
+      const c = require(CONFIG_PATH);
+      expect(c.usingDefaultSigningSecret).toBe(true);
+    } finally {
+      if (previous === null) { try { rmSync(BUILD_CONFIG); } catch { /* none */ } }
+      else writeFileSync(BUILD_CONFIG, previous);
+      delete require.cache[CONFIG_PATH];
+    }
   });
 });
 
