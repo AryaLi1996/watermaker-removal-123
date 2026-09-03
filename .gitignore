@@ -240,3 +240,9 @@ backend/ProPainter/
 # Kept out of the tree by default: the numbers only mean anything against
 # numbers from the same machine.
 benchmarks.json
+
+# Written by scripts/write-build-config.js immediately before packaging, from
+# whatever licence configuration the build was given. It carries the signing
+# secret, so it must never be committed — and it is regenerated (or removed)
+# on every build, so there is nothing here worth keeping.
+electron/build-config.json

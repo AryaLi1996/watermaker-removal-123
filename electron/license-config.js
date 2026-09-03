@@ -16,6 +16,51 @@
  */
 
 /**
+ * What the build baked in, if anything.
+ *
+ * The main process is not bundled — `files: ['electron/**']` copies it into
+ * the asar as-is — so `process.env.LICENSE_SIGNING_SECRET` here is read on the
+ * *end user's* machine at launch, where nothing sets it. Until this file
+ * existed there was no path at all from a release job to a packaged build, so
+ * every shipped build verified licences with the public default below,
+ * whatever the job was handed.
+ *
+ * `scripts/write-build-config.js` writes this immediately before
+ * electron-builder runs, and writes nothing when the build names nothing — so
+ * an unconfigured build behaves exactly as it always has, and `npm run dev`
+ * is unaffected either way.
+ *
+ * Missing, unreadable or malformed all read as "the build baked nothing in".
+ * A packaged app that cannot parse its own generated file has a broken
+ * install, and refusing to start over it would turn a licence question into a
+ * launch failure.
+ */
+function readBuildConfig() {
+  try {
+    // eslint-disable-next-line global-require
+    return require('./build-config.json') || {};
+  } catch {
+    return {};
+  }
+}
+
+const BUILD_CONFIG = readBuildConfig();
+
+/**
+ * A build-time value, or the environment's if it has one.
+ *
+ * The environment wins so a developer can point a packaged build at a test
+ * deployment without rebuilding it, and so `npm run dev` keeps working the
+ * way it documents. In a shipped build nothing sets these, which is what
+ * makes the baked value the answer.
+ */
+function configured(name) {
+  const fromEnv = String(process.env[name] || '').trim();
+  if (fromEnv) return fromEnv;
+  return String(BUILD_CONFIG[name] || '').trim();
+}
+
+/**
  * Shipped in source as a template default, exactly as in the service's own
  * handler.py and the reference client — so it is not a secret. A build that
  * still has this value when the service is signing real tokens can have those
@@ -43,11 +88,8 @@ const DEFAULT_SIGNING_SECRET = 'ruanjian-dev-signing-secret-v1-change-in-product
  * Empty means "one secret", which is the normal state — this is set only
  * while a rotation is in flight.
  */
-const PREVIOUS_SIGNING_SECRET = String(
-  process.env.PREVIOUS_LICENSE_SIGNING_SECRET
-  || process.env.VITE_PREVIOUS_LICENSE_SIGNING_SECRET
-  || '',
-).trim();
+const PREVIOUS_SIGNING_SECRET = configured('PREVIOUS_LICENSE_SIGNING_SECRET')
+  || String(process.env.VITE_PREVIOUS_LICENSE_SIGNING_SECRET || '').trim();
 
 /**
  * Which application this client is, as far as the license service is
@@ -85,7 +127,8 @@ const DEFAULT_APP_ID = 'shuyin';
  * accepted too so a build that sets the renderer's copy does not end up with
  * the two halves disagreeing about which app they are.
  */
-const APP_ID = String(process.env.LICENSE_APP_ID || process.env.VITE_APP_ID || DEFAULT_APP_ID).trim()
+const APP_ID = configured('LICENSE_APP_ID')
+  || String(process.env.VITE_APP_ID || '').trim()
   || DEFAULT_APP_ID;
 
 /** The deployed Function URL from the infrastructure doc. */
@@ -232,9 +275,9 @@ const LICENSE_CONFIG = {
   appId: APP_ID,
 
   /** Function URL or API Gateway stage — both work, see the note above. */
-  verificationUrl: process.env.LICENSE_URL || DEFAULT_LICENSE_URL,
+  verificationUrl: configured('LICENSE_URL') || DEFAULT_LICENSE_URL,
   /** The one this build signs with, and the first one it tries. */
-  signingSecret: process.env.LICENSE_SIGNING_SECRET || DEFAULT_SIGNING_SECRET,
+  signingSecret: configured('LICENSE_SIGNING_SECRET') || DEFAULT_SIGNING_SECRET,
   /** Also accepted, never signed with — see PREVIOUS_SIGNING_SECRET. */
   previousSigningSecret: PREVIOUS_SIGNING_SECRET,
 

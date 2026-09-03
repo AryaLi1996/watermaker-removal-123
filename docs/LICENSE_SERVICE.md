@@ -370,9 +370,42 @@ is not live yet — a trial spent in the sibling app still arrives here used.
 | `LICENSE_URL` | The base URL — Function URL or API Gateway stage |
 | `LICENSE_SIGNING_SECRET` | HMAC secret; **must match the deployment's** |
 | `PREVIOUS_LICENSE_SIGNING_SECRET` | Also accepted when verifying, never signed with. Set only while a rotation is in flight — see *Rotating it* below. `VITE_PREVIOUS_LICENSE_SIGNING_SECRET` does the same for an unpackaged run |
+| | **For a packaged build these are read at build time**, by `scripts/write-build-config.js` — a value the packaging step cannot see never reaches the app. See *How a secret reaches a packaged build* |
 | `LICENSE_APP_ID` / `VITE_APP_ID` | Which app the service scopes this build to. Defaults to `shuyin`; only change it for a test deployment |
 | `DISABLE_DEMO_LICENSE` | `true` makes the main process refuse `license:activateDemo`. `VITE_DISABLE_DEMO_LICENSE` does the same for an unpackaged run, which shares the build environment |
 | `ENABLE_MANUAL_ACTIVATION` | No longer read by the interface — the licence box is on in every build. `license:config` still reports what it said |
+
+### How a secret reaches a packaged build
+
+Not through the environment. The main process is **not bundled** —
+`files: ['electron/**']` copies it into the asar as-is — so
+`process.env.LICENSE_SIGNING_SECRET` inside `license-config.js` is read on the
+*end user's machine* at launch, where nothing sets it. Passing the secret to
+the release job did nothing at all: **every packaged build verified licences
+with the public default below**, whatever the job was handed.
+
+`scripts/write-build-config.js` closes that gap. It runs immediately before
+electron-builder on every packaging script, and writes what the build was
+given into `electron/build-config.json`, which ships alongside the source and
+which `license-config.js` reads when an environment variable does not already
+answer:
+
+| | |
+|---|---|
+| Precedence | `process.env` → `electron/build-config.json` → the public default |
+| Written from | `LICENSE_SIGNING_SECRET`, `PREVIOUS_LICENSE_SIGNING_SECRET`, `LICENSE_URL`, `LICENSE_APP_ID` |
+| When the build names nothing | the file is **removed**, and the build behaves exactly as an unconfigured one always has — public default, and the startup warning |
+| In git | never: it is gitignored and regenerated on every build |
+| In the log | names only, never values |
+
+The environment still wins, so a packaged build can be pointed at a test
+deployment without rebuilding, and `npm run dev` is unaffected.
+
+The secret is then in plaintext inside the app bundle. That is inherent to
+HMAC with a client that verifies — see below — but shipping a private string
+is not worse than shipping the public one: it is the difference between a
+licence only forgeable by someone who extracted it from a binary and one
+anybody can forge from a public repository.
 
 The signing secret ships with a public default, in this repository and in the
 service's own source. A build still using it can have its tokens forged
@@ -396,7 +429,7 @@ second happens:
 
 | | |
 |---|---|
-| 1. Ship a build that accepts both | `PREVIOUS_LICENSE_SIGNING_SECRET=<the current secret>` in the build environment, alongside the unchanged `LICENSE_SIGNING_SECRET`. Nothing changes for anyone yet. |
+| 1. Ship a build that accepts both | `PREVIOUS_LICENSE_SIGNING_SECRET=<the current secret>` in the **release job's** environment, alongside the unchanged `LICENSE_SIGNING_SECRET` — `write-build-config.js` bakes them in (see *How a secret reaches a packaged build*). Setting them anywhere the packaging step cannot see does nothing. Nothing changes for anyone yet. |
 | 2. Wait | Until enough of the install base is on that build. There is no way to hurry it, and going early is what the whole exercise exists to avoid. |
 | 3. Switch the service | `sam deploy --parameter-overrides LicenseSigningSecret=<new>`. New tokens are signed with the new secret; old ones still verify here. |
 | 4. Let it settle | Each client swaps its own token on the next launch — see below. |
