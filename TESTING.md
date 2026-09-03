@@ -15,6 +15,7 @@ How to run, understand, and extend the automated test suite.
 | Docs screenshots | `npm run screenshots` | 2 Playwright | `tests/e2e/capture-screenshots.spec.ts` |
 | Everything | `npm run test:all` | all of the above | root |
 | Environment check | `python scripts/validate_env.py` | manual | `scripts/` |
+| Licence for a manual run | `npm run license:test-code -- --install` | manual | `scripts/generate-test-license.js` |
 | Full build validation | `npm run build` | build passes | root |
 
 ---
@@ -450,7 +451,29 @@ Screenshots and traces for any failures are saved to `test-results/`.
 
 ---
 
-## 4. Environment Validation
+## 4. Driving a licensed app by hand
+
+The automated suites never need a real licence — the E2E fixtures inject the
+licence state and the unit tests mint their own tokens. Driving the app *by
+hand* through a paid feature does need one, and nothing in the interface
+issues one without a payment:
+
+```bash
+npm run license:test-code -- --install      # annual; next launch is licensed
+npm run license:test-code -- --plan monthly --days -1 --install   # grace period
+npm run license:test-code -- --help
+```
+
+It writes an encrypted, machine-bound `license.enc` into the app's `userData`
+directory, so it licenses the machine it runs on and nowhere else, and only
+against a build verifying with the same signing secret. Delete that file to go
+back to unlicensed. `docs/LICENSE_SERVICE.md`, *Minting a test licence*, has
+the rest — including how to mint a licence **key** the deployed service will
+accept, which is the sibling repository's job.
+
+---
+
+## 5. Environment Validation
 
 Run this after initial setup and after any change to Python dependencies or FFmpeg version:
 
@@ -481,7 +504,7 @@ EXIT:0
 
 ---
 
-## 5. Build Validation
+## 6. Build Validation
 
 Confirm the TypeScript compiles and Vite bundles cleanly (catches type errors before they reach Electron):
 
@@ -496,7 +519,7 @@ This runs:
 
 ---
 
-## 6. Test Architecture
+## 7. Test Architecture
 
 ### Why two separate test runners?
 
@@ -529,7 +552,7 @@ Vitest picks up test files from both `renderer/src/` and `tests/unit/renderer/` 
 
 ---
 
-## 7. What is NOT yet tested (Post-MVP)
+## 8. What is NOT yet tested (Post-MVP)
 
 | Area | Status | Notes |
 |---|---|---|
@@ -551,7 +574,7 @@ Vitest picks up test files from both `renderer/src/` and `tests/unit/renderer/` 
 
 ---
 
-## 8. CI/CD (GitHub Actions)
+## 9. CI/CD (GitHub Actions)
 
 Two workflows: [`ci.yml`](.github/workflows/ci.yml) runs the whole suite on
 every push to `main` and every pull request, and

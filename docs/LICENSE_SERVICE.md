@@ -459,3 +459,59 @@ paying customer. It is a window to get through, not a state to sit in —
 `LICENSE_URL=http://127.0.0.1:9/` and stub the licence and payment IPC, so a
 suite run cannot write a runner's device id into the shared production trial
 table.
+
+---
+
+## Minting a test licence
+
+Nothing in the interface issues a licence without a payment, and the demo
+entry is gone, so testing the licensed experience means making a licence out
+of band. Two things get called a "code" here, and they are not
+interchangeable:
+
+| | | |
+|---|---|---|
+| **The licence key** | `TEST-XXXX-XXXX-XXXX` — what someone types into the licence box | Only the service can turn one into a licence, so it is worth something only if the deployment already knows it |
+| **The token** | The signed thing the key is exchanged *for*, and the source of truth for what this app unlocks | Verified with the HMAC secret this build already holds, so it can be minted with no service and no network |
+
+### A licence for this machine — `scripts/generate-test-license.js`
+
+```bash
+npm run license:test-code -- --install          # annual, licensed on next launch
+npm run license:test-code -- --plan monthly --days -1 --install   # in grace period
+npm run license:test-code -- --count 5 --json   # five, printed, nothing written
+```
+
+`--install` encrypts a token into `license.enc` in the app's `userData`
+directory and clears `.license_ts` along with it — a high-water mark left over
+from an earlier licence would make the new one read as a wound-back clock.
+Both files are machine-bound, so an installed licence works on the machine
+that minted it and nowhere else; pass `--user-data` to target a packaged
+build's directory, which is named after the productName rather than the
+package name. `--days` takes a negative number, which is the only way to reach
+the expired and grace-period states on purpose.
+
+This is the ordinary consequence of a symmetric signing secret — the forgery
+`license-token.js`'s header already names, and points at RSA to close. It is
+not a way past a licence on someone else's machine: the token has to be signed
+with the secret *that* build verifies with, and a release build does not carry
+the public default.
+
+### A key the service will accept — `ruanjian123`
+
+A key only activates if the deployment can find it, which means a row in
+`LicensesTable`. That is the sibling repository's to write:
+
+```bash
+cd serverless/verify-license                       # in ruanjian123
+LICENSES_TABLE=<the deployed table> \
+  python3 generate_test_license.py --app-id shuyin --plan annual --write
+```
+
+It imports `handler.py` rather than restating any of it, so the key format,
+the token claims and the table row are the deployed function's by
+construction. `--app-id shuyin` matters: a key written for `smoothvoice` is
+refused here with `app_id_mismatch` once the appId-scoped deploy is live.
+Without `--write` it prints an offline key and token and stores nothing, which
+is enough against `MOCK_MODE=true` or the `custom` provider, where any
+well-formed key verifies.

@@ -101,6 +101,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   executables are named from `build.productName`, so they change with it.
 
 ### Added
+- **A way to mint a test licence** — `npm run license:test-code`
+  (`scripts/generate-test-license.js`). Nothing in the interface issues a
+  licence without a payment and the demo entry is gone, so a development build
+  had no route to the licensed experience at all.
+  - `--install` encrypts a token into `license.enc` and the next launch comes
+    up licensed, with no service and no network. `.license_ts` is cleared with
+    it, since a high-water mark from an earlier licence would make the new one
+    read as a wound-back clock.
+  - `--days` takes a negative number, which is the only way to reach the
+    expired and grace-period states on purpose; `--plan`, `--app-id` and
+    `--count` cover the rest.
+  - It mints a *token*, not an activation the service knows about. The key a
+    deployment will accept is written by `generate_test_license.py` in
+    `ruanjian123`, which puts the row in `LicensesTable` — see
+    `docs/LICENSE_SERVICE.md`, *Minting a test licence*.
+  - Only a build verifying with the same signing secret honours what it mints,
+    which for an unconfigured checkout is the public default. It is the
+    symmetric-secret forgery `license-token.js` already names, used
+    deliberately and locally; a release build carries a secret this cannot
+    guess.
 - **A demo licence on the subscription page** — seven days of every paid
   feature, once per device, with no payment. It is for an internal test, a
   demonstration, or someone deciding whether temporal fill is worth paying
