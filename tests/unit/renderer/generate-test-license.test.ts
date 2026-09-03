@@ -112,11 +112,42 @@ describe('argument parsing', () => {
 });
 
 describe('the userData directory it installs into', () => {
+  /** Segments, not a joined string: the separator is the *host's*, and this
+   *  suite runs on Windows in CI as well as on the platform being asked
+   *  about. */
+  const segments = (dir: string) => dir.split(/[\\/]/);
+
   it('is the platform one, under the app name an unpackaged run uses', () => {
-    expect(gen.defaultUserDataDir('appname', 'darwin', '/home/x'))
-      .toBe('/home/x/Library/Application Support/appname');
-    expect(gen.defaultUserDataDir('appname', 'linux', '/home/x'))
-      .toBe(path.join(process.env.XDG_CONFIG_HOME || '/home/x/.config', 'appname'));
+    expect(segments(gen.defaultUserDataDir('appname', 'darwin', '/home/x')))
+      .toEqual(['', 'home', 'x', 'Library', 'Application Support', 'appname']);
+  });
+
+  it('honours XDG_CONFIG_HOME on Linux, and falls back to ~/.config', () => {
+    const saved = process.env.XDG_CONFIG_HOME;
+    try {
+      delete process.env.XDG_CONFIG_HOME;
+      expect(segments(gen.defaultUserDataDir('appname', 'linux', '/home/x')))
+        .toEqual(['', 'home', 'x', '.config', 'appname']);
+
+      process.env.XDG_CONFIG_HOME = '/elsewhere';
+      expect(segments(gen.defaultUserDataDir('appname', 'linux', '/home/x')))
+        .toEqual(['', 'elsewhere', 'appname']);
+    } finally {
+      if (saved === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = saved;
+    }
+  });
+
+  it('follows APPDATA on Windows', () => {
+    const saved = process.env.APPDATA;
+    try {
+      process.env.APPDATA = 'C:\\Users\\x\\AppData\\Roaming';
+      expect(segments(gen.defaultUserDataDir('appname', 'win32', 'C:\\Users\\x')))
+        .toEqual(['C:', 'Users', 'x', 'AppData', 'Roaming', 'appname']);
+    } finally {
+      if (saved === undefined) delete process.env.APPDATA;
+      else process.env.APPDATA = saved;
+    }
   });
 });
 
