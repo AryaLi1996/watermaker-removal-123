@@ -256,18 +256,75 @@ describe('what a token means today', () => {
 });
 
 describe('the device id', () => {
-  const withMacs = (macs: string[]) => ({
-    networkInterfaces: () => ({ eth0: macs.map((mac) => ({ mac, internal: false })) }),
+  /**
+   * The whole job is surviving a reinstall: a machine that has already spent
+   * its trial must derive the same id afterwards, or the service quite
+   * correctly hands it another one.
+   *
+   * `deps` stubs the OS machine-id probes, so these exercise the derivation
+   * rather than whatever the machine running the suite happens to report.
+   */
+  const NO_MACHINE_ID = {
+    readFileSync: () => { throw new Error('ENOENT'); },
+    execFileSync: () => { throw new Error('ENOENT'); },
+  };
+
+  /** A burned-in address: bit 1 of the first octet clear. */
+  const BURNED_IN = '3c:22:fb:11:22:33';
+
+  const withMacs = (macs: string[], names: string[] = []) => ({
+    networkInterfaces: () => Object.fromEntries(
+      macs.map((mac, i) => [names[i] ?? `eth${i}`, [{ mac, internal: false }]]),
+    ),
     platform: () => 'linux',
     arch: () => 'x64',
   });
 
-  it('derives the same id from the same hardware, so a reinstall is not a new trial', () => {
-    const first = deviceId.getDeviceId(dir, withMacs(['aa:bb:cc:dd:ee:ff']));
+  const idFrom = (os: unknown, deps: unknown = NO_MACHINE_ID) => {
     deviceId.resetCache();
-    rmSync(path.join(dir, '.device_id'));
-    const afterReinstall = deviceId.getDeviceId(dir, withMacs(['aa:bb:cc:dd:ee:ff']));
-    expect(afterReinstall).toBe(first);
+    rmSync(path.join(dir, '.device_id'), { force: true });
+    return deviceId.getDeviceId(dir, os, deps);
+  };
+
+  it('derives the same id from the same hardware, so a reinstall is not a new trial', () => {
+    const first = idFrom(withMacs([BURNED_IN]));
+    expect(idFrom(withMacs([BURNED_IN]))).toBe(first);
+  });
+
+  it('prefers the operating system\'s machine id over any adapter', () => {
+    // The signal that actually survives: written when the OS was installed
+    // and untouched by installing or removing this app.
+    const machine = { ...NO_MACHINE_ID, readFileSync: () => 'e3b0c44298fc1c149afbf4c8\n' };
+    const withNic = idFrom(withMacs([BURNED_IN]), machine);
+    // Same machine id, completely different adapters — still the same device.
+    const noNic = idFrom({ networkInterfaces: () => ({}), platform: () => 'linux', arch: () => 'x64' }, machine);
+    expect(noNic).toBe(withNic);
+    // And it is not the MAC-derived id, so the two signals cannot collide.
+    expect(withNic).not.toBe(idFrom(withMacs([BURNED_IN])));
+  });
+
+  it('ignores adapters that come and go, which is what broke the reinstall', () => {
+    // Before this, the id was every non-loopback MAC present at that moment.
+    // Starting Docker, joining a VPN or docking a laptop changed the set, and
+    // the reinstall that followed looked like a brand-new machine.
+    const bare = idFrom(withMacs([BURNED_IN]));
+    const cluttered = idFrom(withMacs(
+      [BURNED_IN, '02:42:ac:11:00:02', '00:50:56:c0:00:08', '3a:9f:1b:44:55:66'],
+      ['eth0', 'docker0', 'vmnet1', 'utun3'],
+    ));
+    expect(cluttered).toBe(bare);
+  });
+
+  it('ignores a randomised Wi-Fi address', () => {
+    // macOS and Windows hand out a different private MAC per network by
+    // default. Its locally-administered bit is set, which is how it is told
+    // apart from a real NIC without having to know the interface name.
+    expect(deviceId.isLocallyAdministered('aa:bb:cc:dd:ee:ff')).toBe(true);
+    expect(deviceId.isLocallyAdministered(BURNED_IN)).toBe(false);
+
+    const wifiA = withMacs([BURNED_IN, 'aa:bb:cc:dd:ee:ff'], ['eth0', 'en0']);
+    const wifiB = withMacs([BURNED_IN, '9e:11:22:33:44:55'], ['eth0', 'en0']);
+    expect(idFrom(wifiB)).toBe(idFrom(wifiA));
   });
 
   it('ignores loopback and placeholder adapters', () => {
@@ -282,22 +339,51 @@ describe('the device id', () => {
     expect(deviceId.hardwareSignal(os)).toBeNull();
   });
 
-  it('still produces a usable id on a machine with no MAC address', () => {
+  it('still produces a usable id when nothing stable is available', () => {
     const os = { networkInterfaces: () => ({}), platform: () => 'linux', arch: () => 'x64' };
-    const id = deviceId.getDeviceId(dir, os);
     // A random id will not survive a reinstall, which the service's own docs
     // accept — refusing to start a trial would be worse.
-    expect(id).toMatch(/^[A-Za-z0-9-]{16,128}$/);
+    expect(idFrom(os)).toMatch(/^[A-Za-z0-9-]{16,128}$/);
   });
 
   it('keeps whatever was stored, so an id never changes under the user', () => {
+    // What makes the new derivation safe to ship: every install that already
+    // has a .device_id keeps it, so nobody's trial resets and nobody is
+    // handed a second one.
+    deviceId.resetCache();
     writeFileSync(path.join(dir, '.device_id'), 'previously-stored-id-0123456789');
-    expect(deviceId.getDeviceId(dir, withMacs(['aa:bb:cc:dd:ee:ff']))).toBe('previously-stored-id-0123456789');
+    expect(deviceId.getDeviceId(dir, withMacs([BURNED_IN]), NO_MACHINE_ID))
+      .toBe('previously-stored-id-0123456789');
+  });
+
+  it('reads the machine id each platform actually keeps', () => {
+    const calls: string[][] = [];
+    const deps = {
+      readFileSync: (f: string) => { calls.push(['read', f]); throw new Error('ENOENT'); },
+      execFileSync: (cmd: string, args: string[]) => {
+        calls.push([cmd, ...args]);
+        if (cmd.endsWith('ioreg')) return '  "IOPlatformUUID" = "F1E2D3C4-B5A6"\n';
+        return 'MachineGuid    REG_SZ    9a8b7c6d-5e4f\r\n';
+      },
+    };
+    expect(deviceId.readMachineId('darwin', deps)).toBe('F1E2D3C4-B5A6');
+    expect(deviceId.readMachineId('win32', deps)).toBe('9a8b7c6d-5e4f');
+    deviceId.readMachineId('linux', deps);
+    expect(calls.some((c) => c[1] === '/etc/machine-id')).toBe(true);
+    // A 32-bit build must not be redirected to the WOW6432 view, where
+    // MachineGuid is a different value.
+    expect(calls.some((c) => c.includes('/reg:64'))).toBe(true);
+  });
+
+  it('treats an unreadable probe as "no machine id" rather than failing', () => {
+    expect(deviceId.readMachineId('linux', NO_MACHINE_ID)).toBeNull();
+    expect(deviceId.readMachineId('darwin', NO_MACHINE_ID)).toBeNull();
+    expect(deviceId.readMachineId('sunos', NO_MACHINE_ID)).toBeNull();
   });
 
   it('produces a shape the service accepts', () => {
     // _DEVICE_ID_RE on the service side: ^[A-Za-z0-9_-]{16,128}$
-    expect(deviceId.getDeviceId(dir, withMacs(['aa:bb:cc:dd:ee:ff']))).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+    expect(idFrom(withMacs([BURNED_IN]))).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
   });
 });
 
