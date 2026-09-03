@@ -364,10 +364,20 @@ See [TESTING.md](TESTING.md) for how to run these.
 
 ```
 scripts/
-└── validate_env.py     # Checks Python version, cv2, numpy, ffmpeg on PATH
+├── validate_env.py             # Checks Python version, cv2, numpy, ffmpeg on PATH
+├── build_backend.py            # PyInstaller bundle of backend/ for packaging
+├── build.js                    # Renderer + backend build, ahead of electron-builder
+├── write-build-config.js       # Bakes LICENSE_* into electron/build-config.json
+└── generate-test-license.js    # Mints a test licence for a development build
 ```
 
 Run after initial setup: `python scripts/validate_env.py`
+
+`generate-test-license.js` is the one a person runs by hand rather than a
+build step: nothing in the interface issues a licence without a payment, so
+`npm run license:test-code -- --install` is how a development build reaches
+the licensed experience. See `docs/LICENSE_SERVICE.md`, *Minting a test
+licence*.
 
 ---
 
