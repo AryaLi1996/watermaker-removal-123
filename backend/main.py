@@ -35,6 +35,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, BeforeValidator, Field, ValidationError, field_validator
 
 import ff_utils
+import path_utils
 
 
 def load_processor():
@@ -148,12 +149,31 @@ class JobConfig(BaseModel):
 
     @field_validator('inputPath')
     @classmethod
-    def input_must_be_absolute_and_exist(cls, v: str) -> str:
+    def input_must_be_absolute_and_readable(cls, v: str) -> str:
         if not os.path.isabs(v):
             raise ValueError(f"inputPath must be an absolute path: {v!r}")
-        if not os.path.isfile(v):
+        # Checked, and from here on used, in whichever spelling this platform
+        # can actually open — on Windows a path past MAX_PATH is not missing,
+        # it is merely unopenable in the form it arrived in, and reporting it
+        # as missing sends the user looking for a file that never moved.
+        resolved = path_utils.openable(v)
+        if not os.path.isfile(resolved):
             raise ValueError(f"Input file not found: {v!r}")
-        return v
+        # A file that exists and will not open reads to the user as a file
+        # that is gone, which is the one thing it is not. Opened rather than
+        # tested with os.access, which on Windows reports the read-only
+        # attribute and nothing else — it says yes for a file another program
+        # is holding with a share lock, the case this check is most needed
+        # for. Windows reports that lock the same way it reports a denied ACL,
+        # so one message covers both rather than guessing which this is.
+        try:
+            with open(resolved, 'rb'):
+                pass
+        except OSError as exc:
+            raise ValueError(
+                f"Input file could not be read: {v!r} ({exc.strerror})"
+            ) from exc
+        return resolved
 
     @field_validator('outputPath')
     @classmethod
@@ -164,7 +184,7 @@ class JobConfig(BaseModel):
             return v
         if not os.path.isabs(v):
             raise ValueError(f"outputPath must be an absolute path: {v!r}")
-        return v
+        return path_utils.openable(v)
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -195,6 +215,27 @@ def force_utf8_stdio() -> None:
 
 def emit(msg: str) -> None:
     print(msg, flush=True)
+
+
+def read_job_payload() -> bytes | str:
+    """
+    The job payload, read without guessing at an encoding.
+
+    Electron writes it with `JSON.stringify` over a pipe, which is UTF-8.
+    `sys.stdin` does not know that: it decodes with the console encoding,
+    which on a Chinese-locale Windows machine is cp936. A path naming a
+    folder in Chinese then arrives as mojibake, no such file exists, and the
+    user is told their video "may have been moved, renamed or deleted" while
+    it sits exactly where they left it. Reading the bytes and letting pydantic
+    decode them — JSON is UTF-8 by definition — takes the guess out of it.
+
+    Falls back to a text read for a caller that supplied its own stream (the
+    tests do), where the decoding has already been chosen.
+    """
+    buffer = getattr(sys.stdin, 'buffer', None)
+    if buffer is not None:
+        return buffer.read().strip()
+    return sys.stdin.read().strip()
 
 
 def report_temporal_fallback(degraded: int, total: int) -> None:
@@ -643,7 +684,7 @@ def main() -> None:
     temp_dir = tempfile.mkdtemp(prefix='watermark_app_')
 
     try:
-        raw = sys.stdin.read().strip()
+        raw = read_job_payload()
         if not raw:
             raise ValueError('No input received on stdin.')
 
@@ -711,7 +752,7 @@ def main() -> None:
         else:
             output = run_pipeline(config, temp_dir, source_video=config.inputPath,
                                   engine=engine)
-            emit(f'STATE:done:{output}')
+            emit(f'STATE:done:{path_utils.displayable(output)}')
 
     except Exception as exc:
         # The raw text goes through as-is: the renderer classifies it into plain

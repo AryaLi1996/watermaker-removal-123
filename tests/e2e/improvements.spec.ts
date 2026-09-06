@@ -6,10 +6,11 @@
  */
 import { test, expect } from './fixtures/stub-backend-fixture';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { SAMPLE_VIDEO } from './fixtures/sample-video';
 
 test.use({ appTag: 'improvements' });
 
-const INPUT = '/fake/clip.mp4';
+const INPUT = SAMPLE_VIDEO;
 const OUTPUT = '/fake/clip_processed.mp4';
 
 async function mockDialogs(electronApp: ElectronApplication) {

@@ -185,6 +185,7 @@ Runs as a child process, receives a JSON job config on stdin, writes structured 
 backend/
 ├── main.py           # Entry point — reads stdin, orchestrates pipeline
 ├── ff_utils.py       # All FFmpeg/FFprobe subprocess calls
+├── path_utils.py     # Windows path spellings — the extended-length form past MAX_PATH
 ├── image_core.py     # OpenCV removal algorithms + mask builder
 ├── temporal_core.py  # Flow-guided temporal inpainting (the `temporal` method)
 ├── edge_utils.py     # Edge detection, sample selection and seam sharpening for the above
@@ -342,6 +343,7 @@ tests/
 │   │   ├── test_mask_generator.py      # pytest — the mask handed to the model
 │   │   ├── test_gpu.py                 # pytest — the CUDA probe, on a machine with no GPU
 │   │   ├── test_deep_pipeline.py       # pytest — routing, falling back, choosing the engine
+│   │   ├── test_path_utils.py          # pytest — Windows long paths, and the payload read that ignores the console code page
 │   └── renderer/
 │       └── utils.test.ts               # 15 vitest tests — all utility functions
 ├── integration/                        # reserved — not yet implemented

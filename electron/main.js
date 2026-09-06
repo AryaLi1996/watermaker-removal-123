@@ -608,9 +608,61 @@ ipcMain.handle('payment:closeEmbedded', () => {
   return true;
 });
 
+/**
+ * Why this payload's input file cannot be used, or null if it can.
+ *
+ * The backend checks this too, but only once it has been spawned. Doing it
+ * here costs one open and close, and buys two things: nothing is started for
+ * a job that cannot run, and the answer separates a file that is gone — moved,
+ * renamed, on a drive that was ejected, on a share that dropped — from one
+ * that is there and will not open. Those call for different things from the
+ * user, and "could not open the video" asks for neither.
+ *
+ * Node opens long Windows paths through the extended-length form itself, so
+ * this agrees with the backend on a path past MAX_PATH rather than refusing a
+ * file the backend would have opened.
+ */
+function inputProblem(inputPath) {
+  // Whether the payload names an input at all is the backend schema's
+  // business, and it rejects one that does not with the field and the reason.
+  // This is only about a path that was given: does it still lead to a file
+  // this process can read.
+  if (typeof inputPath !== 'string' || inputPath === '') return null;
+
+  // Opened rather than stat'd, because opening is the question being asked.
+  // `fs.accessSync(R_OK)` on Windows reports the read-only attribute and
+  // nothing else: it says yes for a file another program is holding with a
+  // share lock, which is the case this check is most needed for. Opening it
+  // is what the backend will do a moment later, so it is what to try here.
+  let handle = null;
+  try {
+    handle = fs.openSync(inputPath, 'r');
+  } catch (err) {
+    // ENOENT covers the file being moved, renamed or deleted, and an ejected
+    // drive letter or a dropped share, which Windows also reports that way.
+    if (err.code === 'ENOENT') return `${OWN_MESSAGE_PREFIX}errors.inputMissing`;
+    // EBUSY and EPERM are the share lock; EACCES is a permission that was
+    // never granted. One sentence covers them because Windows does not
+    // reliably tell them apart, and the advice — close whatever is holding
+    // the file, then check its permissions — is the same either way.
+    return `${OWN_MESSAGE_PREFIX}errors.inputUnreadable`;
+  } finally {
+    if (handle !== null) fs.closeSync(handle);
+  }
+  return null;
+}
+
 // ─── Start full processing job ────────────────────────────────────
 ipcMain.handle('job:start', (_event, payload) => {
   const isExport = isExportJob(payload);
+
+  // Nothing is spawned or cleaned up for a job whose input has gone: a
+  // refused job leaves the previous preview and the loaded video alone.
+  const problem = inputProblem(payload?.inputPath);
+  if (problem) {
+    send('job:error', problem);
+    return false;
+  }
 
   // The trial's allowance of temporal exports. Checked before anything is
   // spawned or cleaned up, so a refused export leaves the previous job's

@@ -213,7 +213,11 @@ def probe_video(filepath: str) -> dict:
     Raises subprocess.CalledProcessError if ffprobe fails.
     """
     if not os.path.isfile(filepath):
-        raise FileNotFoundError(f"Input video not found: {filepath}")
+        # Worded to match what the renderer classifies as "the file is no
+        # longer where it was": this is reachable when a file that passed the
+        # job's own check is moved, unmounted or ejected mid-export, and that
+        # is exactly what the user needs told.
+        raise FileNotFoundError(f"Input file not found: {filepath}")
 
     result = _run([
         ffprobe_bin(),

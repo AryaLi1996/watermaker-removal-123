@@ -32,6 +32,14 @@ const RULES: ErrorRule[] = [
   { match: /permission denied|EACCES|read-only file system/i, key: 'errors.permission' },
   { match: /no space left|ENOSPC/i, key: 'errors.diskFull' },
   { match: /input file not found|no such file/i, key: 'errors.inputMissing' },
+  // Distinct from the permission rule above: that one is about the place
+  // being written to, this is the file being read. It has to stay ahead of
+  // the invalidConfig rule, because the backend raises it from a field
+  // validator and the text arrives wrapped in "Invalid job configuration".
+  // Windows reports a share lock — a player, an antivirus scan, Explorer's
+  // own preview — the same way it reports a denied ACL, so the sentence
+  // behind this key covers both rather than picking one.
+  { match: /input file could not be read/i, key: 'errors.inputUnreadable' },
   { match: /selection .* lies outside|outside the frame bounds/i, key: 'errors.roiOutside' },
   // The backend rejected the job payload. The raw text names the field, which
   // is worth keeping for a report but means nothing to the person exporting.
