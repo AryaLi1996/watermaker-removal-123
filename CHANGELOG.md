@@ -259,6 +259,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The subscription strip along the bottom of the window**, which said the
   same thing the top bar now says, in the place people stop looking.
 
+### Fixed
+- **A video in a Chinese folder no longer reports itself as missing on
+  Windows.** The job payload crosses to the backend as UTF-8, which is what
+  Electron writes; Python was decoding it with the console code page instead —
+  cp936 on a Chinese-locale machine — so `D:\视频\demo.mp4` arrived as
+  mojibake, named nothing on disk, and the user was told their video "may have
+  been moved, renamed or deleted" while it sat where they left it. The payload
+  is now read as bytes, with no encoding to guess at.
+- **A video whose path runs past Windows' 260-character limit now opens.**
+  Such a path is not missing, only unopenable in the form it arrived in; it is
+  now checked and used in the extended-length form Windows accepts, and shown
+  back without that prefix. Nothing changes on macOS or Linux, which have no
+  such ceiling and no second spelling.
+- **A file that is there but will not open no longer reads as one that is
+  gone.** A player holding the video, an antivirus scan, or a permission that
+  was never granted now says so — and says to close whatever is holding the
+  file — instead of sending the user to look for a video that never moved.
+- **A job whose input has disappeared is refused before anything starts.**
+  A file moved mid-session, an ejected drive, a network share that dropped:
+  the main process checks the file it was handed and reports which of those
+  happened, rather than spawning a backend to fail on it.
+
 ## [1.1.0] - 2026-08-30
 
 ### Added

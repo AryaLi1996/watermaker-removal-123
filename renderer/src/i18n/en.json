@@ -164,6 +164,7 @@
     "permission": "No permission to write there. Choose a different output location.",
     "diskFull": "The disk is full. Free some space or choose another location, then try again.",
     "inputMissing": "The video file is no longer where it was. It may have been moved, renamed or deleted.",
+    "inputUnreadable": "The video file could not be opened. Another program may be using it, or you may not have permission to read it. Close any player or editor holding the file, then try again.",
     "roiOutside": "The selection sits outside the video frame. Draw the box over the area you want removed.",
     "invalidConfig": "The app sent the backend a selection or setting it could not use. Redraw the box over the area you want removed, then try again.",
     "noVideoStream": "That file has no video track, so there is nothing to process.",

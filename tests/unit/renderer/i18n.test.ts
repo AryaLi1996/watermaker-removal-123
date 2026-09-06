@@ -161,6 +161,22 @@ describe('translated surfaces', () => {
     expect(missing.key).toBe('errors.inputMissing');
   });
 
+  it('tells a locked file apart from a missing one, in both languages', () => {
+    // A file that is there and will not open is the one thing it is not:
+    // gone. Windows hands back the same refusal for a player holding the
+    // file, an antivirus scan and a denied ACL, so one sentence covers them.
+    const locked = classifyError(
+      "Invalid job configuration — inputPath: Input file could not be read: 'D:\\视频\\demo.mp4'",
+    );
+    expect(locked.key).toBe('errors.inputUnreadable');
+    expect(hasTechnicalDetail(locked)).toBe(true);
+
+    setLocale('en');
+    expect(t(locked.key!)).toContain('Another program');
+    setLocale('zh');
+    expect(t(locked.key!)).toContain('其他程序');
+  });
+
   it('passes an unrecognised failure through untranslated', () => {
     const unknown = classifyError('Some brand new failure');
     expect(unknown.key).toBeNull();

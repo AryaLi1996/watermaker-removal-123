@@ -8,11 +8,22 @@
  */
 import { test, expect } from './fixtures/stub-backend-fixture';
 import type { ElectronApplication, Page } from '@playwright/test';
+import { SAMPLE_VIDEO } from './fixtures/sample-video';
 
 test.use({ appTag: 'renderer-flow' });
 
-const INPUT = '/fake/clip.mp4';
-const OUTPUT = '/fake/clip_processed.mp4';
+const INPUT = SAMPLE_VIDEO;
+// What the app derives from the input on its own — it is both what the output
+// field shows and, since these tests never open the save dialog, the path the
+// finished export reports. The save dialog is mocked to the same thing so the
+// two agree however the test gets there.
+//
+// Spelled with forward slashes because that is what the app produces: it
+// splits the input on either separator and rejoins with '/' on every
+// platform, so on Windows the path it derives from `C:\…\sample\clip.mp4`
+// comes back as `C:/…/sample/clip_processed.mp4`. Building this from
+// path.join instead would compare backslashes against slashes there.
+const OUTPUT = INPUT.replace(/\\/g, '/').replace(/\.mp4$/, '_processed.mp4');
 
 /** Mock the native dialogs and record what shell:openPath was asked to reveal. */
 async function mockShell(electronApp: ElectronApplication) {
@@ -59,7 +70,7 @@ test.describe('renderer flow', () => {
     // The Konva stage renders the preview still
     await expect(page.locator('canvas').first()).toBeVisible({ timeout: 10_000 });
     // Output path is auto-derived from the input filename
-    await expect(page.getByText('clip_processed.mp4')).toBeVisible();
+    await expect(page.getByText(OUTPUT.split('/').pop()!)).toBeVisible();
   });
 
   test('switching method swaps the parameter controls', async ({ page, electronApp }) => {

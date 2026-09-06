@@ -59,6 +59,47 @@ test.describe('job stdout protocol', () => {
     expect(received.some((e) => e.type === 'error')).toBe(false);
   });
 
+  // The file the job names is checked before anything is spawned: the backend
+  // would find it missing too, but only after starting, and a Windows path it
+  // cannot open is exactly the case that used to reach the user as an
+  // unexplained failure.
+  test('refuses a job whose input file is gone, without spawning the backend', async ({ page }) => {
+    await startCollecting(page);
+    const started = await startJob(page, {
+      scenario: 'success',
+      inputPath: path.join(os.tmpdir(), 'no-such-clip-ever.mp4'),
+      outputPath: '/tmp/never-written.mp4',
+    });
+
+    expect(started).toBe(false);
+    const received = await events(page);
+    // A key, not prose: the renderer owns the wording and the language.
+    expect(received.find((e) => e.type === 'error')?.value).toBe('i18n:errors.inputMissing');
+    // Nothing ran, so nothing reported progress or completion.
+    expect(received.some((e) => e.type === 'done')).toBe(false);
+    expect(received.some((e) => e.type === 'progress')).toBe(false);
+  });
+
+  test('starts a job whose input file is there', async ({ page }) => {
+    const clip = path.join(os.tmpdir(), 'preflight-present.mp4');
+    fs.writeFileSync(clip, 'not really a video, but it is readable');
+    await startCollecting(page);
+
+    const started = await startJob(page, {
+      scenario: 'success',
+      inputPath: clip,
+      outputPath: '/tmp/preflight-out.mp4',
+    });
+
+    expect(started).toBe(true);
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'done'),
+      { timeout: 10_000 },
+    );
+    expect((await events(page)).some((e) => e.type === 'error')).toBe(false);
+    fs.rmSync(clip, { force: true });
+  });
+
   test('parses a message split across two stdout chunks', async ({ page }) => {
     await startCollecting(page);
     await startJob(page, { scenario: 'split_line', outputPath: '/tmp/split-out.mp4' });
