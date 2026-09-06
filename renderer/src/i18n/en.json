@@ -161,7 +161,7 @@
     "ffmpeg": "Could not read or write the video. The file may be corrupted, or in a format this build of FFmpeg does not support.",
     "pythonMissing": "The Python environment is missing. Run ./dev.sh to create it, then restart the app.",
     "backendMissing": "This installation is incomplete — the processing backend is missing. Reinstalling should fix it.",
-    "permission": "No permission to write there. Choose a different output location.",
+    "permission": "No permission to read or write that file. Choose a different output location, or check the file is not open in another program.",
     "diskFull": "The disk is full. Free some space or choose another location, then try again.",
     "inputMissing": "The video file is no longer where it was. It may have been moved, renamed or deleted.",
     "inputUnreadable": "The video file could not be opened. Another program may be using it, or you may not have permission to read it. Close any player or editor holding the file, then try again.",

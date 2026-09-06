@@ -16,7 +16,7 @@ import SettingsPage from './pages/SettingsPage';
 import type { AppState, DeepNotice, JobConfig, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
 import { deepAvailability, deepPresetFor, previewSecondsFor, qualityForJob, temporalAvailability, usesDeepEngine, TEMPORAL_PREVIEW_MAX_SECONDS } from './capabilities';
 import type { Availability } from './capabilities';
-import { normalizeCoordinates, defaultOutputName, formatDuration, mediaUrl, NULL_SINK } from './utils';
+import { normalizeCoordinates, defaultOutputName, defaultOutputPath, formatDuration, mediaUrl, NULL_SINK } from './utils';
 import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX } from './errors';
 import type { FriendlyError } from './errors';
 import { BUILT_IN_PRESETS, loadCustomPresets, saveCustomPresets, presetFromCurrent } from './presets';
@@ -184,8 +184,7 @@ function App() {
   const startLoad = useCallback((path: string) => {
     setInputPath(path);
     // Auto-derive default output path alongside the input file
-    const dir = path.split(/[\\/]/).slice(0, -1).join('/');
-    setOutputPath(dir + '/' + defaultOutputName(path));
+    setOutputPath(defaultOutputPath(path));
     setPreviewFrameUrl(null);
     setPreviewClipUrl(null);
     setVideoMeta(null);

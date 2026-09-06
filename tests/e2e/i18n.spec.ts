@@ -124,11 +124,11 @@ test.describe('language', () => {
 
     const panel = page.getByTestId('error-panel');
     await expect(panel).toBeVisible({ timeout: 5_000 });
-    await expect(panel).toContainText('没有写入该位置的权限');
+    await expect(panel).toContainText('没有读写该文件的权限');
 
     // Switching language re-renders the message that is already on screen
     await chooseLanguage(page, 'en');
-    await expect(panel).toContainText('No permission to write there');
+    await expect(panel).toContainText('No permission to read or write');
 
     await page.getByTestId('dismiss-error').click();
   });

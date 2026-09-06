@@ -40,7 +40,7 @@ describe('classifyError', () => {
   });
 
   it.each([
-    ['Permission denied: /root/out.mp4', 'No permission to write there'],
+    ['Permission denied: /root/out.mp4', 'No permission to read or write'],
     ['OSError: [Errno 28] No space left on device', 'The disk is full'],
     ['Input file not found: /tmp/gone.mp4', 'no longer where it was'],
     ['Selection (700,100,50x50) lies outside the 640x480 frame.', 'outside the video frame'],
@@ -60,7 +60,7 @@ describe('classifyError', () => {
     ],
     [
       "Command '['ffmpeg', '-y', 'out.mp4']' returned non-zero exit status 1. out.mp4: Permission denied",
-      'No permission to write there',
+      'No permission to read or write',
     ],
     [
       "Command '['ffprobe', 'gone.mp4']' returned non-zero exit status 1. gone.mp4: No such file or directory",

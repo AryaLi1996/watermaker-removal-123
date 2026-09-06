@@ -249,6 +249,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only. A two-core machine with a large graphics card runs the deep engine
   faster than an eight-core one runs the flow engine; refusing it for want of
   cores would refuse the fastest job the app can do.
+- The backend now reads stdin as UTF-8 as well as writing it, so the job
+  payload does not depend on the console code page along its text fallback
+  either.
 
 ### Removed
 - **The demo-licence card and its one-click button.** The licence box above
@@ -280,6 +283,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A file moved mid-session, an ejected drive, a network share that dropped:
   the main process checks the file it was handed and reports which of those
   happened, rather than spawning a backend to fail on it.
+- **A locked video no longer blames the output folder.** The message about a
+  file that will not open ends with the reason the system gave, which for a
+  file another program is holding is the words "Permission denied" — and the
+  rule matching that phrase was being reached first, so the app answered a
+  problem with the input by advising a different export location. The specific
+  rule now runs ahead of the general one.
+- **"No permission" says which end it means.** The sentence was written for an
+  export that could not be written and was shown for a video that could not be
+  read; it now names both, since an ffmpeg refusal does not say which it was.
+- **An export lands beside its video, spelled the way that video is.** The
+  default output path was assembled with forward slashes whatever the input
+  used, so a Windows file produced `D:/My Videos/clip_processed.mp4` and a
+  share produced `//server/share/…` — both work, neither is how Windows writes
+  a path, and the second is a spelling some tooling refuses.
 
 ## [1.1.0] - 2026-08-30
 

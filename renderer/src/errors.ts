@@ -29,17 +29,19 @@ const RULES: ErrorRule[] = [
   // where a preset or an older renderer asked for it anyway.
   { match: /temporal requires at least/i, key: 'errors.temporalUnsupported' },
   { match: /bundled backend not found/i, key: 'errors.backendMissing' },
-  { match: /permission denied|EACCES|read-only file system/i, key: 'errors.permission' },
-  { match: /no space left|ENOSPC/i, key: 'errors.diskFull' },
-  { match: /input file not found|no such file/i, key: 'errors.inputMissing' },
-  // Distinct from the permission rule above: that one is about the place
-  // being written to, this is the file being read. It has to stay ahead of
-  // the invalidConfig rule, because the backend raises it from a field
-  // validator and the text arrives wrapped in "Invalid job configuration".
+  // Ahead of the permission rule, and that ordering is load-bearing: the
+  // backend appends the reason the OS gave, which for a share lock is the
+  // word-for-word "Permission denied". Below that rule this message would be
+  // classified as a permission problem with the *output* folder and the user
+  // told to choose a different one, for a file they cannot read.
+  //
   // Windows reports a share lock — a player, an antivirus scan, Explorer's
   // own preview — the same way it reports a denied ACL, so the sentence
   // behind this key covers both rather than picking one.
   { match: /input file could not be read/i, key: 'errors.inputUnreadable' },
+  { match: /permission denied|EACCES|read-only file system/i, key: 'errors.permission' },
+  { match: /no space left|ENOSPC/i, key: 'errors.diskFull' },
+  { match: /input file not found|no such file/i, key: 'errors.inputMissing' },
   { match: /selection .* lies outside|outside the frame bounds/i, key: 'errors.roiOutside' },
   // The backend rejected the job payload. The raw text names the field, which
   // is worth keeping for a report but means nothing to the person exporting.

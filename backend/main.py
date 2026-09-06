@@ -191,16 +191,29 @@ class JobConfig(BaseModel):
 
 def force_utf8_stdio() -> None:
     """
-    Speak UTF-8 whatever the console is set to.
+    Speak UTF-8 whatever the console is set to, in both directions.
 
     Electron decodes this process's output with `chunk.toString()`, which is
-    UTF-8. Python instead follows the console encoding, which on a Windows
-    runner or a Chinese-locale machine is a legacy code page: a message naming
-    a file with non-ASCII characters then fails to encode and the `ERROR:` line
-    is never written at all, leaving the user with a bare exit code. Even pure
-    ASCII prose is not safe — an em dash lands as one un-decodable byte.
+    UTF-8, and writes the job payload the same way. Python instead follows the
+    console encoding, which on a Windows runner or a Chinese-locale machine is
+    a legacy code page. Outbound that means a message naming a file with
+    non-ASCII characters fails to encode and the `ERROR:` line is never written
+    at all, leaving the user with a bare exit code — and even pure ASCII prose
+    is not safe, since an em dash lands as one un-decodable byte. Inbound it
+    means a path naming a folder in Chinese decodes to mojibake and names
+    nothing on disk.
+
+    `read_job_payload` reads the bytes directly and so does not depend on this,
+    but stdin is reconfigured anyway: its text fallback should not be the one
+    place a legacy code page still gets a say.
     """
-    for stream in (sys.stdout, sys.stderr):
+    # stdin is strict where the output streams are lossy, and deliberately so:
+    # a payload that will not decode is a bug to surface, not to paper over
+    # with replacement characters in the middle of a file path. Nothing has
+    # read from it yet — main() calls this first, before touching stdin.
+    for stream, errors in ((sys.stdout, 'replace'),
+                           (sys.stderr, 'replace'),
+                           (sys.stdin, 'strict')):
         reconfigure = getattr(stream, 'reconfigure', None)
         if reconfigure is None:
             continue
@@ -208,7 +221,7 @@ def force_utf8_stdio() -> None:
             # A path that survived a lossy decode on the way in has no valid
             # encoding on the way out; a replacement character in a diagnostic
             # beats losing the whole line.
-            reconfigure(encoding='utf-8', errors='replace')
+            reconfigure(encoding='utf-8', errors=errors)
         except (ValueError, OSError):  # a stream that cannot be reconfigured
             pass
 

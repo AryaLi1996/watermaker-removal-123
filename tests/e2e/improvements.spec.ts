@@ -162,7 +162,7 @@ test.describe('error reporting', () => {
 
     const panel = page.getByTestId('error-panel');
     await expect(panel).toBeVisible({ timeout: 5_000 });
-    await expect(panel).toContainText('No permission to write there');
+    await expect(panel).toContainText('No permission to read or write');
     // The raw text is not thrown at the user, but is available
     await expect(panel).not.toContainText('/root/out.mp4');
     await expect(page.getByTestId('copy-error')).toBeVisible();
