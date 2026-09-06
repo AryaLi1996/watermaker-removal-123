@@ -249,6 +249,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only. A two-core machine with a large graphics card runs the deep engine
   faster than an eight-core one runs the flow engine; refusing it for want of
   cores would refuse the fastest job the app can do.
+- The backend now reads stdin as UTF-8 as well as writing it, so the job
+  payload does not depend on the console code page along its text fallback
+  either.
+
+### Added
+- **A failure to open a video now says which failure it was, and what to do.**
+  A file that was deleted, a share that dropped, a disk that was unplugged and
+  a file another program is holding all used to arrive as the same sentence.
+  The main process holds the path and the errno the open failed with, so it
+  names the cause outright — and where the file is merely missing, it asks
+  whether the volume is there at all, which is what separates a deleted video
+  from an ejected drive. Each carries a line of advice and a short code for a
+  support conversation.
+- **A diagnostic panel for a file that will not open.** It reports what the
+  filesystem says about the path — whether it exists, whether it reads, its
+  size, its volume and whether that volume is reachable, whether the path
+  carries non-ASCII characters or the remains of a bad decode, its length
+  against Windows' 260-character limit, and whether that machine has long
+  paths enabled — and copies the lot out as text. Off unless the app is
+  started with `ENABLE_DIAGNOSTIC_PANEL=true`: it is a support tool, not
+  something to put in front of everyone who mistypes a filename.
+- **An option to copy the video here before processing it** (Settings → File
+  handling, off by default). An export reads the file many times over, so a
+  network share that drops halfway leaves a half-finished job; copying it
+  local first trades one wait up front for a job the network cannot interrupt.
+  Only files on another volume are copied, only for an export, and only up to
+  500 MB — past that the original is read where it is. The copy is deleted
+  when the job ends, whether it finished, failed or was cancelled.
 
 ### Removed
 - **The demo-licence card and its one-click button.** The licence box above
@@ -280,6 +308,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A file moved mid-session, an ejected drive, a network share that dropped:
   the main process checks the file it was handed and reports which of those
   happened, rather than spawning a backend to fail on it.
+- **A locked video no longer blames the output folder.** The message about a
+  file that will not open ends with the reason the system gave, which for a
+  file another program is holding is the words "Permission denied" — and the
+  rule matching that phrase was being reached first, so the app answered a
+  problem with the input by advising a different export location. The specific
+  rule now runs ahead of the general one.
+- **"No permission" says which end it means.** The sentence was written for an
+  export that could not be written and was shown for a video that could not be
+  read; it now names both, since an ffmpeg refusal does not say which it was.
+- **An export lands beside its video, spelled the way that video is.** The
+  default output path was assembled with forward slashes whatever the input
+  used, so a Windows file produced `D:/My Videos/clip_processed.mp4` and a
+  share produced `//server/share/…` — both work, neither is how Windows writes
+  a path, and the second is a spelling some tooling refuses.
 
 ## [1.1.0] - 2026-08-30
 

@@ -54,13 +54,53 @@ export function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+/**
+ * Whether this path is spelled the Windows way.
+ *
+ * The renderer runs in a browser and has no `path` module to ask, and the
+ * platform it is displayed on is not the question anyway — what matters is how
+ * the path it was handed is written, which is decided by the dialog the main
+ * process opened. A drive letter or a UNC prefix is the whole of the tell; a
+ * backslash on its own is not, because it is a legal character in a POSIX
+ * filename and splitting on it there would carve a name in half.
+ */
+function isWindowsPath(inputPath: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(inputPath) || inputPath.startsWith('\\\\');
+}
+
+/** The separator to build a path alongside this one with. */
+function separatorFor(inputPath: string): string {
+  return isWindowsPath(inputPath) ? '\\' : '/';
+}
+
+/** Split a path into its segments, by whichever convention it is written in. */
+function segmentsOf(inputPath: string): string[] {
+  return isWindowsPath(inputPath) ? inputPath.split(/[\\/]/) : inputPath.split('/');
+}
+
 /** Derive the default output filename from an input path */
 export function defaultOutputName(inputPath: string): string {
-  const parts = inputPath.split(/[\\/]/);
+  const parts = segmentsOf(inputPath);
   const filename = parts[parts.length - 1];
   const dot = filename.lastIndexOf('.');
   const base = dot > 0 ? filename.slice(0, dot) : filename;
   return `${base}_processed.mp4`;
+}
+
+/**
+ * Where an export lands if the user never picks somewhere: beside the input.
+ *
+ * Built with the separator the input path uses rather than always with '/'.
+ * Both work — Windows accepts a forward slash everywhere the backslash goes —
+ * but the derived path is shown to the user and handed back to Explorer, and
+ * `D:/My Videos/clip_processed.mp4` is not how anyone on Windows writes that.
+ * A UNC path suffers more than cosmetically: `//server/share/…` is a spelling
+ * its own tooling does not always take.
+ */
+export function defaultOutputPath(inputPath: string): string {
+  const sep = separatorFor(inputPath);
+  const dir = segmentsOf(inputPath).slice(0, -1).join(sep);
+  return dir + sep + defaultOutputName(inputPath);
 }
 
 /**

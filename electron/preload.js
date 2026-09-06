@@ -69,6 +69,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   temporalUsage: () => ipcRenderer.invoke('temporal:usage'),
   onTemporalUsage: (cb) => ipcRenderer.on('temporal:usage', (_e, v) => cb(v)),
 
+  // Diagnostics: what a support conversation about a file that will not open
+  // actually needs, so the user can copy it out rather than be walked through
+  // Explorer. `diagnosticEnabled` gates the panel — it is a support tool, not
+  // something to show everyone who mistypes a filename.
+  diagnosePath: (filePath) => ipcRenderer.invoke('diagnostic:path', filePath),
+  diagnosticEnabled: () => ipcRenderer.invoke('diagnostic:enabled'),
+
   // Host platform
   systemInfo: () => ipcRenderer.invoke('system:info'),
   tempDir: () => ipcRenderer.invoke('system:tempDir'),

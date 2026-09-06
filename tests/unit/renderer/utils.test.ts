@@ -4,6 +4,7 @@ import {
   calcScaleFactor,
   formatDuration,
   defaultOutputName,
+  defaultOutputPath,
   mediaUrl,
 } from '../../../renderer/src/utils';
 
@@ -87,6 +88,44 @@ describe('formatDuration', () => {
 
   it('handles exactly 1 hour', () => {
     expect(formatDuration(3600)).toBe('60:00');
+  });
+});
+
+// ─── defaultOutputPath ────────────────────────────────────────────────────────
+
+describe('defaultOutputPath', () => {
+  it('lands the export beside a POSIX input', () => {
+    expect(defaultOutputPath('/home/user/clips/video.mp4'))
+      .toBe('/home/user/clips/video_processed.mp4');
+  });
+
+  it('keeps the backslashes of a Windows input', () => {
+    // Forward slashes would work, but this path is shown to the user and
+    // handed back to Explorer, and D:/My Videos/… is not how it is written.
+    expect(defaultOutputPath('D:\\My Videos\\clip.mp4'))
+      .toBe('D:\\My Videos\\clip_processed.mp4');
+  });
+
+  it('keeps a UNC path a UNC path', () => {
+    // //server/share/… is a spelling Windows tooling does not always take.
+    expect(defaultOutputPath('\\\\server\\share\\clip.mp4'))
+      .toBe('\\\\server\\share\\clip_processed.mp4');
+  });
+
+  it('handles a Windows path already spelled with forward slashes', () => {
+    expect(defaultOutputPath('D:/videos/clip.mp4'))
+      .toBe('D:\\videos\\clip_processed.mp4');
+  });
+
+  it('does not treat a backslash in a POSIX filename as a separator', () => {
+    // A backslash is a legal character in a POSIX name. Splitting on it would
+    // carve the file in half and derive a path to a directory that is not there.
+    expect(defaultOutputPath('/home/user/od\\d name.mp4'))
+      .toBe('/home/user/od\\d name_processed.mp4');
+  });
+
+  it('handles a file at the root of a drive', () => {
+    expect(defaultOutputPath('D:\\clip.mp4')).toBe('D:\\clip_processed.mp4');
   });
 });
 

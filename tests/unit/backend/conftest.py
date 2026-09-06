@@ -5,12 +5,16 @@ ffmpeg builds the fixtures, so these tests exercise the same code paths the
 app uses instead of mocking the subprocess layer away.
 """
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'backend'))
+
+import path_utils
 
 
 def _ffmpeg_available() -> bool:
@@ -70,6 +74,37 @@ def silent_video(tmp_path_factory) -> str:
     """The same clip with no audio stream at all."""
     path = str(tmp_path_factory.mktemp('media') / 'silent.mp4')
     return _synth_video(path, audio=None)
+
+
+@pytest.fixture
+def deep_path_video(sample_video) -> str:
+    """
+    A real clip sitting at a path past Windows' MAX_PATH.
+
+    Copied rather than rendered into place: building the tree and writing the
+    file are setup, and doing them through `path_utils.openable` keeps the
+    fixture working on Windows, where neither is possible in the plain
+    spelling. That leaves ffprobe and ffmpeg as the only things the test
+    itself puts through the extended-length form — which is the part nothing
+    covered before, and the part the whole exercise is for.
+
+    Cleaned up here rather than left to `tmp_path`, whose own removal would
+    hit the same ceiling.
+    """
+    root = tempfile.mkdtemp(prefix='wm_deep_')
+    deep = root
+    # Comfortably past the ceiling once the filename is on the end, so the
+    # test is not sitting on the boundary it is checking.
+    while len(deep) < path_utils.WINDOWS_MAX_PATH + 40:
+        deep = os.path.join(deep, 'a_folder_with_a_long_name')
+    os.makedirs(path_utils.openable(deep), exist_ok=True)
+
+    target = os.path.join(deep, 'clip.mp4')
+    shutil.copyfile(sample_video, path_utils.openable(target))
+    try:
+        yield target
+    finally:
+        shutil.rmtree(path_utils.openable(root), ignore_errors=True)
 
 
 def _first_available_encoder(candidates: tuple[str, ...]) -> str | None:

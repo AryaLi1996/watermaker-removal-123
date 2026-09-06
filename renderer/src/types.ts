@@ -35,6 +35,16 @@ export interface JobConfig {
   useDeepLearning?: boolean;
   /** Seconds of video a preview job covers; ignored for a full export. */
   previewSeconds?: number;
+  /**
+   * Copy the input to a local temp file before reading it.
+   *
+   * Acted on by the main process and stripped there, so it never reaches the
+   * backend schema — it is a preference about how to fetch the file, not part
+   * of the job. Only does anything for a file on another volume.
+   */
+  copyInputLocally?: boolean;
+  /** The size past which the copy is skipped and the original read in place. */
+  copyInputMaxBytes?: number;
 }
 
 export interface VideoMeta {
@@ -204,6 +214,37 @@ export interface PaymentHistoryEntry {
   paidAt?: number;
 }
 
+/**
+ * What the main process can say about a path that will not open.
+ *
+ * Read-only facts, gathered for a support conversation rather than for the
+ * app's own use: where the file sits, whether its volume is even there, and
+ * the two Windows settings that decide whether a long path can be opened.
+ */
+export interface PathDiagnostic {
+  path: string;
+  platform: string;
+  length: number;
+  /** At or past the 260 characters Windows refuses without the long form. */
+  exceedsMaxPath: boolean;
+  exists: boolean;
+  readable: boolean;
+  size: number | null;
+  /** A UNC share rather than a local drive. */
+  isNetworkDrive: boolean;
+  volumeRoot: string;
+  /** False means the drive or share itself is gone, not just the file. */
+  volumeReachable: boolean;
+  hasNonAscii: boolean;
+  /** The path already carries a U+FFFD, so something decoded it lossily. */
+  looksMisdecoded: boolean;
+  /** Null when it could not be determined. False suggests an external disk. */
+  onSameVolumeAsTemp: boolean | null;
+  longPath: { applicable: boolean; enabled: boolean | null; registryKey: string };
+  /** The errno the last failed call reported, or null if nothing failed. */
+  error: string | null;
+}
+
 declare global {
   interface Window {
     electronAPI: {
@@ -224,6 +265,12 @@ declare global {
       onUpdateDownloaded: (cb: (version: string | null) => void) => void;
       installUpdate: () => Promise<boolean>;
       systemInfo: () => Promise<SystemInfo>;
+      /**
+       * Diagnostics for a file that will not open. Optional: an older main
+       * process does not offer them, and the panel simply stays hidden.
+       */
+      diagnosePath?: (filePath: string) => Promise<PathDiagnostic>;
+      diagnosticEnabled?: () => Promise<boolean>;
       /**
        * The trial's allowance of temporal-fill exports. Optional: a main
        * process without it imposes no limit, and `NO_TEMPORAL_LIMIT` is what

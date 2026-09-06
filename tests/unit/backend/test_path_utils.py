@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'ba
 
 import pytest
 
+import ff_utils
 import main as backend_main
 import path_utils
 
@@ -197,3 +198,36 @@ def test_a_readable_input_passes_and_keeps_its_spelling(tmp_path):
     # Away from Windows `openable` is the identity, so nothing about the path
     # the rest of the pipeline sees changes.
     assert backend_main.JobConfig(**_job(inputPath=str(clip))).inputPath == str(clip)
+
+
+# ─── a long path, end to end ─────────────────────────────────────────────────
+
+def test_a_video_past_max_path_is_found_probed_and_decoded(deep_path_video, tmp_path):
+    """
+    The one test that puts an over-length path through the tools themselves.
+
+    Everything above checks the string transformation; this checks the thing
+    the transformation is for. It runs on all three platforms — off Windows
+    the path is simply long, and the pipeline should not mind, which is the
+    other half of "no regression on macOS and Linux". On Windows it is the
+    only evidence that ffprobe and ffmpeg accept the extended-length spelling
+    at all; without it, that was an assumption.
+    """
+    assert len(deep_path_video) > path_utils.WINDOWS_MAX_PATH
+
+    # The job's own validation finds the file and hands on a spelling that opens.
+    config = backend_main.JobConfig(**_job(
+        inputPath=deep_path_video,
+        outputPath=str(tmp_path / 'out.mp4'),
+    ))
+    assert os.path.isfile(config.inputPath)
+
+    # ffprobe reads it through that spelling.
+    meta = ff_utils.probe_video(config.inputPath)
+    assert meta['width'] > 0
+    assert meta['duration'] > 0
+
+    # And ffmpeg decodes a frame out of it.
+    still = str(tmp_path / 'still.png')
+    ff_utils.extract_preview_frame(config.inputPath, still, timestamp=0.0)
+    assert os.path.getsize(still) > 0

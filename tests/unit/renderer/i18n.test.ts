@@ -135,7 +135,7 @@ describe('translated surfaces', () => {
     setLocale('en');
     expect(t(permission.key!)).toContain('No permission');
     setLocale('zh');
-    expect(t(permission.key!)).toContain('没有写入');
+    expect(t(permission.key!)).toContain('没有读写');
   });
 
   it('explains a rejected job payload in both languages, keeping the detail', () => {
@@ -165,16 +165,32 @@ describe('translated surfaces', () => {
     // A file that is there and will not open is the one thing it is not:
     // gone. Windows hands back the same refusal for a player holding the
     // file, an antivirus scan and a denied ACL, so one sentence covers them.
+    //
+    // Spelled exactly as backend/main.py emits it, wrapped as
+    // describe_validation_error wraps a field validator — trailing OS reason
+    // and all. An earlier version of this test dropped that reason, and the
+    // rule it was guarding had since been overtaken by the permission rule
+    // without the test noticing.
     const locked = classifyError(
-      "Invalid job configuration — inputPath: Input file could not be read: 'D:\\视频\\demo.mp4'",
+      "Invalid job configuration — inputPath: Input file could not be read: "
+        + "'D:\\视频\\demo.mp4' (Permission denied)",
     );
     expect(locked.key).toBe('errors.inputUnreadable');
     expect(hasTechnicalDetail(locked)).toBe(true);
+    // The reason the OS gave is kept for a bug report, not shown as the cause.
+    expect(locked.raw).toContain('Permission denied');
 
     setLocale('en');
     expect(t(locked.key!)).toContain('Another program');
     setLocale('zh');
     expect(t(locked.key!)).toContain('其他程序');
+  });
+
+  it('still blames the output location for a permission failure that is not the input', () => {
+    // The rule the test above sits in front of must keep working: an ffmpeg
+    // refusal that names no input file is still about where we are writing.
+    const denied = classifyError("Error opening output file: Permission denied");
+    expect(denied.key).toBe('errors.permission');
   });
 
   it('passes an unrecognised failure through untranslated', () => {

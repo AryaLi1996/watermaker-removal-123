@@ -73,8 +73,11 @@ test.describe('job stdout protocol', () => {
 
     expect(started).toBe(false);
     const received = await events(page);
-    // A key, not prose: the renderer owns the wording and the language.
-    expect(received.find((e) => e.type === 'error')?.value).toBe('i18n:errors.inputMissing');
+    // A code, not prose: the renderer owns the wording, the language and the
+    // line of advice. FILE_NOT_FOUND rather than a drive-level code because
+    // the temp directory this path sits in is plainly still there — only the
+    // file is gone.
+    expect(received.find((e) => e.type === 'error')?.value).toBe('code:FILE_NOT_FOUND');
     // Nothing ran, so nothing reported progress or completion.
     expect(received.some((e) => e.type === 'done')).toBe(false);
     expect(received.some((e) => e.type === 'progress')).toBe(false);

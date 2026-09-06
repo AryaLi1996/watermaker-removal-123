@@ -20,7 +20,10 @@
     "themeFollowing": "Following your system: {resolved}",
     "about": "About",
     "aboutName": "SmoothVoice Watermark Remover",
-    "version": "Version {version}"
+    "version": "Version {version}",
+    "fileHandling": "File handling",
+    "copyToTemp": "Copy the video here before processing",
+    "copyToTempHint": "For a video on a network share or an external drive. An export reads the file many times over, so a share that drops halfway leaves a half-finished job; copying it here first trades one wait up front for a job the network cannot interrupt. Files over {{limit}} MB are read where they are."
   },
   "file": {
     "load": "Load video",
@@ -161,10 +164,14 @@
     "ffmpeg": "Could not read or write the video. The file may be corrupted, or in a format this build of FFmpeg does not support.",
     "pythonMissing": "The Python environment is missing. Run ./dev.sh to create it, then restart the app.",
     "backendMissing": "This installation is incomplete — the processing backend is missing. Reinstalling should fix it.",
-    "permission": "No permission to write there. Choose a different output location.",
+    "permission": "No permission to read or write that file. Choose a different output location, or check the file is not open in another program.",
     "diskFull": "The disk is full. Free some space or choose another location, then try again.",
     "inputMissing": "The video file is no longer where it was. It may have been moved, renamed or deleted.",
     "inputUnreadable": "The video file could not be opened. Another program may be using it, or you may not have permission to read it. Close any player or editor holding the file, then try again.",
+    "pathEncoding": "The file path contains characters the system could not carry through. Moving the file to a drive root such as D:\\ and renaming it with plain characters is the reliable way past this.",
+    "pathTooLong": "The file path is too long for Windows to open — the limit is 260 characters unless long paths are enabled.",
+    "networkDrive": "The network drive is not reachable. The share may have disconnected, or the connection dropped.",
+    "deviceNotReady": "The drive holding this video is not available. An external disk or USB stick may have been unplugged or ejected.",
     "roiOutside": "The selection sits outside the video frame. Draw the box over the area you want removed.",
     "invalidConfig": "The app sent the backend a selection or setting it could not use. Redraw the box over the area you want removed, then try again.",
     "noVideoStream": "That file has no video track, so there is nothing to process.",
@@ -174,7 +181,16 @@
     "temporalUnsupported": "Temporal fill needs at least 4 processor cores and 4 GB of memory. Choose another removal method for this machine.",
     "jobRunning": "Another job is already running. Wait for it to finish, or cancel it.",
     "previewTimeout": "Still waiting for a preview of this video after 90 seconds. It may be very large, or the backend may be stuck — try loading it again.",
-    "temporalTrialExhausted": "Your 3 trial runs of temporal fill are used up. Subscribe to carry on, or pick another method."
+    "temporalTrialExhausted": "Your 3 trial runs of temporal fill are used up. Subscribe to carry on, or pick another method.",
+    "actions": {
+      "FILE_NOT_FOUND": "Check whether the file has been moved, renamed or deleted, then load it again.",
+      "FILE_LOCKED": "Close any player, editor or preview window holding the file, then try again.",
+      "PATH_ENCODING_ERROR": "Move the file to a drive root such as D:\\ and rename it, then load it again.",
+      "PATH_TOO_LONG": "Move the file somewhere with a shorter path, such as D:\\, then load it again.",
+      "NETWORK_DRIVE_ERROR": "Reconnect the network drive, then try again. Copying the video to this computer first also works.",
+      "PERMISSION_DENIED": "Check the file's permissions, and that it is not open in another program.",
+      "DEVICE_NOT_READY": "Reconnect the drive and wait for the system to mount it, then try again."
+    }
   },
   "notifications": {
     "exportDoneTitle": "Export complete",
@@ -282,5 +298,26 @@
     "faqUpgradeBody": "Buy a longer plan whenever you like — the new period is added to your current end date, and there is nothing to cancel first.",
     "faqMethods": "Which payment methods are supported?",
     "faqMethodsBody": "Bank card, WeChat Pay and Alipay. The checkout lists exactly which of them are available to you."
+  },
+  "diagnostic": {
+    "run": "Diagnose this file",
+    "running": "Checking…",
+    "copy": "Copy diagnostic",
+    "path": "Path",
+    "length": "Path length",
+    "exists": "File exists",
+    "readable": "Readable",
+    "size": "Size",
+    "volume": "Volume · reachable",
+    "networkDrive": "Network drive",
+    "externalVolume": "Separate drive",
+    "encoding": "Path characters",
+    "nonAscii": "Non-ASCII",
+    "misdecoded": "Damaged by a bad decode",
+    "longPaths": "Long paths enabled",
+    "lastError": "Last error",
+    "yes": "yes",
+    "no": "no",
+    "unknown": "unknown"
   }
 }
