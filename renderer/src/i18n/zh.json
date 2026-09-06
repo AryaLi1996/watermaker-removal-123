@@ -20,7 +20,10 @@
     "themeFollowing": "当前跟随系统：{resolved}",
     "about": "关于",
     "aboutName": "舒音水印去除",
-    "version": "版本 {version}"
+    "version": "版本 {version}",
+    "fileHandling": "文件处理",
+    "copyToTemp": "处理前先将视频复制到本机",
+    "copyToTempHint": "适用于位于网络共享或移动硬盘上的视频。导出过程会多次读取文件，共享中途断开会留下未完成的任务；先复制到本机可用一次等待换取不受网络中断影响的处理。超过 {{limit}} MB 的文件将就地读取。"
   },
   "file": {
     "load": "加载视频",
@@ -165,6 +168,10 @@
     "diskFull": "磁盘空间已满。请清理空间或选择其他位置后重试。",
     "inputMissing": "找不到原视频文件，它可能已被移动、重命名或删除。",
     "inputUnreadable": "无法打开该视频文件。它可能正被其他程序占用，或你没有读取权限。请关闭正在使用它的播放器或编辑器后重试。",
+    "pathEncoding": "文件路径包含系统无法正确处理的字符。请将文件移至盘符根目录（如 D:\\）并使用简单字符重命名。",
+    "pathTooLong": "文件路径过长，Windows 无法打开——未启用长路径支持时上限为 260 个字符。",
+    "networkDrive": "无法访问该网络驱动器。共享可能已断开连接。",
+    "deviceNotReady": "找不到存放该视频的驱动器。移动硬盘或 U 盘可能已被拔出或弹出。",
     "roiOutside": "选区超出了画面范围。请在需要去除的区域上重新框选。",
     "invalidConfig": "应用传给处理程序的选区或参数无法使用。请重新框选要去除的区域后再试一次。",
     "noVideoStream": "该文件不含视频轨道，无法处理。",
@@ -174,7 +181,16 @@
     "temporalUnsupported": "时间修复需要至少 4 个处理器核心和 4 GB 内存。请在此机器上选择其他去除方式。",
     "jobRunning": "已有任务正在运行。请等待其完成，或先取消。",
     "previewTimeout": "已等待 90 秒仍未生成预览。视频可能过大，或后端已卡住——请重新加载试试。",
-    "temporalTrialExhausted": "试用的 3 次时间修复已用完。请订阅后继续使用，或选择其他方式。"
+    "temporalTrialExhausted": "试用的 3 次时间修复已用完。请订阅后继续使用，或选择其他方式。",
+    "actions": {
+      "FILE_NOT_FOUND": "请确认文件是否已被移动、重命名或删除，然后重新加载。",
+      "FILE_LOCKED": "请关闭正在使用该文件的播放器、编辑器或预览窗口后重试。",
+      "PATH_ENCODING_ERROR": "请将文件移至盘符根目录（如 D:\\）并重命名后重新加载。",
+      "PATH_TOO_LONG": "请将文件移至路径更短的位置（如 D:\\）后重新加载。",
+      "NETWORK_DRIVE_ERROR": "请重新连接网络驱动器后重试。也可以先将视频复制到本机再处理。",
+      "PERMISSION_DENIED": "请检查该文件的权限设置，并确认未被其他程序打开。",
+      "DEVICE_NOT_READY": "请重新连接该驱动器，待系统识别后重试。"
+    }
   },
   "notifications": {
     "exportDoneTitle": "导出完成",
@@ -282,5 +298,26 @@
     "faqUpgradeBody": "随时购买更长的计划即可，新周期会在当前到期日基础上顺延，无需先取消。",
     "faqMethods": "支持哪些支付方式？",
     "faqMethodsBody": "银行卡、微信支付与支付宝。具体可用的方式以支付页面列出的为准。"
+  },
+  "diagnostic": {
+    "run": "诊断该文件",
+    "running": "正在检查…",
+    "copy": "复制诊断信息",
+    "path": "路径",
+    "length": "路径长度",
+    "exists": "文件存在",
+    "readable": "可读取",
+    "size": "大小",
+    "volume": "所在卷 · 可访问",
+    "networkDrive": "网络驱动器",
+    "externalVolume": "独立驱动器",
+    "encoding": "路径字符",
+    "nonAscii": "含非 ASCII 字符",
+    "misdecoded": "编码已损坏",
+    "longPaths": "已启用长路径",
+    "lastError": "最近错误",
+    "yes": "是",
+    "no": "否",
+    "unknown": "未知"
   }
 }

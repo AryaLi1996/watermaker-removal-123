@@ -376,6 +376,22 @@ npm run test:e2e:debug
 | `STATE:` events forwarded | `job:state` IPC reaches renderer |
 | `STATE:meta:` events forwarded | `job:meta` IPC delivers full VideoMeta object |
 
+**`tests/e2e/diagnostics.spec.ts`** — Naming a file failure, and the fallbacks
+
+| Test | What it checks |
+|---|---|
+| A deleted file is `FILE_NOT_FOUND` | Its volume is reachable, so only the file is gone |
+| A path on a missing volume | `DEVICE_NOT_READY` where the platform has drive letters, `FILE_NOT_FOUND` where the root is always `/` |
+| A mis-decoded path is `PATH_ENCODING_ERROR` | U+FFFD in the path, refused before any disk access |
+| A readable file is not refused | `job:start` returns true and reports nothing |
+| Diagnostic on a file that exists | size, volume, reachability, long-path applicability |
+| Diagnostic on one that does not | `exists: false`, `error: ENOENT`, no throw |
+| Mis-decoded vs merely non-ASCII | The two are reported apart |
+| A path past 260 characters | `exceedsMaxPath` |
+| No copy when the setting is off | Nothing matching `wm_input_*` appears in the temp dir |
+| A same-volume file is not copied | The job still starts and reports nothing |
+| The copy is cleaned up | Nothing matching `wm_input_*` is left once the job ends |
+
 **`tests/e2e/sidebar.spec.ts`** — Sidebar and UI state machine
 
 | Test | What it checks |
@@ -436,7 +452,14 @@ await electronApp.evaluate(({ BrowserWindow }) => {
 | `done-panel` | DonePanel wrapper |
 | `btn-reveal` | "Reveal in Finder" button |
 | `error-panel` | Error message container |
+| `error-action` | The line of advice under the message |
+| `error-code` | The failure code, for a support conversation |
 | `dismiss-error` | "Dismiss" link inside error panel |
+| `diagnostic-panel` | Diagnostic wrapper — only with `ENABLE_DIAGNOSTIC_PANEL=true` |
+| `run-diagnostic` | "Diagnose this file" link |
+| `diagnostic-result` | The report table |
+| `copy-diagnostic` | "Copy diagnostic" link |
+| `copy-to-temp` | Settings checkbox for copying the input here first |
 | `change-video` | "Change video" overlay button |
 
 ### Reports

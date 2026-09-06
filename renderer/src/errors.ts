@@ -15,7 +15,54 @@ interface ErrorRule {
   match: RegExp;
   /** Key into the translation resources. */
   key: string;
+  /**
+   * The code this failure is reported under, where one fits.
+   *
+   * Only the failures a user can do something specific about carry one: the
+   * code is what the panel shows beside the message and what selects the line
+   * of advice under it. A disk that is full or an ffmpeg that would not decode
+   * has no such action beyond what its own sentence already says.
+   */
+  code?: ErrorCode;
 }
+
+/**
+ * What went wrong with the file, in a form both halves of the app agree on.
+ *
+ * The main process can often name the cause exactly — it holds the path and
+ * the errno the open failed with — while the backend can only describe it in
+ * prose the rules below have to match. Both ends resolve to one of these, so
+ * the panel has a single thing to look up and the user gets the same advice
+ * whichever half noticed.
+ */
+export type ErrorCode =
+  | 'FILE_NOT_FOUND'
+  | 'FILE_LOCKED'
+  | 'PATH_ENCODING_ERROR'
+  | 'PATH_TOO_LONG'
+  | 'NETWORK_DRIVE_ERROR'
+  | 'PERMISSION_DENIED'
+  | 'DEVICE_NOT_READY';
+
+/** The sentence for a code, and the one line of advice under it. */
+export const CODE_MESSAGES: Record<ErrorCode, { key: string; action: string }> = {
+  FILE_NOT_FOUND:      { key: 'errors.inputMissing',     action: 'errors.actions.FILE_NOT_FOUND' },
+  FILE_LOCKED:         { key: 'errors.inputUnreadable',  action: 'errors.actions.FILE_LOCKED' },
+  PATH_ENCODING_ERROR: { key: 'errors.pathEncoding',     action: 'errors.actions.PATH_ENCODING_ERROR' },
+  PATH_TOO_LONG:       { key: 'errors.pathTooLong',      action: 'errors.actions.PATH_TOO_LONG' },
+  NETWORK_DRIVE_ERROR: { key: 'errors.networkDrive',     action: 'errors.actions.NETWORK_DRIVE_ERROR' },
+  PERMISSION_DENIED:   { key: 'errors.permission',       action: 'errors.actions.PERMISSION_DENIED' },
+  DEVICE_NOT_READY:    { key: 'errors.deviceNotReady',   action: 'errors.actions.DEVICE_NOT_READY' },
+};
+
+/**
+ * Marks a message the main process raised, naming the code directly.
+ *
+ * It knows the path and the errno, so it can say `NETWORK_DRIVE_ERROR` where
+ * the backend could only have said "no such file". Kept separate from the
+ * plain `i18n:` prefix so a caller can still name a key that has no code.
+ */
+export const CODE_PREFIX = 'code:';
 
 // Order matters: the first match wins, so the rules run from the most specific
 // cause to the least. A failed ffmpeg call reports its own stderr, and that text
@@ -38,10 +85,10 @@ const RULES: ErrorRule[] = [
   // Windows reports a share lock — a player, an antivirus scan, Explorer's
   // own preview — the same way it reports a denied ACL, so the sentence
   // behind this key covers both rather than picking one.
-  { match: /input file could not be read/i, key: 'errors.inputUnreadable' },
-  { match: /permission denied|EACCES|read-only file system/i, key: 'errors.permission' },
+  { match: /input file could not be read/i, key: 'errors.inputUnreadable', code: 'FILE_LOCKED' },
+  { match: /permission denied|EACCES|read-only file system/i, key: 'errors.permission', code: 'PERMISSION_DENIED' },
   { match: /no space left|ENOSPC/i, key: 'errors.diskFull' },
-  { match: /input file not found|no such file/i, key: 'errors.inputMissing' },
+  { match: /input file not found|no such file/i, key: 'errors.inputMissing', code: 'FILE_NOT_FOUND' },
   { match: /selection .* lies outside|outside the frame bounds/i, key: 'errors.roiOutside' },
   // The backend rejected the job payload. The raw text names the field, which
   // is worth keeping for a report but means nothing to the person exporting.
@@ -62,6 +109,8 @@ export interface FriendlyError {
   key: string | null;
   /** The untranslated text, for a bug report. */
   raw: string;
+  /** What went wrong, where the failure is one a user can act on. */
+  code?: ErrorCode;
 }
 
 /**
@@ -74,13 +123,31 @@ export function classifyError(raw: unknown): FriendlyError {
   const text = raw instanceof Error ? raw.message : String(raw ?? '').trim();
   if (!text) return { key: 'errors.unknown', raw: '' };
 
+  // The main process names the code outright, having had the path and the
+  // errno to hand. An unknown code is treated as no code rather than trusted,
+  // so an older renderer meeting a newer main process still shows a message.
+  if (text.startsWith(CODE_PREFIX)) {
+    const code = text.slice(CODE_PREFIX.length) as ErrorCode;
+    const known = CODE_MESSAGES[code];
+    if (known) return { key: known.key, raw: '', code };
+    return { key: 'errors.unknown', raw: '' };
+  }
+
   // Messages the app raises itself arrive as a key already.
   if (text.startsWith(OWN_MESSAGE_PREFIX)) {
     return { key: text.slice(OWN_MESSAGE_PREFIX.length), raw: '' };
   }
 
   const rule = RULES.find((r) => r.match.test(text));
-  return { key: rule ? rule.key : null, raw: text };
+  return { key: rule ? rule.key : null, raw: text, code: rule?.code };
+}
+
+/**
+ * The one line of advice for a classified failure, or null where there is
+ * nothing useful to add beyond the message itself.
+ */
+export function actionKeyFor(error: FriendlyError): string | null {
+  return error.code ? CODE_MESSAGES[error.code].action : null;
 }
 
 /**

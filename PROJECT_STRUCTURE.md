@@ -344,6 +344,7 @@ tests/
 │   │   ├── test_gpu.py                 # pytest — the CUDA probe, on a machine with no GPU
 │   │   ├── test_deep_pipeline.py       # pytest — routing, falling back, choosing the engine
 │   │   ├── test_path_utils.py          # pytest — Windows long paths, and the payload read that ignores the console code page
+│   │   ├── test_ipc_payload.py         # pytest — the job payload's trip from Electron: backslashes, UNC, Chinese
 │   └── renderer/
 │       └── utils.test.ts               # 15 vitest tests — all utility functions
 ├── integration/                        # reserved — not yet implemented

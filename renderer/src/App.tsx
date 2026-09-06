@@ -13,13 +13,16 @@ import Sidebar from './components/Sidebar';
 import type { Screen } from './components/Sidebar';
 import SubscriptionPage from './pages/SubscriptionPage';
 import SettingsPage from './pages/SettingsPage';
+import DiagnosticPanel from './components/DiagnosticPanel';
 import type { AppState, DeepNotice, JobConfig, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
 import { deepAvailability, deepPresetFor, previewSecondsFor, qualityForJob, temporalAvailability, usesDeepEngine, TEMPORAL_PREVIEW_MAX_SECONDS } from './capabilities';
 import type { Availability } from './capabilities';
 import { normalizeCoordinates, defaultOutputName, defaultOutputPath, formatDuration, mediaUrl, NULL_SINK } from './utils';
-import { classifyError, hasTechnicalDetail, OWN_MESSAGE_PREFIX } from './errors';
+import { classifyError, hasTechnicalDetail, actionKeyFor, OWN_MESSAGE_PREFIX } from './errors';
 import type { FriendlyError } from './errors';
 import { BUILT_IN_PRESETS, loadCustomPresets, saveCustomPresets, presetFromCurrent } from './presets';
+import { loadSettings, saveSettings } from './config';
+import type { AppSettings } from './config';
 import { topbarInset } from './titlebar';
 import type { Preset, PresetParams } from './presets';
 import { useHistory } from './hooks/useHistory';
@@ -88,6 +91,11 @@ function App() {
   const [deepNotice, setDeepNotice] = useState<DeepNotice | null>(null);
   const [updateReady, setUpdateReady] = useState<string | null>(null);
   const [copiedDetail, setCopiedDetail] = useState(false);
+  const [appSettings, setAppSettings] = useState<AppSettings>(() => loadSettings());
+  // Whether the main process offers the diagnostic panel at all. Off until it
+  // says otherwise, which also covers an older main process with no such
+  // handler — a support tool is the right thing to default to hidden.
+  const [diagnosticEnabled, setDiagnosticEnabled] = useState(false);
   const [customPresets, setCustomPresets] = useState<Preset[]>(() => loadCustomPresets());
   const [samples, setSamples] = useState<ProgressSample[]>([]);
   // How much of the video a preview covers. One second is the cheapest look
@@ -194,6 +202,19 @@ function App() {
     loader.load(path);
   }, [loader]);
 
+  // The panel is a support tool, enabled by the environment the app was
+  // started in rather than by anything the user can toggle.
+  useEffect(() => {
+    const ask = window.electronAPI.diagnosticEnabled;
+    if (!ask) return;
+    void ask().then(setDiagnosticEnabled).catch(() => setDiagnosticEnabled(false));
+  }, []);
+
+  const updateAppSettings = useCallback((next: AppSettings) => {
+    setAppSettings(next);
+    saveSettings(next);
+  }, []);
+
   const handleSelectFile = useCallback(async () => {
     const path = await window.electronAPI.openFile();
     if (!path) return;
@@ -254,7 +275,11 @@ function App() {
       setOutputPath(out);
     }
     const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
-    const payload: JobConfig = { inputPath, outputPath: out, roi: videoROI, method, mode: 'full', radius, kernelSize, color, dx, dy, temporalQuality, useDeepLearning: usesDeep };
+    // Only the export asks for a local copy. It reads the file many times
+    // over and runs for minutes, which is what makes a dropped share
+    // expensive; a one-second preview would pay the whole copy to save a read
+    // it does once.
+    const payload: JobConfig = { inputPath, outputPath: out, roi: videoROI, method, mode: 'full', radius, kernelSize, color, dx, dy, temporalQuality, useDeepLearning: usesDeep, copyInputLocally: appSettings.copyToTempBeforeProcessing, copyInputMaxBytes: appSettings.maxTempFileSizeMB * 1024 * 1024 };
     setProgress(0); setStateLabel(''); setSamples([]); setTemporalFallback(null); setDeepNotice(null); setAppState('processing');
     registerJobListeners();
     const started = await window.electronAPI.startJob(payload);
@@ -263,7 +288,7 @@ function App() {
       // "processing" state that nothing will ever complete.
       failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, registerJobListeners, failWith]);
+  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, appSettings, registerJobListeners, failWith]);
 
   const handlePreview = useCallback(async () => {
     if (!inputPath) return;
@@ -492,6 +517,23 @@ function App() {
         {appState === 'error' && (
           <div data-testid="error-panel" style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 6, padding: '8px 12px', color: 'var(--danger-text)', fontSize: 12 }}>
             {error.key ? t(error.key) : error.raw}
+            {/* What to do about it, where the failure is one with an answer.
+                Separated from the sentence above because that says what went
+                wrong and this says what to try — the second is the reason the
+                panel is worth reading twice. */}
+            {actionKeyFor(error) && (
+              <p data-testid="error-action" style={{ marginTop: 6, color: 'var(--danger-text)', opacity: 0.85 }}>
+                {t(actionKeyFor(error)!)}
+              </p>
+            )}
+            {/* The code is for the support conversation, not for the user, so
+                it is small and last. It is what makes two reports of "it will
+                not open my video" comparable. */}
+            {error.code && (
+              <p data-testid="error-code" style={{ marginTop: 6, fontSize: 10, opacity: 0.6, fontFamily: 'var(--mono, monospace)' }}>
+                {error.code}
+              </p>
+            )}
             <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
               {loadFailed ? (
                 <button data-testid="retry-load-sidebar" onClick={handleRetryLoad} style={{ background: 'none', border: 'none', color: 'var(--danger-action)', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}>{t('actions.retry')}</button>
@@ -513,6 +555,9 @@ function App() {
                 </button>
               )}
             </div>
+            {/* Only where the build was started with the panel enabled, and
+                only once there is a path to ask about. */}
+            {diagnosticEnabled && inputPath && <DiagnosticPanel filePath={inputPath} />}
           </div>
         )}
 
@@ -678,7 +723,7 @@ function App() {
         />
       )}
 
-      {screen === 'settings' && <SettingsPage systemInfo={systemInfo} />}
+      {screen === 'settings' && <SettingsPage systemInfo={systemInfo} settings={appSettings} onSettingsChange={updateAppSettings} />}
       </div>
       </div>
     </div>

@@ -253,6 +253,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   payload does not depend on the console code page along its text fallback
   either.
 
+### Added
+- **A failure to open a video now says which failure it was, and what to do.**
+  A file that was deleted, a share that dropped, a disk that was unplugged and
+  a file another program is holding all used to arrive as the same sentence.
+  The main process holds the path and the errno the open failed with, so it
+  names the cause outright — and where the file is merely missing, it asks
+  whether the volume is there at all, which is what separates a deleted video
+  from an ejected drive. Each carries a line of advice and a short code for a
+  support conversation.
+- **A diagnostic panel for a file that will not open.** It reports what the
+  filesystem says about the path — whether it exists, whether it reads, its
+  size, its volume and whether that volume is reachable, whether the path
+  carries non-ASCII characters or the remains of a bad decode, its length
+  against Windows' 260-character limit, and whether that machine has long
+  paths enabled — and copies the lot out as text. Off unless the app is
+  started with `ENABLE_DIAGNOSTIC_PANEL=true`: it is a support tool, not
+  something to put in front of everyone who mistypes a filename.
+- **An option to copy the video here before processing it** (Settings → File
+  handling, off by default). An export reads the file many times over, so a
+  network share that drops halfway leaves a half-finished job; copying it
+  local first trades one wait up front for a job the network cannot interrupt.
+  Only files on another volume are copied, only for an export, and only up to
+  500 MB — past that the original is read where it is. The copy is deleted
+  when the job ends, whether it finished, failed or was cancelled.
+
 ### Removed
 - **The demo-licence card and its one-click button.** The licence box above
   replaced both doors. The main process still issues, signs and records a demo

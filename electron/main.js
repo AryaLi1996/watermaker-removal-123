@@ -2,8 +2,9 @@
 
 const { app, BrowserWindow, ipcMain, dialog, nativeTheme, net, protocol, shell } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const { Readable } = require('stream');
 const system = require('./system');
 const { SubscriptionMonitor } = require('./subscription-monitor');
@@ -22,6 +23,8 @@ const temporalUsage = require('./temporal-usage');
  * translates the rest; the two ends have to agree on the string.
  */
 const OWN_MESSAGE_PREFIX = 'i18n:';
+// Names a failure by code rather than by key — see renderer/src/errors.ts.
+const CODE_PREFIX = 'code:';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -338,6 +341,7 @@ function purgePreviewClips() {
 /** Everything the backend left behind, for shutdown. */
 function purgeTempFiles() {
   purgePreviewClips();
+  purgeTempInputCopy();
   if (previewStill) {
     removeFile(previewStill);
     previewStill = null;
@@ -608,15 +612,54 @@ ipcMain.handle('payment:closeEmbedded', () => {
   return true;
 });
 
+/** Windows refuses a path at or past this length without the extended form. */
+const WINDOWS_MAX_PATH = 260;
+
+/** Is this path a UNC share (`\\server\share\…`) rather than a local one? */
+function isUncPath(inputPath) {
+  return inputPath.startsWith('\\\\');
+}
+
 /**
- * Why this payload's input file cannot be used, or null if it can.
+ * Whether the volume the path sits on is reachable at all.
  *
- * The backend checks this too, but only once it has been spawned. Doing it
- * here costs one open and close, and buys two things: nothing is started for
- * a job that cannot run, and the answer separates a file that is gone — moved,
- * renamed, on a drive that was ejected, on a share that dropped — from one
- * that is there and will not open. Those call for different things from the
- * user, and "could not open the video" asks for neither.
+ * This is what separates "the user deleted their video" from "the drive it
+ * was on is gone". Both surface as ENOENT — Windows reports an ejected disk
+ * and a dropped share that way too — so the file being missing says nothing
+ * on its own. Its volume being missing as well says a great deal, and points
+ * at something the user can actually fix.
+ */
+function volumeReachable(inputPath) {
+  try {
+    const root = path.parse(inputPath).root;
+    if (!root) return true; // a relative path has no volume to be missing
+    fs.accessSync(root, fs.constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The mojibake signature: a path that already lost its encoding somewhere.
+ *
+ * U+FFFD is what a lossy decode leaves behind. A path carrying one cannot
+ * name a file, and no amount of retrying will make it — saying so beats
+ * reporting the file as missing, which is what the character would otherwise
+ * cause a moment later.
+ */
+function looksMisdecoded(inputPath) {
+  return inputPath.includes('\uFFFD');
+}
+
+/**
+ * What is wrong with this payload's input file, as a code, or null if nothing.
+ *
+ * The backend checks the file too, but only once it has been spawned, and by
+ * then all it has is prose. Here there is the path and the errno the open
+ * failed with, which is enough to tell a deleted file from a disconnected
+ * share from a locked one — three problems that need three different things
+ * from the user, and that "could not open the video" answers none of.
  *
  * Node opens long Windows paths through the extended-length form itself, so
  * this agrees with the backend on a path past MAX_PATH rather than refusing a
@@ -629,6 +672,10 @@ function inputProblem(inputPath) {
   // this process can read.
   if (typeof inputPath !== 'string' || inputPath === '') return null;
 
+  // Checked before touching the disk: a path with a replacement character in
+  // it never named a file, so the open below would only mislabel it missing.
+  if (looksMisdecoded(inputPath)) return 'PATH_ENCODING_ERROR';
+
   // Opened rather than stat'd, because opening is the question being asked.
   // `fs.accessSync(R_OK)` on Windows reports the read-only attribute and
   // nothing else: it says yes for a file another program is holding with a
@@ -638,18 +685,195 @@ function inputProblem(inputPath) {
   try {
     handle = fs.openSync(inputPath, 'r');
   } catch (err) {
-    // ENOENT covers the file being moved, renamed or deleted, and an ejected
-    // drive letter or a dropped share, which Windows also reports that way.
-    if (err.code === 'ENOENT') return `${OWN_MESSAGE_PREFIX}errors.inputMissing`;
-    // EBUSY and EPERM are the share lock; EACCES is a permission that was
-    // never granted. One sentence covers them because Windows does not
-    // reliably tell them apart, and the advice — close whatever is holding
-    // the file, then check its permissions — is the same either way.
-    return `${OWN_MESSAGE_PREFIX}errors.inputUnreadable`;
+    return openFailureCode(inputPath, err);
   } finally {
     if (handle !== null) fs.closeSync(handle);
   }
   return null;
+}
+
+/** Turn a failed open into the code that describes it. */
+function openFailureCode(inputPath, err) {
+  // The one length error the platform reports outright. Windows more often
+  // just cannot find a path it considers too long, which the volume check
+  // below cannot distinguish from a deleted file — the diagnostic panel
+  // reports the length and the long-path setting for exactly that reason.
+  if (err.code === 'ENAMETOOLONG') return 'PATH_TOO_LONG';
+
+  // A share lock and a permission that was never granted. Windows does not
+  // reliably tell them apart, but the split is still worth making where the
+  // errno does: EBUSY and EPERM are something holding the file, EACCES is
+  // something forbidding it.
+  if (err.code === 'EBUSY' || err.code === 'EPERM') return 'FILE_LOCKED';
+  if (err.code === 'EACCES') return 'PERMISSION_DENIED';
+
+  // Everything else means the path did not resolve. Whether that is a file
+  // the user moved or a volume that went away is the useful question, and
+  // the volume is the thing to ask.
+  if (!volumeReachable(inputPath)) {
+    return isUncPath(inputPath) ? 'NETWORK_DRIVE_ERROR' : 'DEVICE_NOT_READY';
+  }
+  return 'FILE_NOT_FOUND';
+}
+
+// ─── Diagnostics ──────────────────────────────────────────────────
+//
+// What a support conversation about "it will not open my video" actually
+// needs, gathered in one place so the user can copy it out instead of being
+// walked through Explorer over email. Everything here is read-only, and it is
+// deliberately about the path rather than the app: the interesting facts are
+// where the file sits and what the filesystem says about it.
+
+/**
+ * Whether Windows will open paths past MAX_PATH without the extended prefix.
+ *
+ * Off by default, and the switch is a machine-wide registry value rather than
+ * anything this app can set, so the honest thing is to report it and say what
+ * it means. Irrelevant everywhere else, which is reported as such rather than
+ * as a pass — "not applicable" and "enabled" are different answers.
+ */
+function longPathSupport() {
+  const registryKey = 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem\\LongPathsEnabled';
+  if (process.platform !== 'win32') {
+    return { applicable: false, enabled: null, registryKey: '' };
+  }
+  try {
+    const out = execFileSync(
+      'reg',
+      ['query', 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem', '/v', 'LongPathsEnabled'],
+      { encoding: 'utf8', timeout: 5_000 },
+    );
+    // `reg query` prints "LongPathsEnabled    REG_DWORD    0x1".
+    const value = out.match(/LongPathsEnabled\s+REG_DWORD\s+0x([0-9a-f]+)/i);
+    return { applicable: true, enabled: value ? parseInt(value[1], 16) !== 0 : false, registryKey };
+  } catch {
+    // A missing value means the default, which is off. An inaccessible
+    // registry is not worth failing a diagnostic over.
+    return { applicable: true, enabled: null, registryKey };
+  }
+}
+
+/** Everything worth knowing about a path that will not open. */
+function diagnosePath(inputPath) {
+  const report = {
+    path: typeof inputPath === 'string' ? inputPath : '',
+    platform: process.platform,
+    length: 0,
+    exceedsMaxPath: false,
+    exists: false,
+    readable: false,
+    size: null,
+    isNetworkDrive: false,
+    volumeRoot: '',
+    volumeReachable: false,
+    hasNonAscii: false,
+    looksMisdecoded: false,
+    onSameVolumeAsTemp: null,
+    longPath: longPathSupport(),
+    error: null,
+  };
+  if (!report.path) return report;
+
+  report.length = report.path.length;
+  report.exceedsMaxPath = report.length >= WINDOWS_MAX_PATH;
+  report.isNetworkDrive = isUncPath(report.path);
+  // eslint-disable-next-line no-control-regex
+  report.hasNonAscii = /[^\x00-\x7F]/.test(report.path);
+  report.looksMisdecoded = looksMisdecoded(report.path);
+  report.volumeRoot = path.parse(report.path).root;
+  report.volumeReachable = volumeReachable(report.path);
+
+  try {
+    const stat = fs.statSync(report.path);
+    report.exists = true;
+    report.size = stat.size;
+    // Different volume from the temp directory is what "network drive or
+    // external disk" comes down to in a form every platform can answer.
+    try {
+      report.onSameVolumeAsTemp = stat.dev === fs.statSync(os.tmpdir()).dev;
+    } catch { /* the temp dir should always stat, but a diagnostic must not throw */ }
+  } catch (err) {
+    report.error = err.code ?? String(err);
+    return report;
+  }
+
+  let handle = null;
+  try {
+    handle = fs.openSync(report.path, 'r');
+    report.readable = true;
+  } catch (err) {
+    report.error = err.code ?? String(err);
+  } finally {
+    if (handle !== null) fs.closeSync(handle);
+  }
+  return report;
+}
+
+ipcMain.handle('diagnostic:path', (_event, filePath) => diagnosePath(filePath));
+
+/**
+ * Whether the diagnostic panel is offered at all.
+ *
+ * Off unless asked for: it is a support tool, and a button that dumps paths
+ * and volume layout is not something to put in front of everyone who ever
+ * mistypes a filename.
+ */
+ipcMain.handle('diagnostic:enabled', () => process.env.ENABLE_DIAGNOSTIC_PANEL === 'true');
+
+// ─── Copying an input off a slow or removable volume ──────────────
+//
+// Off by default. A video on a network share or an external disk is read
+// several times over during an export, and a share that drops halfway leaves
+// a half-finished job; copying it local first trades disk space and one wait
+// up front for a job that cannot be interrupted by the network. It is a
+// setting rather than a default because for most people the extra copy is
+// pure cost.
+
+/**
+ * How large a file is still worth copying, past which the original is used.
+ *
+ * The renderer owns this setting and sends it with the job, so the number the
+ * user is shown is the number enforced. This is only the fallback for a
+ * payload that does not carry one.
+ */
+const DEFAULT_MAX_TEMP_COPY_BYTES = 500 * 1024 * 1024;
+
+/** The temp copy this job is reading from, deleted when the job ends. */
+let tempInputCopy = null;
+
+function purgeTempInputCopy() {
+  if (tempInputCopy) {
+    removeFile(tempInputCopy);
+    tempInputCopy = null;
+  }
+}
+
+/**
+ * A local copy of `inputPath`, or null to use the original.
+ *
+ * Null covers every reason not to bother — the file is already local, it is
+ * too big to be worth duplicating, or the copy itself failed. None of those
+ * is a reason to refuse the job: the original path is what the app used
+ * before this setting existed, and it usually works.
+ */
+function localCopyOfInput(inputPath, maxBytes) {
+  const cap = typeof maxBytes === 'number' && maxBytes > 0 ? maxBytes : DEFAULT_MAX_TEMP_COPY_BYTES;
+  try {
+    const stat = fs.statSync(inputPath);
+    if (stat.size > cap) return null;
+    // Already on the volume the copy would go to, so copying buys nothing.
+    if (!isUncPath(inputPath) && stat.dev === fs.statSync(os.tmpdir()).dev) return null;
+
+    const target = path.join(
+      os.tmpdir(),
+      `wm_input_${Date.now()}_${path.basename(inputPath)}`,
+    );
+    fs.copyFileSync(inputPath, target);
+    return target;
+  } catch (err) {
+    console.error('[copy-to-temp] falling back to the original path:', err.message);
+    return null;
+  }
 }
 
 // ─── Start full processing job ────────────────────────────────────
@@ -660,7 +884,7 @@ ipcMain.handle('job:start', (_event, payload) => {
   // refused job leaves the previous preview and the loaded video alone.
   const problem = inputProblem(payload?.inputPath);
   if (problem) {
-    send('job:error', problem);
+    send('job:error', `${CODE_PREFIX}${problem}`);
     return false;
   }
 
@@ -689,6 +913,18 @@ ipcMain.handle('job:start', (_event, payload) => {
 
   // Clean up the previous job's preview clip before starting.
   purgePreviewClips();
+  purgeTempInputCopy();
+
+  // `copyInputLocally` is a renderer setting, not part of the job schema, so
+  // it is acted on here and kept out of what the backend is sent.
+  const { copyInputLocally, copyInputMaxBytes, ...jobPayload } = payload ?? {};
+  if (copyInputLocally && typeof jobPayload.inputPath === 'string') {
+    const copied = localCopyOfInput(jobPayload.inputPath, copyInputMaxBytes);
+    if (copied) {
+      tempInputCopy = copied;
+      jobPayload.inputPath = copied;
+    }
+  }
 
   const { command, args } = backendCommand();
   // Only a resolved path can be checked up front; a bare command name is left
@@ -737,13 +973,20 @@ ipcMain.handle('job:start', (_event, payload) => {
   });
 
   child.stdin.on('error', () => { /* process died before the payload was written */ });
-  child.stdin.write(JSON.stringify(payload));
+  child.stdin.write(JSON.stringify(jobPayload));
   child.stdin.end();
 
   child.on('close', (code) => {
     // Only clear the slot if this job still owns it: a superseded preview
     // exits after the export that replaced it has already started.
     if (currentJob === job) currentJob = null;
+
+    // The local copy this job was reading from, if it made one. Dropped here
+    // rather than at the next job start so a finished export does not leave a
+    // duplicate of the video sitting in the temp directory until the app is
+    // used again — cancelled and superseded jobs included, which is why this
+    // comes before the early return below.
+    if (jobPayload.inputPath === tempInputCopy) purgeTempInputCopy();
 
     if (job.cancelled || job.superseded) return;
 
@@ -758,7 +1001,7 @@ ipcMain.handle('job:start', (_event, payload) => {
     // temp path; and a job that printed an ERROR line, whatever it then exits
     // with — that line is the backend's verdict on a file it never wrote.
     if (code === 0 && !ctx.errored) {
-      if (job.isExport) send('job:done', ctx.outputPath ?? payload?.outputPath ?? null);
+      if (job.isExport) send('job:done', ctx.outputPath ?? jobPayload.outputPath ?? null);
     } else if (!ctx.errored) {
       send('job:error', `Process exited with code ${code}`);
     }

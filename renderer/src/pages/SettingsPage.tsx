@@ -7,13 +7,16 @@
 import ThemePicker from '../components/ThemePicker';
 import { useTranslation } from '../hooks/useTranslation';
 import type { SystemInfo } from '../types';
+import type { AppSettings } from '../config';
 
 interface SettingsPageProps {
   /** For the About section. Null until the main process has answered. */
   systemInfo: SystemInfo | null;
+  settings: AppSettings;
+  onSettingsChange: (next: AppSettings) => void;
 }
 
-export default function SettingsPage({ systemInfo }: SettingsPageProps) {
+export default function SettingsPage({ systemInfo, settings, onSettingsChange }: SettingsPageProps) {
   const { t } = useTranslation();
 
   return (
@@ -30,6 +33,32 @@ export default function SettingsPage({ systemInfo }: SettingsPageProps) {
           </h2>
           <p style={{ color: 'var(--text-faint)', fontSize: 12 }}>{t('settings.appearanceHint')}</p>
           <ThemePicker />
+        </section>
+
+        <section
+          style={{
+            display: 'flex', flexDirection: 'column', gap: 10,
+            borderTop: '1px solid var(--border)', paddingTop: 20,
+          }}
+        >
+          <h2 style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+            {t('settings.fileHandling')}
+          </h2>
+          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
+            <input
+              data-testid="copy-to-temp"
+              type="checkbox"
+              checked={settings.copyToTempBeforeProcessing}
+              onChange={(e) => onSettingsChange({ ...settings, copyToTempBeforeProcessing: e.target.checked })}
+              style={{ marginTop: 2 }}
+            />
+            <span>
+              <span style={{ color: 'var(--text)', fontSize: 13 }}>{t('settings.copyToTemp')}</span>
+              <span style={{ display: 'block', color: 'var(--text-faint)', fontSize: 11, marginTop: 3 }}>
+                {t('settings.copyToTempHint', { limit: String(settings.maxTempFileSizeMB) })}
+              </span>
+            </span>
+          </label>
         </section>
 
         <section
