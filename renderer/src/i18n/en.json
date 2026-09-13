@@ -162,6 +162,7 @@
   },
   "errors": {
     "ffmpeg": "Could not read or write the video. The file may be corrupted, or in a format this build of FFmpeg does not support.",
+    "ffmpegUnusable": "The video tools that ship with this app could not start, so nothing could be read from the file. The installation is incomplete or is being blocked — the video itself is very likely fine.",
     "pythonMissing": "The Python environment is missing. Run ./dev.sh to create it, then restart the app.",
     "backendMissing": "This installation is incomplete — the processing backend is missing. Reinstalling should fix it.",
     "permission": "No permission to read or write that file. Choose a different output location, or check the file is not open in another program.",
@@ -189,7 +190,8 @@
       "PATH_TOO_LONG": "Move the file somewhere with a shorter path, such as D:\\, then load it again.",
       "NETWORK_DRIVE_ERROR": "Reconnect the network drive, then try again. Copying the video to this computer first also works.",
       "PERMISSION_DENIED": "Check the file's permissions, and that it is not open in another program.",
-      "DEVICE_NOT_READY": "Reconnect the drive and wait for the system to mount it, then try again."
+      "DEVICE_NOT_READY": "Reconnect the drive and wait for the system to mount it, then try again.",
+      "FFMPEG_UNUSABLE": "Reinstall the app. If it still fails, allow it through your antivirus or security software and try again."
     }
   },
   "notifications": {

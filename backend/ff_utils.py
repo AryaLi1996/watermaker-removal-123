@@ -16,6 +16,14 @@ from typing import Callable, Optional
 # orphan — burning CPU and writing into a temp dir that has just been deleted.
 _active_proc: Optional[subprocess.Popen] = None
 
+# Whether the child that is running was stopped by us rather than by a failure
+# of its own. A cancel kills ffmpeg mid-frame: it exits non-zero and says
+# nothing, which is the same shape as a binary that could not start at all.
+# Nothing in the exit status tells those apart — on Windows `terminate()`
+# gives 1, the same as an ordinary error — so the fact has to be remembered.
+# Without it, pressing Cancel would report a broken installation.
+_terminated = False
+
 
 def ffmpeg_bin() -> str:
     """
@@ -60,6 +68,38 @@ class FFmpegError(subprocess.CalledProcessError):
         return f'{super().__str__()} {detail}' if detail else super().__str__()
 
 
+class FFmpegNotUsable(RuntimeError):
+    """
+    The tool ran, failed, and said nothing — which is not how it reports a
+    problem with a file.
+
+    Under `-v error` ffprobe prints a line for every file it refuses: "moov
+    atom not found", "Invalid data found when processing input", "No such file
+    or directory". It exits 1 and it explains itself. A non-zero exit with an
+    empty stderr means it never got as far as looking — the binary could not
+    start, could not find its libraries, or was stopped by something outside
+    it. On Windows that is what a packaged launcher-instead-of-program looks
+    like, and it exits 4294967295.
+
+    Worth its own type because the alternative is the generic ffmpeg failure,
+    which tells the user their video is corrupt and sends them off to re-encode
+    a file that was never the problem.
+
+    The wording matters: the renderer matches on this text to say that the
+    installation, not the video, is what needs attention.
+    """
+
+    def __init__(self, cmd: list[str], returncode: int):
+        self.cmd = cmd
+        self.returncode = returncode
+        tool = os.path.basename(cmd[0]) if cmd else 'ffmpeg'
+        super().__init__(
+            f'{tool} could not be started: it exited with status {returncode} '
+            f'without reporting anything. The bundled FFmpeg looks missing, '
+            f'incomplete or blocked.'
+        )
+
+
 class FFmpegTimeout(RuntimeError):
     """
     A call that never came back, and was killed rather than waited on.
@@ -89,7 +129,7 @@ CLIP_TIMEOUT = 120.0
 
 def _popen(cmd: list[str]) -> subprocess.Popen:
     """Start a child, registering it so a cancel can stop it."""
-    global _active_proc
+    global _active_proc, _terminated
     proc = subprocess.Popen(
         cmd,
         # ffmpeg reads stdin by default and would otherwise inherit this
@@ -102,6 +142,7 @@ def _popen(cmd: list[str]) -> subprocess.Popen:
         stderr=subprocess.PIPE,
     )
     _active_proc = proc
+    _terminated = False
     return proc
 
 
@@ -125,6 +166,8 @@ def _run(cmd: list[str], timeout: Optional[float] = None) -> subprocess.Complete
         _active_proc = None
 
     if proc.returncode != 0:
+        if not stderr_tail(stderr) and not _terminated:
+            raise FFmpegNotUsable(cmd, proc.returncode)
         raise FFmpegError(proc.returncode, cmd, stdout, stderr)
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
@@ -195,14 +238,18 @@ def _run_reporting(
 
     stderr = b''.join(chunk for chunk in captured if chunk)
     if proc.returncode != 0:
+        if not stderr_tail(stderr) and not _terminated:
+            raise FFmpegNotUsable(cmd, proc.returncode)
         raise FFmpegError(proc.returncode, cmd, b'', stderr)
     return subprocess.CompletedProcess(cmd, proc.returncode, b'', stderr)
 
 
 def terminate() -> None:
     """Stop the ffmpeg/ffprobe child, if one is running. Safe to call anytime."""
+    global _terminated
     proc = _active_proc
     if proc is not None and proc.poll() is None:
+        _terminated = True
         proc.terminate()
 
 

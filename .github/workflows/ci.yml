@@ -38,7 +38,20 @@ jobs:
           case "$RUNNER_OS" in
             Linux)   sudo apt-get update && sudo apt-get install -y ffmpeg ;;
             macOS)   brew install ffmpeg ;;
-            Windows) choco install ffmpeg -y ;;
+            Windows)
+              choco install ffmpeg -y
+              # Chocolatey puts a *shim* on PATH, not the program: a small
+              # launcher that finds the real binary relative to chocolatey's
+              # own directory. It works perfectly here and is useless once
+              # copied anywhere else, which is exactly what the packaging step
+              # does — that shipped a build whose every video load failed.
+              # Put the real binaries first so `where ffmpeg` answers with one.
+              real=$(find "/c/ProgramData/chocolatey/lib/ffmpeg" -name 'ffmpeg.exe' 2>/dev/null | head -1)
+              if [ -n "$real" ]; then
+                echo "$(dirname "$real")" >> "$GITHUB_PATH"
+                export PATH="$(dirname "$real"):$PATH"
+              fi
+              ;;
           esac
           ffmpeg -version | head -1
           ffprobe -version | head -1
