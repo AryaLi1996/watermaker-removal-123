@@ -1,6 +1,6 @@
 {
   "name": "smoothvoice-watermark-remover",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "SmoothVoice desktop video watermark removal tool",
   "author": "pandac.in",
   "main": "electron/main.js",
