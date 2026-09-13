@@ -47,6 +47,37 @@ describe('error codes', () => {
     ).toBe('FILE_LOCKED');
   });
 
+  it('blames the installation, not the video, when ffmpeg never ran', () => {
+    // The Windows report verbatim: ffprobe exited 4294967295 with an empty
+    // stderr, and the app answered "your file may be corrupted". It was not —
+    // the bundled ffprobe never looked at it.
+    const silent = classifyError(
+      'ffprobe could not be started: it exited with status 4294967295 without '
+        + 'reporting anything. The bundled FFmpeg looks missing, incomplete or blocked.',
+    );
+
+    expect(silent.code).toBe('FFMPEG_UNUSABLE');
+    expect(silent.key).toBe('errors.ffmpegUnusable');
+
+    setLocale('en');
+    // The old answer sent people off to re-encode a perfectly good file.
+    expect(t(silent.key!)).not.toMatch(/corrupt/i);
+    expect(t(silent.key!)).toContain('could not start');
+    setLocale('zh');
+    expect(t(silent.key!)).toContain('无法启动');
+  });
+
+  it('still calls a real decode failure a decode failure', () => {
+    // The rule above must not swallow the case it sits in front of: when
+    // ffmpeg does explain itself, that is about the file.
+    const real = classifyError(
+      "Command '['ffprobe', 'clip.mp4']' returned non-zero exit status 1. "
+        + 'moov atom not found | clip.mp4: Invalid data found when processing input',
+    );
+    expect(real.key).toBe('errors.ffmpeg');
+    expect(real.code).toBeUndefined();
+  });
+
   it('offers no advice for a failure that has no specific action', () => {
     const ffmpeg = classifyError('ffmpeg exited with status 1');
     expect(ffmpeg.code).toBeUndefined();

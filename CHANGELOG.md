@@ -288,6 +288,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same thing the top bar now says, in the place people stop looking.
 
 ### Fixed
+- **The Windows build shipped an ffmpeg that could not run, and blamed the
+  user's video for it.** `where ffmpeg` answers with whatever is on PATH,
+  which on the build machine was a chocolatey *shim* — a launcher that finds
+  the real program relative to chocolatey's own directory. The packaging step
+  copied the shim, which then resolved nothing, wrote nothing, and exited
+  4294967295. Every video load failed, and the message said the file "may be
+  corrupted, or in a format this build of FFmpeg does not support" — about a
+  file ffmpeg had never opened. The build now runs what it copied and refuses
+  to continue if it is not ffmpeg, and the Windows workflows put the real
+  binaries ahead of the shim.
+- **A tool that fails without saying anything is no longer reported as a
+  broken video.** Under `-v error` ffprobe explains every file it refuses and
+  exits 1; a non-zero exit with nothing on stderr means it never looked. That
+  now names the installation, with its own message and advice in both
+  languages — except after a cancel, which kills ffmpeg mid-frame and looks
+  identical from the outside.
 - **A video in a Chinese folder no longer reports itself as missing on
   Windows.** The job payload crosses to the backend as UTF-8, which is what
   Electron writes; Python was decoding it with the console code page instead —

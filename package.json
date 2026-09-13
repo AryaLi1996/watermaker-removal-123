@@ -61,7 +61,10 @@
         "filter": [
           "watermark-backend*",
           "ffmpeg*",
-          "ffprobe*"
+          "ffprobe*",
+          "av*.dll",
+          "sw*.dll",
+          "postproc*.dll"
         ]
       }
     ],

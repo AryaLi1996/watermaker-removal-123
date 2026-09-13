@@ -42,7 +42,8 @@ export type ErrorCode =
   | 'PATH_TOO_LONG'
   | 'NETWORK_DRIVE_ERROR'
   | 'PERMISSION_DENIED'
-  | 'DEVICE_NOT_READY';
+  | 'DEVICE_NOT_READY'
+  | 'FFMPEG_UNUSABLE';
 
 /** The sentence for a code, and the one line of advice under it. */
 export const CODE_MESSAGES: Record<ErrorCode, { key: string; action: string }> = {
@@ -53,6 +54,7 @@ export const CODE_MESSAGES: Record<ErrorCode, { key: string; action: string }> =
   NETWORK_DRIVE_ERROR: { key: 'errors.networkDrive',     action: 'errors.actions.NETWORK_DRIVE_ERROR' },
   PERMISSION_DENIED:   { key: 'errors.permission',       action: 'errors.actions.PERMISSION_DENIED' },
   DEVICE_NOT_READY:    { key: 'errors.deviceNotReady',   action: 'errors.actions.DEVICE_NOT_READY' },
+  FFMPEG_UNUSABLE:     { key: 'errors.ffmpegUnusable',   action: 'errors.actions.FFMPEG_UNUSABLE' },
 };
 
 /**
@@ -76,6 +78,14 @@ const RULES: ErrorRule[] = [
   // where a preset or an older renderer asked for it anyway.
   { match: /temporal requires at least/i, key: 'errors.temporalUnsupported' },
   { match: /bundled backend not found/i, key: 'errors.backendMissing' },
+  // Up here with the other broken-installation cases, and far above the
+  // ffmpeg catch-all at the bottom. The backend raises this when ffmpeg or
+  // ffprobe exits without writing a word, which is not how either reports a
+  // problem with a file — it is how a launcher-instead-of-a-program fails, or
+  // one that cannot find its libraries. Left to the catch-all it reads as
+  // "your video is corrupt", which sends the user to re-encode a file that
+  // was never the problem.
+  { match: /could not be started: it exited with status/i, key: 'errors.ffmpegUnusable', code: 'FFMPEG_UNUSABLE' },
   // Ahead of the permission rule, and that ordering is load-bearing: the
   // backend appends the reason the OS gave, which for a share lock is the
   // word-for-word "Permission denied". Below that rule this message would be

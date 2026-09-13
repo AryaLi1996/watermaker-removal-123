@@ -345,6 +345,7 @@ tests/
 │   │   ├── test_deep_pipeline.py       # pytest — routing, falling back, choosing the engine
 │   │   ├── test_path_utils.py          # pytest — Windows long paths, and the payload read that ignores the console code page
 │   │   ├── test_ipc_payload.py         # pytest — the job payload's trip from Electron: backslashes, UNC, Chinese
+│   │   ├── test_ffmpeg_unusable.py     # pytest — a tool that never ran, told apart from a file that cannot be read
 │   └── renderer/
 │       └── utils.test.ts               # 15 vitest tests — all utility functions
 ├── integration/                        # reserved — not yet implemented
@@ -369,6 +370,7 @@ See [TESTING.md](TESTING.md) for how to run these.
 scripts/
 ├── validate_env.py             # Checks Python version, cv2, numpy, ffmpeg on PATH
 ├── build_backend.py            # PyInstaller bundle of backend/ for packaging
+├── ffmpeg-bundle.js            # Choosing the ffmpeg to ship, and proving the copy runs
 ├── build.js                    # Renderer + backend build, ahead of electron-builder
 ├── write-build-config.js       # Bakes LICENSE_* into electron/build-config.json
 └── generate-test-license.js    # Mints a test licence for a development build

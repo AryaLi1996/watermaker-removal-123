@@ -13,6 +13,7 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { bundleTool } = require('./ffmpeg-bundle');
 
 const ROOT = path.join(__dirname, '..');
 const IS_WIN = process.platform === 'win32';
@@ -68,10 +69,17 @@ if (!fs.existsSync(frozen)) {
 // Ship ffmpeg alongside the backend when this machine has it, so the installed
 // app does not require the user to have ffmpeg on their PATH. Without it the
 // build still succeeds — the app just falls back to the user's own ffmpeg.
+//
+// The copy is then run. Being on PATH does not make a file the program: a
+// chocolatey shim, or a shared build separated from its libraries, copies
+// perfectly and then cannot start — and nothing on the build machine notices,
+// because the build machine has a working ffmpeg of its own. That ships an
+// installer whose every video load fails, which is the exact class of thing
+// this script exists to catch.
 console.log('🎬 Bundling ffmpeg...');
 const missing = [];
+const unusable = [];
 for (const tool of ['ffmpeg', 'ffprobe']) {
-  const binary = tool + (IS_WIN ? '.exe' : '');
   let source;
   try {
     const which = IS_WIN ? 'where' : 'which';
@@ -83,9 +91,21 @@ for (const tool of ['ffmpeg', 'ffprobe']) {
     missing.push(tool);
     continue;
   }
-  fs.copyFileSync(source, path.join(DIST, binary));
-  fs.chmodSync(path.join(DIST, binary), 0o755);
+  const reason = bundleTool({ tool, source, dist: DIST, isWindows: IS_WIN });
+  if (reason) {
+    unusable.push(`${tool} (from ${source}): ${reason}`);
+    continue;
+  }
   console.log(`   bundled ${tool} from ${source}`);
+}
+if (unusable.length) {
+  fail(
+    `The ffmpeg copied into the bundle does not run:\n   ${unusable.join('\n   ')}`,
+    'PATH is pointing at a launcher rather than the program — chocolatey installs one —\n'
+    + '   or at a shared build whose libraries are elsewhere. Install a static ffmpeg and\n'
+    + '   put it on PATH ahead of that one. Shipping this copy would make every video fail\n'
+    + '   to load, with nothing on this machine to show for it.',
+  );
 }
 if (missing.length) {
   console.warn(`   ⚠️  ${missing.join(' and ')} not found on PATH — not bundled.`);
