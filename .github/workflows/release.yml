@@ -43,20 +43,40 @@ jobs:
             Linux)   sudo apt-get update && sudo apt-get install -y ffmpeg ;;
             macOS)   brew install ffmpeg ;;
             Windows)
-              choco install ffmpeg -y
-              # Chocolatey puts a *shim* on PATH, not the program: a small
-              # launcher that finds the real binary relative to chocolatey's
-              # own directory. It works perfectly here and is useless once
-              # copied anywhere else, which is exactly what the packaging step
-              # does — that shipped a build whose every video load failed.
-              # Put the real binaries first so `where ffmpeg` answers with one.
-              real=$(find "/c/ProgramData/chocolatey/lib/ffmpeg" -name 'ffmpeg.exe' 2>/dev/null | head -1)
-              if [ -n "$real" ]; then
-                echo "$(dirname "$real")" >> "$GITHUB_PATH"
-                export PATH="$(dirname "$real"):$PATH"
+              # A *static* ffmpeg, deliberately not chocolatey's.
+              #
+              # Chocolatey puts a shim on PATH — a launcher that finds the real
+              # binary relative to chocolatey's own directory — and the
+              # packaging step copies whatever PATH points at. A copied shim
+              # resolves nothing and exits 4294967295, which is how a release
+              # once shipped unable to read a single video.
+              #
+              # An earlier attempt looked for chocolatey's real binary under
+              # lib/ffmpeg and guessed the layout wrong; because it said
+              # nothing when it found nothing, it looked like it had worked.
+              # So this stops depending on that layout at all and fetches a
+              # self-contained build, then says which one it took.
+              curl -fsSL -o /tmp/ffmpeg.zip \
+                https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+              command -v 7z >/dev/null || { echo '7z is not on this runner'; exit 1; }
+              7z x -y -o/tmp/ffmpeg-static /tmp/ffmpeg.zip >/dev/null
+              # -print -quit rather than a pipe: `find | head` dies of SIGPIPE
+              # under pipefail, which would fail the step for succeeding.
+              exe=$(find /tmp/ffmpeg-static -name 'ffmpeg.exe' -print -quit)
+              bin=$(dirname "$exe")
+              if [ -z "$exe" ] || [ ! -f "$bin/ffprobe.exe" ]; then
+                echo "no static ffmpeg/ffprobe pair in the archive"
+                exit 1
               fi
+              echo "$bin" >> "$GITHUB_PATH"
+              export PATH="$bin:$PATH"
               ;;
           esac
+          # Say which ffmpeg won. Without this a step that quietly selected
+          # nothing is indistinguishable from one that worked, which is exactly
+          # how the previous attempt at this fix passed while doing nothing.
+          command -v ffmpeg
+          command -v ffprobe
           ffmpeg -version | head -1
           ffprobe -version | head -1
 

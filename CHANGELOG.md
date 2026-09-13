@@ -296,8 +296,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   4294967295. Every video load failed, and the message said the file "may be
   corrupted, or in a format this build of FFmpeg does not support" — about a
   file ffmpeg had never opened. The build now runs what it copied and refuses
-  to continue if it is not ffmpeg, and the Windows workflows put the real
-  binaries ahead of the shim.
+  to continue if it is not ffmpeg, and the Windows release installs a static
+  build so there is no shim to copy in the first place.
 - **A tool that fails without saying anything is no longer reported as a
   broken video.** Under `-v error` ffprobe explains every file it refuses and
   exits 1; a non-zero exit with nothing on stderr means it never looked. That
