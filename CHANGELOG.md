@@ -297,7 +297,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   corrupted, or in a format this build of FFmpeg does not support" — about a
   file ffmpeg had never opened. The build now runs what it copied and refuses
   to continue if it is not ffmpeg, and the Windows release installs a static
-  build so there is no shim to copy in the first place.
+  build so there is no shim to copy in the first place. The first attempt at
+  that second half did nothing: it found chocolatey's real binary and then
+  put the MSYS path into the Windows PATH, where it meant nothing — and said
+  so little that it looked like it had worked.
 - **A tool that fails without saying anything is no longer reported as a
   broken video.** Under `-v error` ffprobe explains every file it refuses and
   exits 1; a non-zero exit with nothing on stderr means it never looked. That

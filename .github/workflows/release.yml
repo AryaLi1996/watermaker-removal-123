@@ -51,11 +51,13 @@ jobs:
               # resolves nothing and exits 4294967295, which is how a release
               # once shipped unable to read a single video.
               #
-              # An earlier attempt looked for chocolatey's real binary under
-              # lib/ffmpeg and guessed the layout wrong; because it said
-              # nothing when it found nothing, it looked like it had worked.
-              # So this stops depending on that layout at all and fetches a
-              # self-contained build, then says which one it took.
+              # An earlier attempt searched chocolatey's own directory for
+              # the real binary. It found it — the layout was right — but
+              # wrote the MSYS path `find` had answered with straight into
+              # $GITHUB_PATH, which Windows cannot read, so PATH never gained
+              # the directory and the step silently changed nothing. This
+              # stops depending on chocolatey's layout at all, converts the
+              # path, and says which binary it took.
               curl -fsSL -o /tmp/ffmpeg.zip \
                 https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
               command -v 7z >/dev/null || { echo '7z is not on this runner'; exit 1; }
@@ -68,7 +70,13 @@ jobs:
                 echo "no static ffmpeg/ffprobe pair in the archive"
                 exit 1
               fi
-              echo "$bin" >> "$GITHUB_PATH"
+              # $GITHUB_PATH is read by Windows, not by bash: `find` under
+              # Git Bash answers in MSYS form (/c/...), and a PATH entry in
+              # that form means nothing to Windows. Writing it unconverted is
+              # what made the previous attempt a silent no-op — the search had
+              # found the binary, but the directory never reached PATH.
+              echo "selected $(cygpath -w "$bin")"
+              cygpath -w "$bin" >> "$GITHUB_PATH"
               export PATH="$bin:$PATH"
               ;;
           esac
