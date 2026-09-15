@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **CI now checks, on every pull request, that this machine can bundle an
+  ffmpeg that runs.** The packaging step has refused to ship a copy that
+  cannot start since 1.2.0, but packaging only happens on a tag, so that
+  refusal never ran on a pull request — and a chocolatey shim reached users
+  twice before it did, each time exiting 4294967295 without a word. The new
+  `Windows ffmpeg bundle` job performs the same copy-and-run the release
+  performs, into a temporary directory, in seconds: no virtualenv, no
+  PyInstaller, no electron-builder. It is stricter than the build in one
+  respect — an ffmpeg missing from PATH fails the job, where the build merely
+  warns, because on a runner that is a step that silently did nothing.
+
+### Changed
+- **The release and CI now install the Windows ffmpeg through one shared
+  definition**, `.github/actions/static-ffmpeg`, rather than a copy each. A
+  second copy in CI would have tested itself rather than the release, and
+  would have drifted the first time only one of them was corrected. This also
+  means the release's ffmpeg step is finally exercised before a release
+  instead of only during one.
+- The ffmpeg bundling loop moved out of `scripts/build.js` into `bundleFfmpeg`
+  in `scripts/ffmpeg-bundle.js`, so the release and the new CI job run the
+  same code rather than two descriptions of it.
+
 ## [1.2.0] - 2026-09-13
 
 ### Changed

@@ -13,7 +13,7 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { bundleTool } = require('./ffmpeg-bundle');
+const { bundleFfmpeg } = require('./ffmpeg-bundle');
 
 const ROOT = path.join(__dirname, '..');
 const IS_WIN = process.platform === 'win32';
@@ -77,25 +77,8 @@ if (!fs.existsSync(frozen)) {
 // installer whose every video load fails, which is the exact class of thing
 // this script exists to catch.
 console.log('🎬 Bundling ffmpeg...');
-const missing = [];
-const unusable = [];
-for (const tool of ['ffmpeg', 'ffprobe']) {
-  let source;
-  try {
-    const which = IS_WIN ? 'where' : 'which';
-    source = execFileSync(which, [tool], { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
-  } catch {
-    source = '';
-  }
-  if (!source || !fs.existsSync(source)) {
-    missing.push(tool);
-    continue;
-  }
-  const reason = bundleTool({ tool, source, dist: DIST, isWindows: IS_WIN });
-  if (reason) {
-    unusable.push(`${tool} (from ${source}): ${reason}`);
-    continue;
-  }
+const { bundled, missing, unusable } = bundleFfmpeg({ dist: DIST, isWindows: IS_WIN });
+for (const { tool, source } of bundled) {
   console.log(`   bundled ${tool} from ${source}`);
 }
 if (unusable.length) {

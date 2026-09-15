@@ -210,6 +210,45 @@ jobs:
             row "renderer-dist"               "$URL_RENDERER"    "Built renderer bundle"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The one step whose failure ships a dead installer, on every pull request.
+  #
+  # `npm run dist` refuses to package an ffmpeg that cannot start, but a release
+  # only happens on a tag, so that refusal never ran on a PR. Twice a chocolatey
+  # shim got past it and reached users, exiting 4294967295 without a word.
+  #
+  # This runs the same bundling the release does — resolve ffmpeg on PATH, copy
+  # it with its libraries, then run the copy — against a temporary directory,
+  # through the same ffmpeg install the release uses. No venv, no PyInstaller,
+  # no electron-builder, so it costs a fraction of a packaging job and fails for
+  # the same reasons.
+  #
+  # Windows only: it is the only platform that bundles a copied binary, and the
+  # only one where PATH routinely answers with a launcher instead of a program.
+  bundle:
+    name: Windows ffmpeg bundle
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install a static ffmpeg
+        uses: ./.github/actions/static-ffmpeg
+
+      - name: Report which ffmpeg won
+        shell: bash
+        run: |
+          command -v ffmpeg
+          command -v ffprobe
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
+
+      - name: Bundle it, and run what was bundled
+        run: node scripts/verify-ffmpeg-bundle.js
+
   artifacts:
     name: Bundle artifacts
     needs: test
