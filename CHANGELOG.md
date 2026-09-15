@@ -29,6 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in `scripts/ffmpeg-bundle.js`, so the release and the new CI job run the
   same code rather than two descriptions of it.
 
+### Fixed
+- **`npm run test:backend` no longer exits 1 on a suite where every test
+  passes.** Three tests chose the Windows branch of `path_utils.openable` by
+  faking `os.name`, and `pathlib` dispatches on `os.name` — so while the fake
+  was in place, any `Path` built anywhere raised `NotImplementedError: cannot
+  instantiate 'WindowsPath'`. Under `-v`, which is what that script passes,
+  pytest's reporter builds one per test to print its location line, so the run
+  aborted from inside a passing test with every test green. The platform
+  switch now goes through `path_utils.on_windows()`, which a test can replace
+  without touching anything global. No behaviour changes: `on_windows()`
+  returns exactly what the removed check computed.
+
 ## [1.2.0] - 2026-09-13
 
 ### Changed

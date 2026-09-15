@@ -61,6 +61,20 @@ def windows_long_path(path: str) -> str:
     return EXTENDED_PREFIX + normalised
 
 
+def on_windows() -> bool:
+    """
+    Whether this process is running on Windows.
+
+    A function rather than a bare `os.name` check at the call site so a test
+    can choose the answer without touching `os.name` itself. Replacing that
+    globally is not safe: `pathlib` dispatches on it, so anything constructing
+    a `Path` while the patch is live gets a `WindowsPath` it cannot
+    instantiate off Windows — including pytest's own reporter, which builds one
+    per test to print a location line.
+    """
+    return os.name == 'nt'
+
+
 def openable(path: str) -> str:
     """
     The spelling to hand the filesystem, ffmpeg, or OpenCV.
@@ -68,7 +82,7 @@ def openable(path: str) -> str:
     Off Windows this is the path itself: POSIX has no length ceiling worth
     working around and no second spelling to choose between.
     """
-    if os.name != 'nt':
+    if not on_windows():
         return path
     return windows_long_path(path)
 
