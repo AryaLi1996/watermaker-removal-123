@@ -36,53 +36,28 @@ jobs:
 
       # The backend shells out to ffmpeg/ffprobe. Without them the media tests
       # skip rather than fail, so install them to get the real signal.
-      - name: Install ffmpeg
+      #
+      # Windows is its own step because its ffmpeg is shared with the CI job
+      # that checks the bundling — see .github/actions/static-ffmpeg.
+      - name: Install a static ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/static-ffmpeg
+
+      - name: Install ffmpeg (Linux, macOS)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           case "$RUNNER_OS" in
             Linux)   sudo apt-get update && sudo apt-get install -y ffmpeg ;;
             macOS)   brew install ffmpeg ;;
-            Windows)
-              # A *static* ffmpeg, deliberately not chocolatey's.
-              #
-              # Chocolatey puts a shim on PATH — a launcher that finds the real
-              # binary relative to chocolatey's own directory — and the
-              # packaging step copies whatever PATH points at. A copied shim
-              # resolves nothing and exits 4294967295, which is how a release
-              # once shipped unable to read a single video.
-              #
-              # An earlier attempt searched chocolatey's own directory for
-              # the real binary. It found it — the layout was right — but
-              # wrote the MSYS path `find` had answered with straight into
-              # $GITHUB_PATH, which Windows cannot read, so PATH never gained
-              # the directory and the step silently changed nothing. This
-              # stops depending on chocolatey's layout at all, converts the
-              # path, and says which binary it took.
-              curl -fsSL -o /tmp/ffmpeg.zip \
-                https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
-              command -v 7z >/dev/null || { echo '7z is not on this runner'; exit 1; }
-              7z x -y -o/tmp/ffmpeg-static /tmp/ffmpeg.zip >/dev/null
-              # -print -quit rather than a pipe: `find | head` dies of SIGPIPE
-              # under pipefail, which would fail the step for succeeding.
-              exe=$(find /tmp/ffmpeg-static -name 'ffmpeg.exe' -print -quit)
-              bin=$(dirname "$exe")
-              if [ -z "$exe" ] || [ ! -f "$bin/ffprobe.exe" ]; then
-                echo "no static ffmpeg/ffprobe pair in the archive"
-                exit 1
-              fi
-              # $GITHUB_PATH is read by Windows, not by bash: `find` under
-              # Git Bash answers in MSYS form (/c/...), and a PATH entry in
-              # that form means nothing to Windows. Writing it unconverted is
-              # what made the previous attempt a silent no-op — the search had
-              # found the binary, but the directory never reached PATH.
-              echo "selected $(cygpath -w "$bin")"
-              cygpath -w "$bin" >> "$GITHUB_PATH"
-              export PATH="$bin:$PATH"
-              ;;
           esac
-          # Say which ffmpeg won. Without this a step that quietly selected
-          # nothing is indistinguishable from one that worked, which is exactly
-          # how the previous attempt at this fix passed while doing nothing.
+
+      # Say which ffmpeg won. Without this a step that quietly selected
+      # nothing is indistinguishable from one that worked, which is exactly
+      # how the previous attempt at this fix passed while doing nothing.
+      - name: Report which ffmpeg won
+        shell: bash
+        run: |
           command -v ffmpeg
           command -v ffprobe
           ffmpeg -version | head -1

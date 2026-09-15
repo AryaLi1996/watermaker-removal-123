@@ -6,12 +6,16 @@
  * build copied that. Nothing on the build machine noticed — it had a working
  * ffmpeg on PATH and never ran the copy.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   FFMPEG_LIBRARY_DLL,
   isVersionBanner,
   whyUnusable,
   librariesIn,
+  bundleFfmpeg,
 } from '../../../scripts/ffmpeg-bundle.js';
 
 describe('spotting a copy that will not run', () => {
@@ -91,5 +95,85 @@ describe('the libraries a shared build needs beside it', () => {
   it('treats an unreadable directory as having none', () => {
     const readdir = vi.fn().mockImplementation(() => { throw new Error('ENOENT'); });
     expect(librariesIn('/nowhere', readdir)).toEqual([]);
+  });
+});
+
+/**
+ * The whole chain, which is what CI runs and what a release runs. Both call
+ * bundleFfmpeg, so a regression here is a regression in both.
+ */
+describe('bundling what PATH resolves to', () => {
+  /** A `where`/`which` that answers with `resolved`, and a copy that behaves as `banner`. */
+  const execStub = (resolved: string | null, banner: Record<string, string>) =>
+    vi.fn((file: string, args: string[]) => {
+      if (file === 'where' || file === 'which') {
+        if (resolved === null) throw new Error('not found');
+        // Joined rather than concatenated with a backslash: these tests assert
+        // the Windows behaviour but run on every runner, and a path built with
+        // the wrong separator simply would not exist.
+        return `${path.join(resolved, `${args[0]}.exe`)}\r\n`;
+      }
+      const tool = path.basename(file).replace(/\.exe$/, '');
+      if (!(tool in banner)) throw new Error('cannot execute');
+      return banner[tool];
+    });
+
+  let dist: string;
+  beforeEach(() => {
+    dist = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-ffmpeg-test-'));
+  });
+  afterEach(() => {
+    fs.rmSync(dist, { recursive: true, force: true });
+  });
+
+  /** A source directory holding binaries that are real files, so they can be copied. */
+  const sourceDir = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-ffmpeg-src-'));
+    fs.writeFileSync(path.join(dir, 'ffmpeg.exe'), 'not really ffmpeg');
+    fs.writeFileSync(path.join(dir, 'ffprobe.exe'), 'not really ffprobe');
+    return dir;
+  };
+
+  it('reports both tools when each copy identifies itself', () => {
+    const src = sourceDir();
+    const exec = execStub(src, {
+      ffmpeg: 'ffmpeg version 9.0.1 Copyright (c) 2000-2025',
+      ffprobe: 'ffprobe version 9.0.1 Copyright (c) 2000-2025',
+    });
+
+    const { bundled, missing, unusable } = bundleFfmpeg({ dist, isWindows: true, exec });
+
+    expect(missing).toEqual([]);
+    expect(unusable).toEqual([]);
+    expect(bundled.map((b) => b.tool)).toEqual(['ffmpeg', 'ffprobe']);
+    expect(fs.existsSync(path.join(dist, 'ffmpeg.exe'))).toBe(true);
+    fs.rmSync(src, { recursive: true, force: true });
+  });
+
+  it('reports the shim, and ships nothing, when the copy runs but says nothing', () => {
+    // The reported failure: exits non-zero, writes nothing. The copy must not
+    // survive — a bundle with a dead ffmpeg in it is the thing being prevented.
+    const src = sourceDir();
+    const exec = execStub(src, {});
+
+    const { bundled, unusable } = bundleFfmpeg({ dist, isWindows: true, exec });
+
+    expect(bundled).toEqual([]);
+    expect(unusable).toHaveLength(2);
+    expect(unusable[0]).toContain('ffmpeg');
+    expect(fs.existsSync(path.join(dist, 'ffmpeg.exe'))).toBe(false);
+    fs.rmSync(src, { recursive: true, force: true });
+  });
+
+  it('separates a tool that is absent from one that is broken', () => {
+    // The build tolerates the first and refuses the second, so they cannot be
+    // reported as the same thing.
+    const exec = execStub(null, {});
+
+    const { bundled, missing, unusable } = bundleFfmpeg({ dist, isWindows: true, exec });
+
+    expect(bundled).toEqual([]);
+    expect(missing).toEqual(['ffmpeg', 'ffprobe']);
+    expect(unusable).toEqual([]);
   });
 });

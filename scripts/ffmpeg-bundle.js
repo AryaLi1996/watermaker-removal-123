@@ -103,4 +103,54 @@ function bundleTool({ tool, source, dist, isWindows, exec = execFileSync }) {
   return reason;
 }
 
-module.exports = { FFMPEG_LIBRARY_DLL, isVersionBanner, whyUnusable, librariesIn, bundleTool };
+/**
+ * Bundle the ffmpeg and ffprobe that PATH resolves to, and prove each copy runs.
+ *
+ * The whole chain in one place so that what CI exercises and what a release
+ * does are the same code rather than two copies of it. A release only happens
+ * on a tag, so anything living solely in the release path goes unexercised
+ * until the moment it matters — which is how a shim shipped twice.
+ *
+ * Returns what happened to each tool rather than deciding about it: the build
+ * tolerates a tool that is simply absent (the app falls back to the user's own
+ * ffmpeg), while CI does not. Only `unusable` means a copy that would ship
+ * broken, and those are deleted by bundleTool rather than left behind.
+ */
+function bundleFfmpeg({ dist, isWindows = process.platform === 'win32', exec = execFileSync }) {
+  const bundled = [];
+  const missing = [];
+  const unusable = [];
+
+  for (const tool of ['ffmpeg', 'ffprobe']) {
+    let source;
+    try {
+      source = exec(isWindows ? 'where' : 'which', [tool], { encoding: 'utf8' })
+        .split(/\r?\n/)[0]
+        .trim();
+    } catch {
+      source = '';
+    }
+    if (!source || !fs.existsSync(source)) {
+      missing.push(tool);
+      continue;
+    }
+
+    const reason = bundleTool({ tool, source, dist, isWindows, exec });
+    if (reason) {
+      unusable.push(`${tool} (from ${source}): ${reason}`);
+      continue;
+    }
+    bundled.push({ tool, source });
+  }
+
+  return { bundled, missing, unusable };
+}
+
+module.exports = {
+  FFMPEG_LIBRARY_DLL,
+  isVersionBanner,
+  whyUnusable,
+  librariesIn,
+  bundleTool,
+  bundleFfmpeg,
+};
