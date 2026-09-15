@@ -6,7 +6,14 @@ Both exist because of the same bug report — Windows users being told a video
 "may have been moved, renamed or deleted" while it sat where they left it —
 and neither is reproducible on the machine these tests run on. The Windows
 transformations are therefore written against `ntpath` and tested directly;
-the platform switch around them is tested by faking `os.name`.
+the platform switch around them is tested by replacing `path_utils.on_windows`.
+
+Not by faking `os.name`, which is what these tests used to do. `pathlib`
+dispatches on `os.name`, so for as long as the fake was in place any `Path`
+built anywhere raised `NotImplementedError: cannot instantiate 'WindowsPath'`
+— including the one pytest's own reporter builds to print each test's location
+under `-v`. That aborted the whole run, from inside a passing test, and left
+`npm run test:backend` exiting 1 with every test green.
 
 Run with:
     backend/.venv/bin/python -m pytest tests/unit/backend/ -v
@@ -78,15 +85,26 @@ def test_a_path_that_already_carries_the_prefix_is_not_given_a_second_one():
 def test_openable_leaves_paths_alone_away_from_windows(monkeypatch):
     # A POSIX path can contain a backslash, and mangling one into a separator
     # would break a file that opens perfectly well today.
-    monkeypatch.setattr(os, 'name', 'posix')
+    monkeypatch.setattr(path_utils, 'on_windows', lambda: False)
     weird = '/home/user/' + 'y' * 300 + '/a\\b.mp4'
     assert path_utils.openable(weird) == weird
 
 
 def test_openable_applies_the_windows_form_on_windows(monkeypatch):
-    monkeypatch.setattr(os, 'name', 'nt')
+    monkeypatch.setattr(path_utils, 'on_windows', lambda: True)
     long_path = _long_windows_path()
     assert path_utils.openable(long_path) == '\\\\?\\' + long_path
+
+
+def test_on_windows_follows_the_real_platform():
+    # The seam the two tests above replace. It has to keep answering for the
+    # machine it runs on, or they would be asserting against a stub that
+    # corresponds to nothing.
+    #
+    # Asserted against the real `os.name` rather than by faking one: faking it
+    # even for the length of a single test is what this whole change exists to
+    # stop, and the 'nt' side is covered above by replacing on_windows itself.
+    assert path_utils.on_windows() is (os.name == 'nt')
 
 
 # ─── displayable ─────────────────────────────────────────────────────────────
@@ -106,7 +124,7 @@ def test_displayable_leaves_an_ordinary_path_untouched():
 
 
 def test_openable_and_displayable_round_trip(monkeypatch):
-    monkeypatch.setattr(os, 'name', 'nt')
+    monkeypatch.setattr(path_utils, 'on_windows', lambda: True)
     for original in (_long_windows_path(), 'D:\\videos\\demo.mp4'):
         assert path_utils.displayable(path_utils.openable(original)) == original
 
