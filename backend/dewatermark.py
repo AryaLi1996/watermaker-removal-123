@@ -101,6 +101,9 @@ PALETTE_SIZE = 3
 # Which pixels get a vote on what those colours are: the worst-explained of the
 # marked ones, above this percentile.
 PALETTE_PERCENTILE = 75
+
+# How many times the palette and the opacity are re-solved against each other.
+PALETTE_ROUNDS = 4
 PALETTE_MIN_PIXELS = 40
 
 # The mask the background estimate is taken from is grown by this much while
@@ -281,10 +284,18 @@ def solve(frames: np.ndarray, iterations: int = 6) -> tuple[np.ndarray, np.ndarr
     # A mark is rendered artwork: it is made of a handful of flat colours. So
     # alpha is solved against a handful, and each pixel takes whichever of them
     # explains it best.
-    palette = _palette(frames, background, alpha, global_colour)
-    alpha, colour = _alpha_against_palette(frames, background, palette)
-    mask = _grow((alpha > ALPHA_FLOOR).astype(np.uint8), SOLVE_GROW)
-    background = _background_estimate(frames, mask)
+    # Palette and opacity are chicken-and-egg: the colours are clustered from
+    # what each pixel implies, which is divided by the very opacity the
+    # white-only fit got wrong. One pass is a large step in the right direction
+    # and not the whole way, so this alternates. The palette stays small
+    # throughout, which is what keeps the alternation from wandering the way a
+    # free per-pixel colour does.
+    colour = np.broadcast_to(global_colour, (height, width, 3)).copy()
+    for _ in range(PALETTE_ROUNDS):
+        palette = _palette(frames, background, alpha, global_colour)
+        alpha, colour = _alpha_against_palette(frames, background, palette)
+        mask = _grow((alpha > ALPHA_FLOOR).astype(np.uint8), SOLVE_GROW)
+        background = _background_estimate(frames, mask)
 
     # Finally a colour free to vary per pixel, taken once and never fed back
     # into alpha. What the restore subtracts is the product ``a * W``, so
