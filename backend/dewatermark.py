@@ -93,10 +93,15 @@ FILL_RADIUS = 6
 # nothing.
 COLOUR_FLOOR = 0.08
 
-# How much better, in levels, a per-pixel colour has to explain a pixel before
-# it is preferred to the mark's global colour. Shrinkage: without it the colour
-# fits the background's structure as readily as the mark's.
-COLOUR_MARGIN = 3.0
+# How many flat colours a mark is assumed to be drawn in. Few, because the
+# point of a palette is that it cannot absorb the background the way a free
+# per-pixel colour can.
+PALETTE_SIZE = 3
+
+# Which pixels get a vote on what those colours are: the worst-explained of the
+# marked ones, above this percentile.
+PALETTE_PERCENTILE = 75
+PALETTE_MIN_PIXELS = 40
 
 # The mask the background estimate is taken from is grown by this much while
 # solving, to keep a mark's anti-aliased rim from leaking into its own
@@ -157,6 +162,81 @@ def _background_estimate(frames: np.ndarray, mask: np.ndarray) -> np.ndarray:
     ])
 
 
+def _alpha_against(frames: np.ndarray, background: np.ndarray, colour) -> np.ndarray:
+    """Least-squares opacity at every pixel, for one assumed mark colour."""
+    delta = np.asarray(colour, np.float32) - background
+    return np.clip(
+        ((frames - background) * delta).sum(axis=(0, 3))
+        / (np.square(delta).sum(axis=(0, 3)) + 1e-6),
+        0.0, 0.995,
+    )
+
+
+def _misfit(frames: np.ndarray, background: np.ndarray,
+            alpha: np.ndarray, colour) -> np.ndarray:
+    """How badly one (alpha, colour) pair explains each pixel, in levels."""
+    a3 = alpha[..., None]
+    modelled = (1 - a3)[None] * background + a3[None] * np.asarray(colour, np.float32)
+    return np.abs(frames - modelled).mean(axis=(0, 3))
+
+
+def _palette(frames: np.ndarray, background: np.ndarray,
+             alpha: np.ndarray, global_colour: np.ndarray) -> np.ndarray:
+    """
+    The few flat colours the mark is drawn in.
+
+    Taken by clustering what the *badly explained* pixels imply their colour to
+    be — not the most opaque ones. Opacity is the wrong selector here and the
+    reason an earlier attempt at this found nothing: a tinted pixel's opacity
+    is precisely what the white-only fit got wrong, so selecting on it excludes
+    the pixels the palette exists to describe. Misfit selects them by the thing
+    that is actually true of them, which is that white does not account for
+    them.
+    """
+    marked = alpha > ALPHA_FLOOR
+    if marked.sum() < PALETTE_MIN_PIXELS:
+        return global_colour[None]
+
+    error = _misfit(frames, background, alpha, global_colour)
+    cut = np.percentile(error[marked], PALETTE_PERCENTILE)
+    solid = marked & (error >= cut)
+    if solid.sum() < PALETTE_MIN_PIXELS:
+        return global_colour[None]
+
+    a3 = alpha[..., None]
+    implied = np.median(
+        (frames - (1 - a3)[None] * background) / np.maximum(a3, COLOUR_FLOOR)[None], axis=0,
+    )
+    samples = np.clip(implied[solid], 0.0, 255.0).astype(np.float32)
+
+    clusters = min(PALETTE_SIZE, len(samples))
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
+    _, _, centres = cv2.kmeans(
+        samples, clusters, None, criteria, 3, cv2.KMEANS_PP_CENTERS,
+    )
+    return np.vstack([global_colour[None], centres.astype(np.float32)])
+
+
+def _alpha_against_palette(frames: np.ndarray, background: np.ndarray,
+                           palette: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Solve the opacity against every palette entry; keep the best per pixel."""
+    best_alpha = None
+    best_misfit = None
+    best_index = None
+    for index, colour in enumerate(palette):
+        candidate = _alpha_against(frames, background, colour)
+        error = _misfit(frames, background, candidate, colour)
+        if best_alpha is None:
+            best_alpha, best_misfit = candidate, error
+            best_index = np.zeros_like(error, np.int32)
+            continue
+        better = error < best_misfit
+        best_alpha = np.where(better, candidate, best_alpha)
+        best_misfit = np.where(better, error, best_misfit)
+        best_index = np.where(better, index, best_index)
+    return best_alpha, palette[best_index]
+
+
 def solve(frames: np.ndarray, iterations: int = 6) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """
     Solve the blend for a stack of identically-cropped frames.
@@ -169,54 +249,54 @@ def solve(frames: np.ndarray, iterations: int = 6) -> tuple[np.ndarray, np.ndarr
     _, height, width, _ = frames.shape
 
     mask = persistent_strokes(frames)
-    colour = np.full((height, width, 3), 255.0, np.float32)
+    global_colour = np.array([255.0, 255.0, 255.0], np.float32)
     alpha = np.zeros((height, width), np.float32)
 
-    for step in range(iterations):
+    # Alpha, against one global colour, to get a first reading of the mark.
+    for _ in range(iterations):
         background = _background_estimate(frames, mask)
-
-        # alpha, with the colour currently believed
-        delta = colour[None] - background
-        alpha = np.clip(
-            ((frames - background) * delta).sum(axis=(0, 3))
-            / (np.square(delta).sum(axis=(0, 3)) + 1e-6),
-            0.0, 0.995,
-        )
-
-        # colour, with the alpha just solved
-        a3 = alpha[..., None]
-        uncovered = frames - (1 - a3)[None] * background
-        a4 = a3[None]
+        alpha = _alpha_against(frames, background, global_colour)
+        a4 = alpha[None, ..., None]
         global_colour = np.clip(
-            (a4 * uncovered).sum(axis=(0, 1, 2)) / (np.square(a4).sum(axis=(0, 1, 2)) + 1e-6),
+            (a4 * (frames - (1 - a4) * background)).sum(axis=(0, 1, 2))
+            / (np.square(a4).sum(axis=(0, 1, 2)) + 1e-6),
             0.0, 255.0,
         )
-        colour = np.broadcast_to(global_colour, (height, width, 3)).copy()
-
-        if step > 0:
-            # Most of one of these marks is a single colour, and letting every
-            # pixel choose its own lets the colour absorb the background's
-            # structure instead of the mark's: on the sample video that cost
-            # more than the tinted glyph it was meant to win back. So a pixel
-            # only departs from the global colour to the extent that doing so
-            # genuinely explains it better.
-            per_pixel = np.clip(
-                np.median(uncovered / np.maximum(a3, COLOUR_FLOOR)[None], axis=0),
-                0.0, 255.0,
-            )
-            def _misfit(candidate: np.ndarray) -> np.ndarray:
-                modelled = (1 - a3)[None] * background + a3[None] * candidate[None]
-                return np.abs(frames - modelled).mean(axis=(0, 3))
-            gain = np.clip(
-                (_misfit(colour) - _misfit(per_pixel) - COLOUR_MARGIN) / COLOUR_MARGIN,
-                0.0, 1.0,
-            )[..., None]
-            colour = colour + (per_pixel - colour) * gain
-
         mask = _grow((alpha > ALPHA_FLOOR).astype(np.uint8), SOLVE_GROW)
 
     background = _background_estimate(frames, mask)
+
+    # One colour is not enough. Most of these marks carry a tinted logo glyph,
+    # and a white-only model does not report it as coloured — it reports it as
+    # *more transparent*, because a lower opacity is the only way white can be
+    # made to look like a tint. That is the worst of the possible errors: the
+    # glyph then sits below the ceiling, so it is neither divided out correctly
+    # nor handed over to be filled, and what is left is the half-subtracted
+    # ghost this module exists to avoid.
+    #
+    # The fix is not to let every pixel pick its own colour while alpha is
+    # being solved — with that much freedom the colour fits the background's
+    # structure as readily as the mark's, which on the sample video took the
+    # residue from 0.058 to 0.129 and tipped the result into over-subtraction.
+    # A mark is rendered artwork: it is made of a handful of flat colours. So
+    # alpha is solved against a handful, and each pixel takes whichever of them
+    # explains it best.
+    palette = _palette(frames, background, alpha, global_colour)
+    alpha, colour = _alpha_against_palette(frames, background, palette)
+    mask = _grow((alpha > ALPHA_FLOOR).astype(np.uint8), SOLVE_GROW)
+    background = _background_estimate(frames, mask)
+
+    # Finally a colour free to vary per pixel, taken once and never fed back
+    # into alpha. What the restore subtracts is the product ``a * W``, so
+    # letting ``W`` carry the anti-aliased rims that no flat colour describes
+    # makes that product more accurate without giving the fit room to wander.
     a3 = alpha[..., None]
+    per_pixel = np.median(
+        (frames - (1 - a3)[None] * background) / np.maximum(a3, COLOUR_FLOOR)[None], axis=0,
+    )
+    colour = np.where(
+        (alpha > COLOUR_FLOOR)[..., None], np.clip(per_pixel, 0.0, 255.0), colour,
+    ).astype(np.float32)
 
     # What cannot be divided back out.
     saturating = (frames >= SATURATION_LEVEL).all(axis=3).mean(axis=0)
