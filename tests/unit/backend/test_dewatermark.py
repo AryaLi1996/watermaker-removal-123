@@ -166,24 +166,27 @@ def test_restore_brings_back_the_real_picture(marked, model):
     """
     The point of the whole module: the recovered pixels should be the ones that
     were filmed, not a plausible substitute.
+
+    Scored over the whole mark rather than over the pixels the module chose to
+    divide. Scoring only the divided ones lets it flatter itself by calling
+    everything hard unrecoverable, which is the direction the numbers have
+    since pushed it in — so the measure has to be one that cannot be gamed that
+    way.
     """
     x, y, w, h = marked.roi
     index = marked.count // 2
     restored = dewatermark.restore(marked.frame(index), model)
     truth = marked.truth(index)
 
-    mark = marked.alpha > ALPHA_FLOOR
-    recoverable = mark & (model.unrecoverable == 0)
-    assert recoverable.sum() > 0.8 * mark.sum(), 'most of the mark should be recoverable'
-
+    on_the_mark = marked.alpha > ALPHA_FLOOR
     err_before = np.abs(marked.frame(index)[y:y + h, x:x + w].astype(np.float32)
                         - truth[y:y + h, x:x + w].astype(np.float32)).mean(2)
     err_after = np.abs(restored[y:y + h, x:x + w].astype(np.float32)
                        - truth[y:y + h, x:x + w].astype(np.float32)).mean(2)
 
-    assert err_after[recoverable].mean() < err_before[recoverable].mean() / 8
-    assert err_after[recoverable].mean() < 6, (
-        'recovered pixels should land within the codec\'s own noise of the truth')
+    assert err_after[on_the_mark].mean() < err_before[on_the_mark].mean() / 15
+    assert err_after[on_the_mark].mean() < 4, (
+        'the picture under the mark should come back within a few levels')
 
 
 def test_restore_does_not_touch_the_rest_of_the_frame(marked, model):
@@ -195,12 +198,20 @@ def test_restore_does_not_touch_the_rest_of_the_frame(marked, model):
     assert np.array_equal(restored[untouched], frame[untouched])
 
 
-def test_only_a_little_has_to_be_invented(marked, model):
+def test_most_of_the_mark_is_recovered_rather_than_invented(marked, model):
     """
     The visible block users complain about is a symptom of inventing a whole
-    rectangle. Almost all of this mark should be recovered instead.
+    rectangle, so the majority of the mark has to come back by arithmetic.
+
+    Not "almost none of it", which is what this asked for when it was written.
+    Measuring against frames whose true values are known reversed that: above
+    about 0.6 opacity the division amplifies its own error past what filling
+    costs, and handing those pixels over took the error on the reported clip
+    from 12.0 levels to 6.2. Inventing less is not the goal; being right is.
     """
-    assert model.invented < 0.10
+    on_the_mark = marked.alpha > ALPHA_FLOOR
+    invented = (model.unrecoverable == 1) & on_the_mark
+    assert invented.sum() < on_the_mark.sum() / 2
     assert model.coverage > 0.05
 
 

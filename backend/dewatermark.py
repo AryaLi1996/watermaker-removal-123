@@ -70,13 +70,25 @@ ALPHA_FLOOR = 0.03
 
 # Opacity above which division is abandoned. 1/(1 - a) is the factor every
 # error is multiplied by, so this is a choice about how much amplification to
-# accept: 0.88 is ~8x, and measured against the objective residue score it beat
-# both the more timid and the more aggressive settings.
-ALPHA_CEILING = 0.88
+# accept.
+#
+# It used to be 0.88, chosen by sweeping a score that is now known not to rank
+# this module's output reliably. Against frames whose true values are known, a
+# filled pixel costs about 12 levels and a divided one above 0.75 opacity about
+# 24, so that setting was leaving the arithmetic to do work it is bad at: the
+# error on the mark falls from 12.0 to 6.2 by moving this alone. The floor is
+# broad, anything from 0.25 to 0.60 landing within 0.1 of the best, and this
+# sits at the cautious end of it — it invents the least (6% of the mark against
+# 9%) and has the best worst-case pixel, which matters because filling is the
+# part that goes badly wrong on moving texture.
+ALPHA_CEILING = 0.60
 
 # Width of the ramp below the ceiling over which divided and filled pixels are
-# mixed, so the handover leaves no edge of its own.
-ALPHA_RAMP = 0.20
+# mixed, so the handover leaves no edge of its own. Never wider than the
+# ceiling: a band that reaches past zero opacity turns the fill loose on the
+# whole selection, which is the rectangle-shaped smear this module exists to
+# avoid, and measured 40 levels against 6.
+ALPHA_RAMP = 0.30
 
 # Fraction of frames in which a pixel has to clip at white before it is called
 # unrecoverable. One clipped frame says nothing; a fifth of them says the mark
@@ -84,9 +96,10 @@ ALPHA_RAMP = 0.20
 SATURATION_LIMIT = 0.15
 SATURATION_LEVEL = 254
 
-# Radius handed to the filler for what is left. Larger than the strokes it
-# spans, so it reaches real background rather than more of the same estimate.
-FILL_RADIUS = 6
+# Radius handed to the filler for what is left. Wide enough to span the strokes
+# and reach real background; wider than that measurably hurts, since Telea
+# averages over everything inside the radius.
+FILL_RADIUS = 3
 
 # Opacity below which a pixel's own colour cannot be told apart from its
 # background's, so the global colour is kept instead of dividing by nearly
@@ -346,12 +359,23 @@ def restore(frame: np.ndarray, model: WatermarkModel) -> np.ndarray:
     keep = np.clip(1.0 - model.alpha, 1.0 - ALPHA_CEILING, 1.0)[..., None]
     recovered = np.clip((patch - model.alpha[..., None] * model.colour) / keep, 0, 255)
 
+    # The fill has to cover the ramp band as well as the pixels that need it
+    # outright. cv2.inpaint leaves everything outside its mask untouched, so a
+    # fill masked only to the unrecoverable set gives the ramp nothing to blend
+    # towards: the weighted sum below then reduces to the divided result at
+    # every pixel and the ramp does nothing at all, which is what it did until
+    # this was noticed.
+    ramp_floor = max(ALPHA_CEILING - ALPHA_RAMP, ALPHA_FLOOR)
+    reachable = np.maximum(
+        model.unrecoverable,
+        (model.alpha >= ramp_floor).astype(np.uint8),
+    )
     filled = cv2.inpaint(
-        recovered.astype(np.uint8), model.unrecoverable, FILL_RADIUS, cv2.INPAINT_TELEA,
+        recovered.astype(np.uint8), reachable, FILL_RADIUS, cv2.INPAINT_TELEA,
     ).astype(np.float32)
 
     ramp = np.maximum(
-        np.clip((model.alpha - (ALPHA_CEILING - ALPHA_RAMP)) / ALPHA_RAMP, 0.0, 1.0),
+        np.clip((model.alpha - ramp_floor) / max(ALPHA_CEILING - ramp_floor, 1e-6), 0.0, 1.0),
         model.unrecoverable.astype(np.float32),
     )[..., None]
 
