@@ -26,11 +26,27 @@ def _ffmpeg_available() -> bool:
         return False
 
 
+def _ffmpeg_encoder_available() -> bool:
+    """ffmpeg alone. Some tests encode and decode but never probe."""
+    try:
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        return True
+    except (OSError, subprocess.CalledProcessError):
+        return False
+
+
 # Media tests need the same ffmpeg the app shells out to; skip rather than fail
 # where it is not installed.
 requires_ffmpeg = pytest.mark.skipif(
     not _ffmpeg_available(),
     reason='ffmpeg/ffprobe not installed',
+)
+
+# Narrower: for tests that only push frames through the encoder and read them
+# back, so they still run where ffprobe is missing.
+requires_ffmpeg_encoder = pytest.mark.skipif(
+    not _ffmpeg_encoder_available(),
+    reason='ffmpeg not installed',
 )
 
 
