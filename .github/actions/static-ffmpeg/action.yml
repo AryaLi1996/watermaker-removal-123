@@ -28,7 +28,19 @@ runs:
         # cannot read, so PATH never gained the directory and the step silently
         # changed nothing. This stops depending on chocolatey's layout at all,
         # converts the path, and says which binary it took.
-        curl -fsSL -o /tmp/ffmpeg.zip \
+        # One attempt is not enough: this is a third-party host, and a single
+        # 503 from it failed a run on main for a reason that had nothing to do
+        # with the code under test. Retrying costs nothing when the download
+        # succeeds first time, which is almost always.
+        #
+        # --retry alone covers the transient HTTP statuses and timeouts;
+        # --retry-connrefused adds the case where the host is refusing
+        # connections outright, which curl does not otherwise count as
+        # transient. --retry-max-time bounds the whole thing so a host that is
+        # properly down fails the step in a couple of minutes rather than
+        # holding a runner.
+        curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused \
+          --retry-max-time 120 -o /tmp/ffmpeg.zip \
           https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
         command -v 7z >/dev/null || { echo '7z is not on this runner'; exit 1; }
         7z x -y -o/tmp/ffmpeg-static /tmp/ffmpeg.zip >/dev/null
