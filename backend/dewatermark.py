@@ -72,16 +72,23 @@ ALPHA_FLOOR = 0.03
 # error is multiplied by, so this is a choice about how much amplification to
 # accept.
 #
-# It used to be 0.88, chosen by sweeping a score that is now known not to rank
-# this module's output reliably. Against frames whose true values are known, a
-# filled pixel costs about 12 levels and a divided one above 0.75 opacity about
-# 24, so that setting was leaving the arithmetic to do work it is bad at: the
-# error on the mark falls from 12.0 to 6.2 by moving this alone. The floor is
-# broad, anything from 0.25 to 0.60 landing within 0.1 of the best, and this
-# sits at the cautious end of it — it invents the least (6% of the mark against
-# 9%) and has the best worst-case pixel, which matters because filling is the
-# part that goes badly wrong on moving texture.
-ALPHA_CEILING = 0.60
+# Two measurements set it, and they are not the same question. Against frames
+# whose true values are known, a filled pixel costs about 12 levels and a
+# divided one above 0.75 opacity about 24, which moved this down from 0.88 and
+# roughly halved the error. But that test composites the mark from this
+# module's own solved model, so it cannot see a mismatch between that model and
+# however the platform really rendered the mark — and such a mismatch is the
+# same on every frame, which makes it a *standing* pattern, the thing an eye
+# picks out of moving footage immediately.
+#
+# Measured that second way — the strength of whatever holds still across the
+# real clip — the filled pixels turn out to be the clean ones (98.6% of the
+# mark gone, worst pixel 8 levels) and the divided ones carry three quarters of
+# what is left (worst pixel 23). So the dial wants to be lower than the first
+# test alone would put it. At 0.40 the worst standing pixel halves, 23 -> 11,
+# and the 99th percentile falls 13.2 -> 6.0, for 0.23 levels on the first
+# measurement. Below 0.40 neither improves and the first one starts to suffer.
+ALPHA_CEILING = 0.40
 
 # Width of the ramp below the ceiling over which divided and filled pixels are
 # mixed, so the handover leaves no edge of its own. Never wider than the

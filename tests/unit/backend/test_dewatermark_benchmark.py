@@ -167,9 +167,22 @@ def test_unblending_beats_painting_over_the_selection(scores):
         f'unblend {scores["unblend"]:.1f} vs best painted {painted:.1f} levels')
 
 
-def test_most_of_the_mark_is_recovered_not_invented(bench):
-    _, _, model, _ = bench
-    assert model.invented < 0.05
+def test_most_of_the_mark_is_recovered_rather_than_invented(bench):
+    """
+    The block users report is a symptom of inventing a whole rectangle, so the
+    majority of the mark has to come back by arithmetic. Measured against the
+    mark rather than against the selection, which is mostly empty and so says
+    more about how big a box was drawn than about what the module did.
+
+    This asked for "almost none of it" when it was written. Two measurements
+    since have said the opposite — filling is the cheaper of the two above
+    about 0.4 opacity, and on the real clip the filled pixels are the clean
+    ones — so the bar is a majority, not a trace.
+    """
+    _, _, model, alpha = bench
+    on_the_mark = alpha > dewatermark.ALPHA_FLOOR
+    invented = (model.unrecoverable == 1) & on_the_mark
+    assert invented.sum() < on_the_mark.sum() / 2
     assert model.coverage > 0.05
 
 
