@@ -440,6 +440,17 @@ def _run_recover(
     roi = config['roi']
     box = (roi['x'], roi['y'], roi['w'], roi['h'])
 
+    # Too little footage to solve a blend from. The frames are left exactly as
+    # they were decoded, which is the only honest answer: this engine recovers
+    # the picture from what moves behind the mark, and here nothing has.
+    # The still the app shows when a video opens is a single frame, so this is
+    # the first thing recovery is asked to do on every video.
+    if total < recover.MIN_SOLVE_FRAMES:
+        notice('recover_too_short',
+               f'{total} frame(s) is too few to solve a blend from; frames left as they are')
+        report(100.0)
+        return
+
     def solving(done: int, count: int) -> None:
         report(SCAN_PROGRESS_SHARE
                + (FIT_PROGRESS_SHARE - SCAN_PROGRESS_SHARE) * done / max(count, 1))

@@ -374,3 +374,21 @@ def test_run_batch_leaves_a_clip_with_no_mark_alone(clip, tmp_path):
         difference = np.abs(cv2.imread(path).astype(np.float32)
                             - original.astype(np.float32)).mean()
         assert difference < 2.0, f'{path} moved by {difference:.2f} levels'
+
+
+def test_run_batch_leaves_a_single_frame_alone(clip, tmp_path):
+    """
+    The still the app shows when a video opens is one frame, and a blend cannot
+    be solved from one frame — `dewatermark.solve` refuses outright. So the
+    frame comes back untouched rather than the job failing, which is what it
+    did before this was guarded.
+    """
+    import processor
+
+    path = tmp_path / 'f00000.png'
+    cv2.imwrite(str(path), clip.frame(0))
+    before = cv2.imread(str(path))
+
+    config = {'method': 'recover', 'roi': dict(zip('xywh', USER_BOX))}
+    assert processor.run_batch([str(path)], config, WIDTH, HEIGHT) == 0
+    assert np.array_equal(cv2.imread(str(path)), before)

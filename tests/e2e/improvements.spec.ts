@@ -63,24 +63,33 @@ test.describe('keyboard shortcuts', () => {
     await mockDialogs(electronApp);
     await loadVideo(page);
 
-    await page.keyboard.press('2');
+    await page.keyboard.press('3');
     await expect(page.getByText('Blur Strength')).toBeVisible();
 
-    await page.keyboard.press('1');
+    await page.keyboard.press('2');
     await expect(page.getByText('Blur Strength')).toBeHidden();
     await expect(page.getByText('Smoothness (radius px)')).toBeVisible();
+
+    // 1 is the default method, which has no settings of its own — its note is
+    // what is on screen when it is the one selected.
+    await page.keyboard.press('1');
+    await expect(page.getByText('Smoothness (radius px)')).toBeHidden();
+    await expect(page.getByTestId('recover-note')).toBeVisible();
   });
 
   test('a shortcut does not fire while typing in a field', async ({ page, electronApp }) => {
     await mockDialogs(electronApp);
     await loadVideo(page);
-    await page.keyboard.press('1'); // known starting method
+    // Blur, so that the digit typed below is a shortcut for a *different*
+    // method. Starting on the one "2" selects would make the leak invisible.
+    await page.keyboard.press('3');
 
     await page.getByTestId('save-preset').click();
     await page.getByTestId('preset-name').fill('2');
 
-    // The "2" went into the field, so the method must not have changed.
-    await expect(page.getByText('Smoothness (radius px)')).toBeVisible();
+    // The "2" went into the field, so the method must not have changed: had
+    // the shortcut fired, Blur would have given way to Smart Fill.
+    await expect(page.getByText('Blur Strength')).toBeVisible();
     await expect(page.getByTestId('preset-name')).toHaveValue('2');
     await page.keyboard.press('Escape');
   });

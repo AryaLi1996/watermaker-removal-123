@@ -75,6 +75,19 @@ SCAN_WINDOW_SAMPLES = 16
 # holding a window of frames stop depending on whether the video is 480p or 4K.
 SCAN_MAX_SIDE = 960
 
+# Frames below which recovery declines to run at all.
+#
+# The blend is solved from what changes behind the mark, so one frame cannot be
+# solved — `dewatermark.solve` says so outright — and a handful can only be
+# solved badly: with too little variety behind it the fit takes the picture's
+# own detail for opacity, and the divide then runs over pixels that were never
+# marked. The app asks for exactly one frame when it shows the still preview a
+# video opens on, so this is a path every user takes, not an edge case.
+#
+# Eight rather than two: two satisfies the solver and still gives it nothing to
+# work with.
+MIN_SOLVE_FRAMES = 8
+
 # Frames used to fit one placement's model. The solve wants variety behind the
 # mark more than it wants quantity: these are spread across the placement's
 # whole span rather than taken consecutively, so they see different scenes.
