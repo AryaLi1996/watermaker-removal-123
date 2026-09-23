@@ -460,10 +460,24 @@ def _run_cloud(frame_paths: list[str], runs: list, endpoint: dict,
     the number: a handful of frames filled by the other method is a seam they
     may want to know about, and silence about it would be the app deciding for
     them that it does not matter.
+
+    **The first failure gives up on the service for the rest of the export.**
+    Retrying each batch in turn sounds more forgiving and is not: a service
+    that is down, refusing, or hung fails every batch the same way, so retrying
+    buys nothing and costs one timeout per batch — fifteen of them on a
+    two-minute clip. And because that cost is bounded to one, the timeout
+    itself can be generous enough for a CPU deployment to actually finish a
+    batch (see `cloud_fill.timeout_for`), which is the trade that makes the
+    cheap deployment work at all.
+
+    A transient failure is the case this gets wrong, and it is the right one to
+    get wrong: the export still completes, with frames the user is told about,
+    and the next export tries the service again from scratch.
     """
     degraded = 0
     total = sum(end - start for start, end, _ in runs) or 1
     done = 0
+    giving_up = False
 
     for run_start, run_end, models in runs:
         for model in models:
@@ -473,10 +487,12 @@ def _run_cloud(frame_paths: list[str], runs: list, endpoint: dict,
                 # No parcel means the arithmetic recovered all of it and there
                 # is nothing to invent — so nothing to send anywhere, and the
                 # local path finishes the frame without that being a fallback.
-                sent = parcel is not None and _cloud_batch(batch, model, parcel, endpoint)
+                sent = (not giving_up and parcel is not None
+                        and _cloud_batch(batch, model, parcel, endpoint))
                 if not sent:
                     if parcel is not None:
                         degraded += len(batch)
+                        giving_up = True
                     _process_recover_chunk((batch, (model,)))
                 done += len(batch)
                 report(FIT_PROGRESS_SHARE
