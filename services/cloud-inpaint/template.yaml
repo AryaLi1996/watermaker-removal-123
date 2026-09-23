@@ -101,8 +101,13 @@ Resources:
             Action: sts:AssumeRole
       # Writing logs is the whole of it. This function reads no table, no
       # bucket and no secret store: everything it needs arrives in the request
-      # or in its own environment, which is what keeps a compromise of it from
-      # reaching anything else in the account.
+      # or in its own environment.
+      #
+      # That emptiness is load-bearing, not tidiness. This stack shares an AWS
+      # account with the licence service and the DynamoDB tables holding every
+      # licence, order and trial record, so there is no account boundary here —
+      # this role is what stands between a public inference endpoint and those
+      # tables. Adding a permission to it is a decision about them.
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 

@@ -20,10 +20,15 @@ name: Deploy Cloud Inpaint
 # job a human released, and what that human approves was printed, in full, by
 # a job that could not have applied it.
 #
-# This deploys to AWS account 677840207937 — **not** the licence service's
-# 641628981129. Two services, two accounts, so a compromise of the endpoint
-# that strangers can reach cannot touch the tables holding licences and orders.
-# scripts/deploy-inpaint.sh enforces that with an EXPECTED_ACCOUNT guard.
+# This deploys to AWS account 641628981129 — the same account the licence
+# service uses. So the separation between this public endpoint and the tables
+# holding licences and orders is IAM and nothing else, which is why the roles
+# below are scoped to the `shuyin-cloud-inpaint-*` prefix and the function's
+# own execution role grants nothing but logs. See CI_DEPLOY_SETUP.md §0.
+#
+# It is a separate workflow from the licence service's rather than a job inside
+# it, and CI_DEPLOY_SETUP.md §0 says why that is still the right call in one
+# account.
 #
 # One-time AWS + GitHub setup is required before this can succeed — see
 # services/cloud-inpaint/CI_DEPLOY_SETUP.md. Until it is done, every run fails
