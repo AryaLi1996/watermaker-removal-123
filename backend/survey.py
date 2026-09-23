@@ -198,6 +198,27 @@ def edge_distance(box: tuple[int, int, int, int], width: int, height: int) -> fl
     return float(min(horizontal, vertical))
 
 
+def could_be_a_mark(box: tuple[int, int, int, int], stable: float,
+                    width: int, height: int) -> bool:
+    """
+    Whether a region could be a watermark, from the two tests that cost
+    nothing: does it hold its content, and is it against the side of the frame.
+
+    This exists to avoid solving. The solve is where nearly all of a survey's
+    time goes — 140 of 151 seconds on the reported clip, over 173 candidate
+    stretches that produced twelve findings — and a stretch seen in only two
+    windows is never reported unless it turns out to be a mark. Both of the
+    mark tests that do not need a model can therefore be asked first, and a
+    stretch that fails either one is one the solve would only have confirmed we
+    had nothing to say about.
+
+    It is a necessary condition, not the classification: everything that gets
+    past here is still solved and still has to pass `classify`.
+    """
+    return (stable >= STABLE_CONTENT
+            and edge_distance(box, width, height) <= EDGE_FRACTION)
+
+
 def classify(box: tuple[int, int, int, int], model, stable: float,
              width: int, height: int) -> str:
     """What a region is, from how it behaves rather than how it looks."""
@@ -393,28 +414,35 @@ def survey(read, total: int, width: int, height: int,
             ))
 
     findings: list[Finding] = []
+    scan_width, scan_height = int(width * scale), int(height * scale)
     for done, (seed, run, maps) in enumerate(stretches, start=1):
+        if on_progress:
+            on_progress(done, len(stretches))
+
+        # Both free tests first, and for a stretch that would only ever be
+        # reported as a mark, they decide it on their own.
+        stable = stability(maps, seed)
+        if (len(run) < MIN_WINDOWS_TO_LIST
+                and not could_be_a_mark(seed, stable, scan_width, scan_height)):
+            continue
+
         box = recover.clamp_box(
             recover._rescale(seed, scale), width, height,
             pad=max(1, int(round(recover.BOX_PAD / scale))))
         start, end = run[0][0], run[-1][1]
 
         model = recover.fit_placement(read, recover.Placement(start, end, box))
-        if on_progress:
-            on_progress(done, len(stretches))
         # Nothing the solve can find is nothing to report. The picture holding
         # still is not a finding, it is the video.
         if not recover.believable(model):
             continue
 
-        stable = stability(maps, seed)
         start, end = extent(read, box, model.alpha, (start, end), total, window)
         findings.append(Finding(
             box=box,
             start=start,
             end=end,
-            kind=classify(seed, model, stable, int(width * scale),
-                          int(height * scale)),
+            kind=classify(seed, model, stable, scan_width, scan_height),
             coverage=model.coverage,
             stability=stable,
             peak_alpha=float(np.percentile(model.alpha, 95)),

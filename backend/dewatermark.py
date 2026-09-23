@@ -132,6 +132,21 @@ PALETTE_MIN_PIXELS = 40
 # score, dilating there only destroys pixels the solve had recovered correctly.
 SOLVE_GROW = 1
 
+# The seed the palette's k-means starts from.
+#
+# OpenCV's k-means++ draws its initial centres from OpenCV's global RNG, which
+# nothing seeds, so the same frames solved twice do not give the same answer.
+# Measured on one region of the reported clip over four runs: coverage 0.123 to
+# 0.139 and residual 14.75 to 16.11 — and 16.0 is where `survey` stops calling
+# something a watermark. A user who scanned the same video twice could be shown
+# a different list, which is not a rounding error but a different answer to the
+# question they asked.
+#
+# Seeding at the top of every solve rather than once at import also makes the
+# answer independent of how many solves ran before it, so a region's result
+# does not depend on its position in the survey.
+SOLVE_SEED = 20260923
+
 
 @dataclass(frozen=True)
 class WatermarkModel:
@@ -280,6 +295,9 @@ def solve(frames: np.ndarray, iterations: int = 6) -> tuple[np.ndarray, np.ndarr
     """
     if frames.ndim != 4 or frames.shape[0] < 2:
         raise ValueError('solving a blend needs a stack of at least two frames')
+    # See SOLVE_SEED: without this the same frames give a different answer each
+    # time, and near a threshold that is a different classification.
+    cv2.setRNGSeed(SOLVE_SEED)
     _, height, width, _ = frames.shape
 
     mask = persistent_strokes(frames)

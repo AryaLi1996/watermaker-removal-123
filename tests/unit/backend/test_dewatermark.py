@@ -231,3 +231,40 @@ def test_persistent_strokes_finds_what_holds_still(marked):
     mask = dewatermark.persistent_strokes(
         marked.stack()[:, y:y + h, x:x + w].astype(np.float32))
     assert mask[marked.alpha > 0.5].mean() > 0.9
+
+
+# ─── The same question, the same answer ─────────────────────────────────────
+
+def test_solving_the_same_frames_twice_gives_the_same_answer(marked):
+    """
+    The palette's k-means draws its starting centres from OpenCV's global RNG.
+    Unseeded, the same frames came back with a coverage of 0.123 to 0.139 and a
+    residual of 14.75 to 16.11 over four runs — and `survey` stops calling
+    something a watermark at 16.0, so a user who scanned the same video twice
+    could be shown a different list.
+    """
+    frames = marked.stack().astype(np.float32)
+    first = dewatermark.fit(frames, marked.roi, iterations=3)
+    second = dewatermark.fit(frames, marked.roi, iterations=3)
+
+    assert first.residual == second.residual
+    assert first.coverage == second.coverage
+    assert np.array_equal(first.alpha, second.alpha)
+    assert np.array_equal(first.colour, second.colour)
+
+
+def test_a_solve_does_not_depend_on_what_ran_before_it(marked):
+    """
+    Seeding at the top of each solve, not once at import: otherwise a region's
+    answer depends on its position in the survey, which is a stranger bug than
+    the one above and harder to see.
+    """
+    frames = marked.stack().astype(np.float32)
+    alone = dewatermark.fit(frames, marked.roi, iterations=3)
+
+    rng = np.random.default_rng(3)
+    noise = rng.integers(0, 255, (4, 40, 40, 3)).astype(np.float32)
+    dewatermark.solve(noise, iterations=2)
+    after = dewatermark.fit(frames, marked.roi, iterations=3)
+
+    assert after.residual == alone.residual
