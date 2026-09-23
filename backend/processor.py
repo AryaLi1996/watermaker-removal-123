@@ -25,6 +25,8 @@ from collections import OrderedDict
 
 import cv2
 
+import dewatermark
+import recover
 import temporal_core
 from image_core import apply_removal, create_mask
 
@@ -91,6 +93,23 @@ TEMPORAL_SEQUENTIAL_FRAME_LIMIT = 1
 # earlier worker has already painted. Sibling of the frames directory so the
 # frame pattern ffmpeg reassembles from stays untouched.
 TEMPORAL_OUTPUT_DIR = 'temporal_out'
+
+# Frames handed to one recovery worker. The solved model travels with the job,
+# and it is the size of the mark — a few hundred kilobytes. Sending it once per
+# frame would pickle it thousands of times for work that takes milliseconds;
+# sending it once per chunk of this many amortises it away while still leaving
+# enough jobs for every core to have several.
+RECOVER_CHUNK_FRAMES = 48
+
+# Chunks below which a pool is not worth starting. Lower than the single-frame
+# limit because each chunk is already dozens of frames of work.
+RECOVER_SEQUENTIAL_CHUNK_LIMIT = 2
+
+# Where scanning and solving end on the bar for a recovery run. Neither reports
+# per-frame progress of its own, and a bar that sits at zero through a scan of
+# several hundred frames reads as a hung job.
+SCAN_PROGRESS_SHARE = 15.0
+FIT_PROGRESS_SHARE = 25.0
 
 # Where the deep engine writes its mask and the frames it produces. Beside the
 # frames directory rather than in it, for the same reason as above: ffmpeg
@@ -192,6 +211,32 @@ def _process_single_frame(args: tuple) -> 'str | None':
     result = apply_removal(frame, mask, config)
     cv2.imwrite(frame_path, result, [cv2.IMWRITE_PNG_COMPRESSION, PNG_COMPRESSION])
     # Nothing to report: the single-frame engines either work or raise.
+    return None
+
+
+def _process_recover_chunk(args: tuple) -> 'str | None':
+    """
+    Worker function for watermark recovery: undo the solved blend on a run of
+    consecutive frames, in place.
+
+    A chunk rather than a frame because the models travel with the job. Frames
+    are written back over themselves, which is safe here in a way it is not for
+    the temporal engine: recovery reads nothing but the frame it is writing, and
+    `recover.schedule` has already guaranteed that no other job holds this one.
+
+    More than one model where a frame is covered by two placements at once,
+    which is what the frames around a move look like.
+    """
+    frame_paths, models = args
+
+    for frame_path in frame_paths:
+        frame = cv2.imread(frame_path)
+        if frame is None:
+            raise IOError(f"Could not read frame: {frame_path}")
+        for model in models:
+            frame = dewatermark.restore(frame, model)
+        cv2.imwrite(frame_path, frame,
+                    [cv2.IMWRITE_PNG_COMPRESSION, PNG_COMPRESSION])
     return None
 
 
@@ -357,6 +402,90 @@ def _run_deep(
     return True
 
 
+def _run_recover(
+    frame_paths: list[str],
+    config: dict,
+    width: int,
+    height: int,
+    progress_callback=None,
+    on_notice=None,
+) -> None:
+    """
+    Find the mark over the whole sequence, solve it where it sits, and undo the
+    blend on the frames it covers.
+
+    The user's box is a hint, not a boundary: it says which of the things that
+    hold still is the one they want gone. Where the scan finds nothing under it
+    — footage too short to scan, a box drawn over nothing, a mark that moves
+    with the picture — the box itself is solved as a single placement over the
+    whole clip: the user did point at something, and solving what they pointed
+    at is a far better answer than an export that silently did nothing.
+
+    Frames no placement covers are left exactly as they were decoded. On a clip
+    whose mark appears halfway through, the first half is the original picture
+    rather than a re-encode of a guess at it.
+    """
+    def notice(key: str, detail: str) -> None:
+        if on_notice:
+            on_notice(key, detail)
+
+    def report(value: float) -> None:
+        if progress_callback:
+            progress_callback(max(0.0, min(100.0, value)))
+
+    def read(index: int):
+        return cv2.imread(frame_paths[index])
+
+    total = len(frame_paths)
+    roi = config['roi']
+    box = (roi['x'], roi['y'], roi['w'], roi['h'])
+
+    # Too little footage to solve a blend from. The frames are left exactly as
+    # they were decoded, which is the only honest answer: this engine recovers
+    # the picture from what moves behind the mark, and here nothing has.
+    # The still the app shows when a video opens is a single frame, so this is
+    # the first thing recovery is asked to do on every video.
+    if total < recover.MIN_SOLVE_FRAMES:
+        notice('recover_too_short',
+               f'{total} frame(s) is too few to solve a blend from; frames left as they are')
+        report(100.0)
+        return
+
+    def solving(done: int, count: int) -> None:
+        report(SCAN_PROGRESS_SHARE
+               + (FIT_PROGRESS_SHARE - SCAN_PROGRESS_SHARE) * done / max(count, 1))
+
+    solved = recover.locate(read, total, box, width, height, on_progress=solving)
+    if not solved:
+        # The user pointed at something, so solve what they pointed at. It is
+        # the old behaviour, and a far better answer than an export that
+        # silently did nothing.
+        fallback = recover.Placement(0, total, recover.clamp_box(box, width, height))
+        solved = [(fallback, recover.fit_placement(read, fallback))]
+        notice('recover_no_mark', 'no mark found by the scan; solving the selection')
+
+    placements = [placement for placement, _ in solved]
+    models = [model for _, model in solved]
+
+    # Distinct frames, not the sum of the placements' own lengths: they overlap
+    # around a move, and a count larger than the video reads as a bug.
+    covered = len({index for placement in placements
+                   for index in range(placement.start, placement.end)})
+    notice('recover_placements',
+           f'{len(placements)} placement(s) over {covered}/{total} frames')
+    report(FIT_PROGRESS_SHARE)
+
+    jobs: list[tuple] = []
+    for run_start, run_end, needed in recover.schedule(placements, models, total):
+        for start in range(run_start, run_end, RECOVER_CHUNK_FRAMES):
+            jobs.append((frame_paths[start:min(start + RECOVER_CHUNK_FRAMES, run_end)],
+                         needed))
+
+    remaining = 100.0 - FIT_PROGRESS_SHARE
+    _dispatch(_process_recover_chunk, jobs, RECOVER_SEQUENTIAL_CHUNK_LIMIT,
+              lambda value: report(FIT_PROGRESS_SHARE + value * remaining / 100.0))
+
+
 def run_batch(
     frame_paths: list[str],
     config: dict,
@@ -386,6 +515,10 @@ def run_batch(
     mask_params = (width, height, roi['x'], roi['y'], roi['w'], roi['h'])
 
     if len(frame_paths) == 0:
+        return 0
+
+    if config.get('method') == 'recover':
+        _run_recover(frame_paths, config, width, height, progress_callback, on_notice)
         return 0
 
     if config.get('method') == 'temporal':

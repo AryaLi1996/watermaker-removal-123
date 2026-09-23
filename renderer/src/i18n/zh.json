@@ -38,6 +38,10 @@
     "closePreview": "关闭预览"
   },
   "method": {
+    "recover": "水印还原",
+    "recoverDescription": "解开叠加，把水印下面的原始画面还原出来",
+    "recoverBadge": "新",
+    "recoverNote": "自动找到水印本身（包括它中途换位置），解出它的透明度和颜色，把下面的画面还原回来，而不是凭空补一块。上面的框只用来指明你要去掉哪一个。",
     "heading": "去除方式",
     "inpaint": "智能修复",
     "inpaintDescription": "重建背景，适合去除标志",

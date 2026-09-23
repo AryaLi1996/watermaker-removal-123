@@ -10,7 +10,13 @@ export interface ROI {
   h: number;
 }
 
-export type RemovalMethod = 'inpaint' | 'blur' | 'solidFill' | 'cloneStamp' | 'temporal';
+export type RemovalMethod =
+  | 'recover'
+  | 'inpaint'
+  | 'blur'
+  | 'solidFill'
+  | 'cloneStamp'
+  | 'temporal';
 
 /** Speed against edge quality for the temporal engine. */
 export type TemporalQuality = 'fast' | 'balanced' | 'high';

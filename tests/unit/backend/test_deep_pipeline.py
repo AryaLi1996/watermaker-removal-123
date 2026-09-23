@@ -246,7 +246,7 @@ def test_an_unavailable_deep_engine_falls_back_before_any_work(monkeypatch, caps
 
 def test_a_notice_is_one_line_whatever_the_detail_says(capsys):
     """The stdout protocol is line-based; a second line reaches nobody."""
-    main.report_deep_notice('deep_fallback', 'first line\nsecond line')
+    main.report_engine_notice('deep_fallback', 'first line\nsecond line')
     out = capsys.readouterr().out.strip()
     assert out.count('\n') == 0
     assert 'second line' in out

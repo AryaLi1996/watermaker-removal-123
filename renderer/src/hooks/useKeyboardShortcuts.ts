@@ -18,7 +18,9 @@ export interface ShortcutHandlers {
 }
 
 /** Number keys pick a method, in the order the picker shows them. */
-const METHOD_ORDER: RemovalMethod[] = ['inpaint', 'blur', 'solidFill', 'cloneStamp', 'temporal'];
+const METHOD_ORDER: RemovalMethod[] = [
+  'recover', 'inpaint', 'blur', 'solidFill', 'cloneStamp', 'temporal',
+];
 
 /** Typing in a field must never trigger an export. */
 function isTyping(target: EventTarget | null): boolean {
