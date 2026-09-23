@@ -86,6 +86,19 @@ function App() {
   // there is no second copy of the answer to keep in step with the first.
   const [findingOverrides, setFindingOverrides] =
     useState<ReadonlyMap<number, boolean>>(new Map());
+  // Whether the box on the canvas is one of the things to remove, alongside
+  // whatever the survey found.
+  //
+  // Off by default, and that default is what keeps the old behaviour: with no
+  // regions at all the backend treats the box as a hint and goes looking for
+  // what holds still under it, which is the right answer when the user has
+  // pointed at something the survey missed. Ticked, the box is a region like
+  // any other — solved exactly where it was drawn, for the whole clip,
+  // *without* displacing the findings that are also ticked. That last part is
+  // the whole point: until now a drawn box could only replace the survey's
+  // answer, so a clip with two watermarks and one thing the survey missed had
+  // no way to ask for all three.
+  const [drawnBoxChosen, setDrawnBoxChosen] = useState(false);
   // What the service last said about this user's allowance, and whether the
   // upload notice is on screen. Null until it has been asked, which is not the
   // same as "not allowed" — the card says nothing rather than guessing.
@@ -203,13 +216,24 @@ function App() {
    * what happens when the survey found nothing and what the user gets back by
    * unticking everything.
    */
+  /** The canvas box in the video's own pixels. */
+  const videoROI = useMemo(
+    () => normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale),
+    [canvasROI, canvasScale],
+  );
+
   const chosenRegions: Region[] = useMemo(
-    () => (selectedMethod === 'recover'
-      ? detection.findings
-          .filter((_, index) => chosenFindings.has(index))
-          .map(({ x, y, w, h, start, end }) => ({ x, y, w, h, start, end }))
-      : []),
-    [selectedMethod, detection.findings, chosenFindings],
+    () => {
+      if (selectedMethod !== 'recover') return [];
+      const regions: Region[] = detection.findings
+        .filter((_, index) => chosenFindings.has(index))
+        .map(({ x, y, w, h, start, end }) => ({ x, y, w, h, start, end }));
+      // Last, and with no times: a drawn box says where, never when, and the
+      // backend reads a region without times as one that is there throughout.
+      if (drawnBoxChosen) regions.push({ ...videoROI });
+      return regions;
+    },
+    [selectedMethod, detection.findings, chosenFindings, drawnBoxChosen, videoROI],
   );
 
   // Asked when the switch is on and agreed to, and not before: a request that
@@ -321,6 +345,8 @@ function App() {
     // went with them point at rows that no longer exist.
     detection.clear();
     setFindingOverrides(new Map());
+    // And the box that was on the canvas was drawn over a different picture.
+    setDrawnBoxChosen(false);
     setInputPath(path);
     // Auto-derive default output path alongside the input file
     setOutputPath(defaultOutputPath(path));
@@ -412,7 +438,6 @@ function App() {
       if (!out) return;
       setOutputPath(out);
     }
-    const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
     // Only the export asks for a local copy. It reads the file many times
     // over and runs for minutes, which is what makes a dropped share
     // expensive; a one-second preview would pay the whole copy to save a read
@@ -427,11 +452,10 @@ function App() {
       // "processing" state that nothing will ever complete.
       failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, chosenRegions, cloudEndpoint, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, appSettings, registerJobListeners, failWith]);
+  }, [inputPath, outputPath, videoROI, method, chosenRegions, cloudEndpoint, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, appSettings, registerJobListeners, failWith]);
 
   const handlePreview = useCallback(async () => {
     if (!inputPath) return;
-    const videoROI = normalizeCoordinates(canvasROI.x, canvasROI.y, canvasROI.w, canvasROI.h, canvasScale);
     // outputPath is passed as placeholder; backend generates its own temp file for the preview clip
     // A temporal preview is cut down twice over, because both dimensions cost
     // the same per frame: shorter than the other methods run (`previewSecondsFor`,
@@ -458,7 +482,7 @@ function App() {
     if (!started) {
       failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, chosenRegions, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, effectivePreviewSeconds, failWith]);
+  }, [inputPath, outputPath, videoROI, method, chosenRegions, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, effectivePreviewSeconds, failWith]);
 
   const handleCancel = useCallback(async () => {
     await window.electronAPI.cancelJob();
@@ -735,8 +759,10 @@ function App() {
                 scanning={detection.scanning}
                 failed={detection.failed}
                 selected={chosenFindings}
+                drawnBoxChosen={drawnBoxChosen}
                 disabled={!isLoaded}
                 onToggle={toggleFinding}
+                onToggleDrawnBox={() => setDrawnBoxChosen((on) => !on)}
                 onRescan={rescan}
               />
             )}

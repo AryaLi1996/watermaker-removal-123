@@ -338,8 +338,10 @@
     "other": "Other fixed element",
     "showRest": "Show {{count}} other thing(s) found",
     "hideRest": "Hide the other things found",
-    "hint": "Ticked items are removed. Subtitles and captions arrive unticked, because removing them destroys what you made. Untick everything to use your own box instead.",
-    "rescan": "Check again"
+    "hint": "Ticked items are removed, including the box you drew — tick it to take out something the check missed, on top of what it found. Subtitles and captions arrive unticked, because removing them destroys what you made. With nothing ticked, your box is used as a hint instead and the mark under it is found for you.",
+    "rescan": "Check again",
+    "drawnBox": "The box you drew",
+    "drawnBoxWhen": "whole video"
   },
   "cloud": {
     "toggle": "Use the cloud filler",

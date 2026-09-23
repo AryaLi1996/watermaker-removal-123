@@ -24,8 +24,11 @@ interface FindingsPanelProps {
   failed: boolean;
   /** Indices of `findings` the user wants removed. */
   selected: ReadonlySet<number>;
+  /** Whether the box drawn on the canvas is one of the things to remove. */
+  drawnBoxChosen: boolean;
   disabled: boolean;
   onToggle: (index: number) => void;
+  onToggleDrawnBox: () => void;
   onRescan: () => void;
 }
 
@@ -71,8 +74,56 @@ function Row({
   );
 }
 
+/**
+ * The box the user drew, as one more thing that can be ticked.
+ *
+ * It sits in the same list as the survey's rows because it is the same kind of
+ * answer — a place to take something out of — and because the thing it is for
+ * is being ticked *alongside* them. Before this row existed a drawn box could
+ * only replace the survey's findings, so a clip with two watermarks and one
+ * thing the survey missed had no way to ask for all three.
+ *
+ * Unticked by default. A box is always on the canvas, including the one nobody
+ * has moved, and a row that arrived ticked would have the app quietly removing
+ * a corner of every video.
+ */
+function DrawnBoxRow({
+  checked, disabled, onToggle,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <label
+      data-testid="finding-drawn-box"
+      style={{
+        display: 'flex', alignItems: 'baseline', gap: 8, padding: '5px 6px',
+        borderRadius: 4, cursor: disabled ? 'not-allowed' : 'pointer',
+        background: checked ? 'var(--accent-soft)' : 'transparent',
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={onToggle}
+        style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}
+      />
+      <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+        {t('findings.drawnBox')}
+      </span>
+      <span style={{ color: 'var(--text-faint)', fontSize: 11, marginLeft: 'auto' }}>
+        {t('findings.drawnBoxWhen')}
+      </span>
+    </label>
+  );
+}
+
 export default function FindingsPanel({
-  findings, scanning, failed, selected, disabled, onToggle, onRescan,
+  findings, scanning, failed, selected, drawnBoxChosen, disabled,
+  onToggle, onToggleDrawnBox, onRescan,
 }: FindingsPanelProps) {
   const { t } = useTranslation();
   const [showRest, setShowRest] = useState(false);
@@ -93,6 +144,11 @@ export default function FindingsPanel({
         <p data-testid="findings-empty" style={{ color: 'var(--text-muted)', fontSize: 11 }}>
           {t(failed ? 'findings.failed' : 'findings.none')}
         </p>
+        {/* Worth offering even with nothing found. Unticked, the backend takes
+            the box as a hint and looks for what holds still under it; ticked,
+            it solves the box exactly as drawn. The second is what the user
+            wants when the scan has already disagreed with them once. */}
+        <DrawnBoxRow checked={drawnBoxChosen} disabled={disabled} onToggle={onToggleDrawnBox} />
         <button
           type="button"
           data-testid="findings-rescan"
@@ -148,6 +204,8 @@ export default function FindingsPanel({
           ))}
         </>
       )}
+
+      <DrawnBoxRow checked={drawnBoxChosen} disabled={disabled} onToggle={onToggleDrawnBox} />
 
       <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.5, marginTop: 2 }}>
         {t('findings.hint')}

@@ -57,8 +57,15 @@ export interface Region {
   y: number;
   w: number;
   h: number;
-  start: number;
-  end: number;
+  /**
+   * When it is on screen, in seconds. Both optional, and omitted rather than
+   * given a sentinel for a region that is there throughout — the backend's
+   * `Region` model defaults them to 0 and infinity, and `Infinity` does not
+   * survive `JSON.stringify` (it becomes `null`, which fails validation).
+   * A box the user drew has no times, and this is how it says so.
+   */
+  start?: number;
+  end?: number;
 }
 
 export type RemovalMethod =

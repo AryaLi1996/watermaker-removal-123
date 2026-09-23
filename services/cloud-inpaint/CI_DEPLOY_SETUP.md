@@ -6,7 +6,7 @@ every push to `main` that touches `services/cloud-inpaint/**`, and on a manual
 long-lived AWS access keys are stored in GitHub — which means IAM roles have to
 exist first, trusted specifically by this repo. **This is one-time AWS and
 GitHub setup, and none of it can be done from here:** it needs the AWS and
-GitHub consoles for account `677840207937`.
+GitHub consoles for account `641628981129`.
 
 Until it is done, every run fails at **Check required secrets are configured**
 and names what is missing. That failure is incomplete setup, not a broken
@@ -24,31 +24,74 @@ to see production and the ability to change it:
 Set up **both** roles — the workflow fails at `plan` if only the deploy role
 exists.
 
-## 0. Which account, and why not the licence one
+## 0. One account, and why this is still a separate stack
 
-This stack deploys to **`677840207937`**. The licence service lives in
-`641628981129` and stays there.
+This stack deploys to **`641628981129`** — the same account the licence service
+already uses.
 
-Keeping them apart is the point. This service is reachable by anyone who can
-reach a URL — that is what a Lambda Function URL is — and the thing guarding it
-is a token (`auth.py`). The licence account holds the DynamoDB tables with
-every licence, order and trial record. A compromise of a public inference
-endpoint should not be able to walk to those, and with two accounts it cannot,
-whatever the IAM policies say.
+That changes what protects what. There is no account boundary between a public
+inference endpoint and the DynamoDB tables holding every licence, order and
+trial record: the separation is IAM, and only IAM. Three things carry it, and
+none of them is decoration:
 
-`scripts/deploy-inpaint.sh` enforces this with an `EXPECTED_ACCOUNT` guard: a
-mis-set profile or a role in the wrong account fails before `sam build` runs.
+- **The function's own execution role grants nothing but logs.** No DynamoDB, no
+  S3, no Secrets Manager (`InpaintFunctionRole` in `template.yaml`). Everything
+  the service needs arrives in the request or in its own environment. This is
+  the one that matters if the token check is ever beaten, and it is the reason
+  to think hard before this service grows any storage — the role would grow
+  with it, in the account where the licences live.
+- **The deploy roles below are scoped to `shuyin-cloud-inpaint-*`.** They cannot
+  read, write, or delete anything named `ruanjian-license-*`. Check that when
+  you paste them: in one account a wildcard that was harmless before is not.
+- **`scripts/deploy-inpaint.sh` keeps its `EXPECTED_ACCOUNT` guard.** It is
+  worth as much as it ever was — it stops a mis-set profile from creating a
+  second live inference endpoint in somebody's personal account, which nobody
+  would be watching the bill for.
 
-## 1. AWS IAM OIDC identity provider (one per AWS account)
+### Why not merge this into `deploy-license.yml`
 
-Account `677840207937` is a different account from the licence service's, so it
-needs its own provider even though that one already has one. Check:
+Reasonable question now that it is one account, and the answer is not obviously
+no — so here is what each way actually costs.
+
+**Sharing the licence service's two IAM roles** is the tempting one and is the
+wrong one. Their trust policies name `repo:…/ruanjian123:environment:…`; adding
+this repo would mean a workflow *here* could assume a role that deploys the
+licence service. That is a real widening — this repo would gain the ability to
+alter the thing that decides who has paid — bought for the price of not
+creating two more roles. Not worth it. Separate roles, scoped by stack prefix,
+stay right in one account.
+
+**GitHub Environments cannot be shared across repositories at all.** `production`
+and `license-plan` live in `ruanjian123`; a job here can only name environments
+defined here. So even a merged workflow would not reuse those.
+
+**Moving `services/cloud-inpaint` into `ruanjian123`** is the version of
+"merge" that would genuinely simplify things: one repository, one workflow, one
+approval gate, one pair of roles — and the `fill/quota` route that hands out
+this service's URL would sit beside the stack that produces it, so the Function
+URL could be a CloudFormation reference instead of a string somebody copies
+after a deploy (see `METERING_ROUTES.md`). What it costs is that the service's
+Python moves away from the client that talks to it (`backend/cloud_fill.py`,
+here), and its tests leave this repo's CI.
+
+That trade is a judgement call and it is not Claude's to make silently, so it
+has not been made: this is the buildable version. If you want the merged one,
+say so — it needs write access to `ruanjian123`, which this session does not
+have.
+
+What one account *does* remove is the next section.
+
+## 1. AWS IAM OIDC identity provider
+
+**Already done.** The licence service's setup created
+`token.actions.githubusercontent.com` in this account, and there is one per
+account, not one per repository. Confirm and move on:
 
 ```bash
 aws iam list-open-id-connect-providers
 ```
 
-If `token.actions.githubusercontent.com` is not listed:
+If it is somehow missing:
 
 ```bash
 aws iam create-open-id-connect-provider \
@@ -76,7 +119,7 @@ changing only the `environment:` suffix — `inpaint-plan` for the plan role,
     {
       "Effect": "Allow",
       "Principal": {
-        "Federated": "arn:aws:iam::677840207937:oidc-provider/token.actions.githubusercontent.com"
+        "Federated": "arn:aws:iam::641628981129:oidc-provider/token.actions.githubusercontent.com"
       },
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
@@ -146,7 +189,7 @@ deploy fails on a missing permission:
       "Sid": "CloudFormationStack",
       "Effect": "Allow",
       "Action": "cloudformation:*",
-      "Resource": "arn:aws:cloudformation:us-east-1:677840207937:stack/shuyin-cloud-inpaint/*"
+      "Resource": "arn:aws:cloudformation:us-east-1:641628981129:stack/shuyin-cloud-inpaint/*"
     },
     {
       "Sid": "CloudFormationPreflight",
@@ -177,7 +220,7 @@ deploy fails on a missing permission:
                  "ecr:BatchCheckLayerAvailability", "ecr:InitiateLayerUpload",
                  "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:PutImage",
                  "ecr:BatchGetImage", "ecr:ListImages"],
-      "Resource": "arn:aws:ecr:us-east-1:677840207937:repository/*"
+      "Resource": "arn:aws:ecr:us-east-1:641628981129:repository/*"
     },
     {
       "Sid": "EcrLogin",
@@ -189,7 +232,7 @@ deploy fails on a missing permission:
       "Sid": "LambdaFunctionAndUrl",
       "Effect": "Allow",
       "Action": ["lambda:*"],
-      "Resource": "arn:aws:lambda:us-east-1:677840207937:function:shuyin-cloud-inpaint-*"
+      "Resource": "arn:aws:lambda:us-east-1:641628981129:function:shuyin-cloud-inpaint-*"
     },
     {
       "Sid": "IamRoleForLambda",
@@ -197,15 +240,15 @@ deploy fails on a missing permission:
       "Action": ["iam:GetRole", "iam:CreateRole", "iam:DeleteRole", "iam:AttachRolePolicy",
                  "iam:DetachRolePolicy", "iam:ListAttachedRolePolicies", "iam:PutRolePolicy",
                  "iam:DeleteRolePolicy", "iam:GetRolePolicy", "iam:PassRole", "iam:TagRole"],
-      "Resource": "arn:aws:iam::677840207937:role/shuyin-cloud-inpaint-*"
+      "Resource": "arn:aws:iam::641628981129:role/shuyin-cloud-inpaint-*"
     },
     {
       "Sid": "CloudWatchLogsForLambda",
       "Effect": "Allow",
       "Action": ["logs:*"],
       "Resource": [
-        "arn:aws:logs:us-east-1:677840207937:log-group:/aws/lambda/shuyin-cloud-inpaint-*",
-        "arn:aws:logs:us-east-1:677840207937:log-group:/aws/lambda/shuyin-cloud-inpaint-*:*"
+        "arn:aws:logs:us-east-1:641628981129:log-group:/aws/lambda/shuyin-cloud-inpaint-*",
+        "arn:aws:logs:us-east-1:641628981129:log-group:/aws/lambda/shuyin-cloud-inpaint-*:*"
       ]
     }
   ]
@@ -213,7 +256,7 @@ deploy fails on a missing permission:
 ```
 
 **Do not drop `SamTransform`, and note its `Resource` is in account `aws`, not
-`677840207937`** — easy to typo away since every other statement is scoped to
+`641628981129`** — easy to typo away since every other statement is scoped to
 this account. Without it `sam deploy` fails at the change-set step with
 `not authorized to perform: cloudformation:CreateChangeSet on resource:
 arn:aws:cloudformation:us-east-1:aws:transform/Serverless-2016-10-31`.
@@ -248,7 +291,7 @@ useful":
       "Action": ["cloudformation:CreateChangeSet", "cloudformation:DescribeChangeSet",
                  "cloudformation:ListChangeSets", "cloudformation:DescribeStacks",
                  "cloudformation:DescribeStackEvents", "cloudformation:GetTemplateSummary"],
-      "Resource": "arn:aws:cloudformation:us-east-1:677840207937:stack/shuyin-cloud-inpaint/*"
+      "Resource": "arn:aws:cloudformation:us-east-1:641628981129:stack/shuyin-cloud-inpaint/*"
     },
     {
       "Sid": "CloudFormationPreflight",
@@ -274,7 +317,7 @@ useful":
       "Action": ["ecr:DescribeRepositories", "ecr:BatchCheckLayerAvailability",
                  "ecr:InitiateLayerUpload", "ecr:UploadLayerPart",
                  "ecr:CompleteLayerUpload", "ecr:PutImage", "ecr:BatchGetImage"],
-      "Resource": "arn:aws:ecr:us-east-1:677840207937:repository/*"
+      "Resource": "arn:aws:ecr:us-east-1:641628981129:repository/*"
     },
     {
       "Sid": "EcrLogin",
@@ -305,7 +348,7 @@ Two things to expect the first time:
   credentials.
 - **`iam:PassRole` is absent.** CloudFormation checks it when a change-set is
   *executed*, not created. If a plan ever fails on it, add it scoped to
-  `arn:aws:iam::677840207937:role/shuyin-cloud-inpaint-*`, which is still far
+  `arn:aws:iam::641628981129:role/shuyin-cloud-inpaint-*`, which is still far
   short of being able to apply anything.
 
 **The plan job still pushes a container image.** That is inherent to previewing
@@ -362,7 +405,8 @@ deploy.
 
 Every step is on the AWS/GitHub side and needs a human with those consoles.
 
-1. **Create the OIDC provider** in `677840207937` if it is not there (§1).
+1. **Confirm the OIDC provider** exists in `641628981129` — the licence
+   service's setup already created it (§1).
 2. **Create both roles** — plan (§2a with `:environment:inpaint-plan`, §2c) and
    deploy (§2a with `:environment:inpaint-production`, §2b).
 3. **Create both environments** with their branch restrictions and

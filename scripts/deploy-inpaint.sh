@@ -12,12 +12,11 @@ TEMPLATE_DIR="$ROOT/services/cloud-inpaint"
 STACK_NAME="${STACK_NAME:-shuyin-cloud-inpaint}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 
-# Not the licence service's account. That one is 641628981129; this stack is a
-# different service with a different failure blast radius, and keeping them
-# apart means a compromise of the GPU endpoint cannot reach the tables holding
-# licences and orders. The guard below is what stops a mis-set profile from
-# quietly deploying this on top of that account.
-EXPECTED_ACCOUNT="${EXPECTED_ACCOUNT:-677840207937}"
+# The same account the licence service deploys to. The guard is here anyway,
+# and is worth as much as it ever was: it stops a mis-set profile or a role in
+# somebody's personal account from creating a second, live inference endpoint
+# nobody is watching the bill for.
+EXPECTED_ACCOUNT="${EXPECTED_ACCOUNT:-641628981129}"
 
 # PLAN_ONLY=true turns this into a read-only preview: it builds and uploads the
 # artifacts, creates a CloudFormation change-set and prints it, but never

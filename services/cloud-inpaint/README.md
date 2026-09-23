@@ -96,10 +96,12 @@ all.
 
 ## Where it runs
 
-AWS account `677840207937`, `us-east-1` — deliberately not the licence
-service's account, so that a compromise of an endpoint strangers can reach
-cannot walk to the tables holding licences and orders. Which is a deployment
-detail everywhere except in the app,
+AWS account `641628981129`, `us-east-1` — the same account as the licence
+service, so what keeps this public endpoint away from the tables holding
+licences and orders is IAM rather than an account boundary. The function's
+execution role grants nothing but logs, which is the part that has to stay true
+(`CI_DEPLOY_SETUP.md` §0). Which is a deployment detail everywhere except in
+the app,
 where it is the thing that decides what the user has to be told: for a user in
 China, every export through this service is a cross-border transfer of personal
 information, and PIPL article 39 asks for the overseas recipient by name, the
