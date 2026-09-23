@@ -32,7 +32,8 @@ import tempfile
 from glob import glob
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, ValidationError, field_validator
+from pydantic import (BaseModel, BeforeValidator, Field, ValidationError,
+                      field_validator, model_validator)
 
 import ff_utils
 import path_utils
@@ -83,7 +84,7 @@ PREVIEW_SECONDS = 1.0
 RemovalMethod = Literal['recover', 'inpaint', 'blur', 'solidFill',
                         'cloneStamp', 'temporal']
 TemporalQuality = Literal['fast', 'balanced', 'high']
-JobMode = Literal['full', 'preview', 'preview_frame']
+JobMode = Literal['full', 'preview', 'preview_frame', 'detect']
 
 # The outputPath a mode with no output file names. The renderer sends the
 # POSIX spelling on every platform — it is a protocol token there, not a path
@@ -118,6 +119,34 @@ class ROI(BaseModel):
     h: Pixels = Field(gt=0)
 
 
+class Region(BaseModel):
+    """
+    One thing to remove, and when it is on screen.
+
+    Times are seconds rather than frame numbers because that is what survives
+    the trip: the survey looks at a sampled decode, the export at every frame,
+    and a renderer that had to know either one's frame rate to describe a
+    region would be coupled to both.
+    """
+
+    x: Pixels
+    y: Pixels
+    w: Pixels = Field(gt=0)
+    h: Pixels = Field(gt=0)
+    start: float = Field(default=0.0, ge=0)
+    # Open-ended by default: a region the caller does not time is one that is
+    # there for the whole video, which is the common case and the one a manual
+    # box comes in as.
+    end: float = Field(default=float('inf'), gt=0)
+
+    @model_validator(mode='after')
+    def end_must_follow_start(self) -> 'Region':
+        if self.end <= self.start:
+            raise ValueError(
+                f'region end ({self.end}) must be after its start ({self.start})')
+        return self
+
+
 class JobConfig(BaseModel):
     inputPath: str
     outputPath: str
@@ -140,6 +169,11 @@ class JobConfig(BaseModel):
     useDeepLearning: bool = False
     # How many seconds of video a quick preview covers.
     previewSeconds: float = Field(default=PREVIEW_SECONDS, gt=0, le=30)
+    # What to remove, where and when, for the recovery method. Empty means the
+    # backend finds the mark itself from `roi` as a hint, which is what an
+    # older renderer sends and what the method did before there was anywhere
+    # to put a confirmed answer.
+    regions: list[Region] = Field(default_factory=list)
 
     @field_validator('color')
     @classmethod
@@ -577,12 +611,139 @@ def stage_bounds(method: str) -> tuple[float, float]:
     return EXTRACT_END, PROCESS_END
 
 
+# What the survey looks at. Eight frames a second and a two-second window is
+# sixteen frames per window, which is what the persistence median needs; below
+# that a mark the user sees for five seconds falls under the evidence bar and
+# is missed. The longest side is capped because the question — does this hold
+# still while the picture moves — is the same at any size, while decoding a
+# 4K frame to ask it is not.
+SURVEY_FPS = 8.0
+SURVEY_WINDOW_SECONDS = 2.0
+SURVEY_MAX_SIDE = 960
+
+# Where extraction ends on the bar for a detect run. The survey after it is the
+# long half and reports per finding.
+SURVEY_EXTRACT_END = 40.0
+
+
+def survey_size(width: int, height: int) -> 'tuple[int, int] | None':
+    """
+    The size the survey decodes at, or None to leave the video alone.
+
+    Even numbers on both axes: the scaler is fine with odd ones but several of
+    the encoders downstream of this project are not, and a size that is only
+    ever used here is not worth making an exception for.
+    """
+    longest = max(width, height)
+    if longest <= SURVEY_MAX_SIDE:
+        return None
+    scale = SURVEY_MAX_SIDE / longest
+    return (max(2, int(round(width * scale)) // 2 * 2),
+            max(2, int(round(height * scale)) // 2 * 2))
+
+
+def regions_in_frames(regions: list, fps: float, total: int,
+                      time_offset: float = 0.0) -> list[dict]:
+    """
+    Confirmed regions as frame ranges into the sequence about to be processed.
+
+    A region that ends before this sequence starts, or starts after it ends, is
+    dropped rather than clamped to nothing: a preview of the last ten seconds
+    of a clip should run the marks that are in those ten seconds, and silently
+    keeping a zero-length range for the others would have the solve fit a model
+    from no frames.
+    """
+    if fps <= 0:
+        return []
+
+    placed = []
+    for region in regions:
+        start = int(round((region.start - time_offset) * fps))
+        end = (total if region.end == float('inf')
+               else int(round((region.end - time_offset) * fps)))
+        start, end = max(0, start), min(total, end)
+        if end <= start:
+            continue
+        placed.append({'x': region.x, 'y': region.y, 'w': region.w, 'h': region.h,
+                       'start': start, 'end': end})
+    return placed
+
+
+def run_detect(config: JobConfig, temp_dir: str) -> None:
+    """
+    Look at the video and say what is on it.
+
+    No output file and nothing touched: this answers a question, and the answer
+    is a list the user is going to be shown before anything is removed. It is
+    deliberately a job of its own rather than a step inside the export, because
+    the whole point is that the user gets to disagree with it.
+    """
+    import cv2  # noqa: PLC0415 — deferred for the same reason as the processor
+
+    stage('probing')
+    meta = ff_utils.probe_video(config.inputPath)
+    emit_meta(meta)
+    progress(PROBE_END)
+
+    stage('scanning')
+    frames_dir = os.path.join(temp_dir, 'survey')
+    size = survey_size(meta['width'], meta['height'])
+    expected = round(meta['duration'] * SURVEY_FPS) if meta['duration'] > 0 else None
+    ff_utils.extract_sampled_frames(
+        config.inputPath, frames_dir, SURVEY_FPS, size,
+        expected_frames=expected,
+        on_progress=lambda done: progress(
+            PROBE_END + done * (SURVEY_EXTRACT_END - PROBE_END)),
+    )
+    frame_paths = sorted(glob(os.path.join(frames_dir, 'frame_*.png')))
+    if not frame_paths:
+        raise ValueError(
+            'No frames could be read from the video. '
+            'The file may be corrupted or use an unsupported codec.'
+        )
+    progress(SURVEY_EXTRACT_END)
+
+    # The survey's boxes are in the pixels it was handed, which are the scaled
+    # ones. Everything that leaves this function is in the video's own pixels
+    # and in seconds — the renderer draws on the video, and the export reads
+    # every frame of it rather than one in four.
+    scan_width = size[0] if size else meta['width']
+    scan_height = size[1] if size else meta['height']
+    back = meta['width'] / scan_width
+
+    import survey as survey_module  # noqa: PLC0415 — pulls in cv2, see above
+    findings = survey_module.survey(
+        lambda index: cv2.imread(frame_paths[index]),
+        len(frame_paths), scan_width, scan_height,
+        window=max(4, int(round(SURVEY_WINDOW_SECONDS * SURVEY_FPS))),
+        on_progress=lambda done, total: progress(
+            SURVEY_EXTRACT_END + done / max(total, 1) * (100 - SURVEY_EXTRACT_END)),
+    )
+
+    emit('STATE:findings:' + json.dumps([
+        {
+            'x': int(round(f.box[0] * back)),
+            'y': int(round(f.box[1] * back)),
+            'w': int(round(f.box[2] * back)),
+            'h': int(round(f.box[3] * back)),
+            'start': round(f.start / SURVEY_FPS, 3),
+            'end': round(f.end / SURVEY_FPS, 3),
+            'kind': f.kind,
+            'proposed': f.proposed,
+            'coverage': round(f.coverage, 4),
+        }
+        for f in findings
+    ], separators=(',', ':')))
+    progress(100)
+
+
 def run_pipeline(
     config: JobConfig,
     temp_dir: str,
     source_video: str,
     announce_meta: bool = True,
     engine: str = 'flow',
+    time_offset: float = 0.0,
 ) -> str:
     """
     Extract → process → reassemble. Returns the output file path.
@@ -597,6 +758,13 @@ def run_pipeline(
     every other method. It is resolved by the caller — see
     `resolve_temporal_engine` — because the answer decides what this machine
     has to be capable of before a frame is extracted.
+
+    `time_offset` is where `source_video` starts inside the original, in
+    seconds. It is zero for an export and the clip's start for a preview, and
+    it exists because a confirmed region is timed against the video the user
+    watched: without it, a preview of the middle of a clip would place every
+    region as many seconds early as the clip began late, and show the user a
+    result their export will not produce.
     """
     global _last_progress
     _last_progress = ''  # a new job starts a new bar
@@ -651,6 +819,8 @@ def run_pipeline(
     roi_dict = config.roi.model_dump()
     removal_config = {
         'method': config.method,
+        'regions': regions_in_frames(config.regions, meta['fps'],
+                                     len(frame_paths), time_offset),
         'roi': {'x': roi_dict['x'], 'y': roi_dict['y'],
                 'w': roi_dict['w'], 'h': roi_dict['h']},
         'radius': config.radius,
@@ -751,6 +921,9 @@ def main() -> None:
             ff_utils.extract_preview_frame(config.inputPath, preview_png, timestamp=ts)
             emit(f'STATE:preview_ready:{preview_png}')
 
+        elif config.mode == 'detect':
+            run_detect(config, temp_dir)
+
         elif config.mode == 'preview':
             # Extract a short clip, run the full pipeline on it, and return
             # the result. Write OUTSIDE temp_dir so finally:rmtree doesn't
@@ -770,7 +943,7 @@ def main() -> None:
             # Run pipeline on the clip, writing to the safe external path
             preview_config = config.model_copy(update={'outputPath': preview_out})
             run_pipeline(preview_config, temp_dir, source_video=clip_path,
-                         announce_meta=False, engine=engine)
+                         announce_meta=False, engine=engine, time_offset=start)
             emit(f'STATE:preview_ready:{preview_out}')
         else:
             output = run_pipeline(config, temp_dir, source_video=config.inputPath,

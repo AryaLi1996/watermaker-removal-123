@@ -21,6 +21,7 @@ export const STAGES = [
   'extractingStill',
   'extractingClip',
   'extractingFrames',
+  'scanning',
   'processing',
   'temporalProcessing',
   'encoding',

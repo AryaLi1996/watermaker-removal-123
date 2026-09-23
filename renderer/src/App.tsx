@@ -1,7 +1,8 @@
 // ─── Full App replaced by watermark-remover implementation ─────────────────
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import EmptyState from './components/EmptyState';
 import VideoCanvas from './components/VideoCanvas';
+import FindingsPanel from './components/FindingsPanel';
 import MethodPicker from './components/MethodPicker';
 import ProgressPanel from './components/ProgressPanel';
 import DonePanel from './components/DonePanel';
@@ -14,7 +15,7 @@ import type { Screen } from './components/Sidebar';
 import SubscriptionPage from './pages/SubscriptionPage';
 import SettingsPage from './pages/SettingsPage';
 import DiagnosticPanel from './components/DiagnosticPanel';
-import type { AppState, DeepNotice, JobConfig, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
+import type { AppState, DeepNotice, JobConfig, Region, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
 import { deepAvailability, deepPresetFor, previewSecondsFor, qualityForJob, temporalAvailability, usesDeepEngine, TEMPORAL_PREVIEW_MAX_SECONDS } from './capabilities';
 import type { Availability } from './capabilities';
 import { normalizeCoordinates, defaultOutputName, defaultOutputPath, formatDuration, mediaUrl, NULL_SINK } from './utils';
@@ -29,6 +30,7 @@ import { useHistory } from './hooks/useHistory';
 import type { JobSettings } from './hooks/useHistory';
 import { useKeyboardShortcuts, SHORTCUT_HINTS } from './hooks/useKeyboardShortcuts';
 import { useVideoLoader } from './hooks/useVideoLoader';
+import { useDetection } from './hooks/useDetection';
 import { useTranslation } from './hooks/useTranslation';
 import { useSubscription } from './hooks/useSubscription';
 import { estimateSecondsRemaining, recordSample } from './eta';
@@ -64,10 +66,19 @@ function App() {
   const [previewClipUrl, setPreviewClipUrl] = useState<string | null>(null);
   const [videoMeta, setVideoMeta] = useState<VideoMeta | null>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
+  // The file the load in flight belongs to, so the survey that follows it is
+  // started for that file and not for whatever state has caught up to.
+  const loadingPath = useRef<string | null>(null);
   const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
   const [canvasScale, setCanvasScale] = useState(1);
   const [canvasROI, setCanvasROI] = useState<ROI>({ x: 0, y: 0, w: 200, h: 100 });
   const [selectedMethod, setMethod] = useState<RemovalMethod>('recover');
+  // Where the user has disagreed with the survey, by index into
+  // `detection.findings`. Only the disagreements are stored: what is ticked
+  // follows from the survey's proposal unless the user has said otherwise, so
+  // there is no second copy of the answer to keep in step with the first.
+  const [findingOverrides, setFindingOverrides] =
+    useState<ReadonlyMap<number, boolean>>(new Map());
   const [radius, setRadius] = useState(3);
   const [kernelSize, setKernelSize] = useState(51);
   const [color, setColor] = useState<[number, number, number]>([0, 0, 0]);
@@ -102,6 +113,7 @@ function App() {
   // that still answers "is the mark gone?", so it stays the default; the
   // longer options cost proportionally more time to produce.
   const [previewSeconds, setPreviewSeconds] = useState(1);
+
 
   // A paid feature is off the table the same way an underpowered machine puts
   // one off the table: greyed out with the reason on the card, rather than a
@@ -144,11 +156,65 @@ function App() {
 
   // Opening a file is two ffmpeg calls on a file that may be very large, so
   // the wait reports where it is and can be retried rather than only failed.
+  const detection = useDetection();
+
   const loader = useVideoLoader({
     onMeta: setVideoMeta,
-    onFrame: useCallback((framePath: string) => setPreviewFrameUrl(mediaUrl(framePath)), []),
+    // The still is on the canvas, so the backend is free: this is the moment
+    // to ask it what is on the video. Started here rather than in an effect on
+    // the path, because an effect would race the load for the one backend.
+    onFrame: useCallback((framePath: string) => {
+      setPreviewFrameUrl(mediaUrl(framePath));
+      if (loadingPath.current) detection.scan(loadingPath.current);
+    }, [detection]),
     onError: failWith,
   });
+
+  // What is ticked: the survey's proposal, unless the user has said otherwise.
+  // Derived rather than stored, so a survey that comes back cannot leave a
+  // stale set of indices pointing into findings that are no longer there.
+  const chosenFindings: ReadonlySet<number> = useMemo(
+    () => new Set(
+      detection.findings
+        .map((finding, index) => [finding, index] as const)
+        .filter(([finding, index]) => findingOverrides.get(index) ?? finding.proposed)
+        .map(([, index]) => index),
+    ),
+    [detection.findings, findingOverrides],
+  );
+
+  /**
+   * The regions an export would run, from what the user has ticked.
+   *
+   * Only the recovery method reads them, and an empty list is not a mistake:
+   * it means the backend should find the mark itself from the box, which is
+   * what happens when the survey found nothing and what the user gets back by
+   * unticking everything.
+   */
+  const chosenRegions: Region[] = useMemo(
+    () => (selectedMethod === 'recover'
+      ? detection.findings
+          .filter((_, index) => chosenFindings.has(index))
+          .map(({ x, y, w, h, start, end }) => ({ x, y, w, h, start, end }))
+      : []),
+    [selectedMethod, detection.findings, chosenFindings],
+  );
+
+  const toggleFinding = useCallback((index: number) => {
+    setFindingOverrides((current) => {
+      const next = new Map(current);
+      next.set(index, !chosenFindings.has(index));
+      return next;
+    });
+  }, [chosenFindings]);
+
+  /** Ask again, from scratch — the old answer's indices mean nothing now. */
+  const rescan = useCallback(() => {
+    if (!inputPath) return;
+    setFindingOverrides(new Map());
+    detection.scan(inputPath);
+  }, [inputPath, detection]);
+
 
   useEffect(() => {
     const update = () => {
@@ -190,6 +256,11 @@ function App() {
 
   /** Take a file from empty state to a frame on the canvas. */
   const startLoad = useCallback((path: string) => {
+    loadingPath.current = path;
+    // Last video's findings describe last video's frames, and the ticks that
+    // went with them point at rows that no longer exist.
+    detection.clear();
+    setFindingOverrides(new Map());
     setInputPath(path);
     // Auto-derive default output path alongside the input file
     setOutputPath(defaultOutputPath(path));
@@ -200,7 +271,7 @@ function App() {
     setTemporalFallback(null); setDeepNotice(null);
     setAppState('loaded');
     loader.load(path);
-  }, [loader]);
+  }, [loader, detection]);
 
   // The panel is a support tool, enabled by the environment the app was
   // started in rather than by anything the user can toggle.
@@ -279,7 +350,7 @@ function App() {
     // over and runs for minutes, which is what makes a dropped share
     // expensive; a one-second preview would pay the whole copy to save a read
     // it does once.
-    const payload: JobConfig = { inputPath, outputPath: out, roi: videoROI, method, mode: 'full', radius, kernelSize, color, dx, dy, temporalQuality, useDeepLearning: usesDeep, copyInputLocally: appSettings.copyToTempBeforeProcessing, copyInputMaxBytes: appSettings.maxTempFileSizeMB * 1024 * 1024 };
+    const payload: JobConfig = { inputPath, outputPath: out, roi: videoROI, method, mode: 'full', regions: chosenRegions, radius, kernelSize, color, dx, dy, temporalQuality, useDeepLearning: usesDeep, copyInputLocally: appSettings.copyToTempBeforeProcessing, copyInputMaxBytes: appSettings.maxTempFileSizeMB * 1024 * 1024 };
     setProgress(0); setStateLabel(''); setSamples([]); setTemporalFallback(null); setDeepNotice(null); setAppState('processing');
     registerJobListeners();
     const started = await window.electronAPI.startJob(payload);
@@ -288,7 +359,7 @@ function App() {
       // "processing" state that nothing will ever complete.
       failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, appSettings, registerJobListeners, failWith]);
+  }, [inputPath, outputPath, canvasROI, canvasScale, method, chosenRegions, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, appSettings, registerJobListeners, failWith]);
 
   const handlePreview = useCallback(async () => {
     if (!inputPath) return;
@@ -299,7 +370,7 @@ function App() {
     // capped in the backend too, so the length sent is the length that runs),
     // and at the quickest quality whatever the dial says (`qualityForJob`).
     // The export keeps both of the user's choices.
-    const payload: JobConfig = { inputPath, outputPath: outputPath ?? NULL_SINK, roi: videoROI, method, mode: 'preview', radius, kernelSize, color, dx, dy, temporalQuality: qualityForJob(method, temporalQuality, true), useDeepLearning: usesDeep, previewSeconds: effectivePreviewSeconds };
+    const payload: JobConfig = { inputPath, outputPath: outputPath ?? NULL_SINK, roi: videoROI, method, mode: 'preview', regions: chosenRegions, radius, kernelSize, color, dx, dy, temporalQuality: qualityForJob(method, temporalQuality, true), useDeepLearning: usesDeep, previewSeconds: effectivePreviewSeconds };
     setProgress(0); setStateLabel(stageState('preparingPreview')); setSamples([]); setTemporalFallback(null); setDeepNotice(null); setAppState('processing');
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobProgress((value) => {
@@ -319,7 +390,7 @@ function App() {
     if (!started) {
       failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, effectivePreviewSeconds, failWith]);
+  }, [inputPath, outputPath, canvasROI, canvasScale, method, chosenRegions, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, effectivePreviewSeconds, failWith]);
 
   const handleCancel = useCallback(async () => {
     await window.electronAPI.cancelJob();
@@ -581,6 +652,17 @@ function App() {
               onSaveCurrent={saveCurrentPreset}
             />
 
+            {method === 'recover' && (
+              <FindingsPanel
+                findings={detection.findings}
+                scanning={detection.scanning}
+                failed={detection.failed}
+                selected={chosenFindings}
+                disabled={!isLoaded}
+                onToggle={toggleFinding}
+                onRescan={rescan}
+              />
+            )}
             <MethodPicker method={method} deepLearning={deepLearning} deep={deep} deepPreset={deepPreset} radius={radius} kernelSize={kernelSize} color={color} dx={dx} dy={dy} temporalQuality={temporalQuality} temporal={temporal} videoMeta={videoMeta} cpuCount={systemInfo?.cpuCount} previewSeconds={effectivePreviewSeconds} temporalUsage={temporalUsage} disabled={!isLoaded} onChange={handleMethodChange} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -664,7 +746,7 @@ function App() {
         {appState === 'empty' && <EmptyState onSelectFile={handleSelectFile} />}
 
         {appState !== 'empty' && previewFrameUrl && !previewClipUrl && (
-          <VideoCanvas previewSrc={previewFrameUrl} containerWidth={containerSize.w} containerHeight={containerSize.h} onScaleChange={setCanvasScale} onROIChange={setCanvasROI} />
+          <VideoCanvas previewSrc={previewFrameUrl} containerWidth={containerSize.w} containerHeight={containerSize.h} onScaleChange={setCanvasScale} onROIChange={setCanvasROI} findings={method === 'recover' ? detection.findings : []} selectedFindings={chosenFindings} />
         )}
 
         {previewClipUrl && (

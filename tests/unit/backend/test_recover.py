@@ -392,3 +392,69 @@ def test_run_batch_leaves_a_single_frame_alone(clip, tmp_path):
     config = {'method': 'recover', 'roi': dict(zip('xywh', USER_BOX))}
     assert processor.run_batch([str(path)], config, WIDTH, HEIGHT) == 0
     assert np.array_equal(cv2.imread(str(path)), before)
+
+
+# ─── Confirmed regions ──────────────────────────────────────────────────────
+
+def test_run_batch_runs_the_regions_it_is_given(clip, tmp_path):
+    """
+    A confirmed region is not re-litigated. It came from a list the user was
+    shown and agreed with, so it runs as given — and the mark inside it goes.
+    """
+    import processor
+
+    sources = list(range(clip.count))
+    paths = []
+    for position, index in enumerate(sources):
+        path = tmp_path / f'f{position:05d}.png'
+        cv2.imwrite(str(path), clip.frame(index))
+        paths.append(str(path))
+
+    config = {
+        'method': 'recover',
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},   # deliberately useless
+        'regions': [
+            {**dict(zip('xywh', (TOP_LEFT[0], TOP_LEFT[1], *MARK))),
+             'start': 0, 'end': clip.move_at},
+            {**dict(zip('xywh', (BOTTOM_RIGHT[0], BOTTOM_RIGHT[1], *MARK))),
+             'start': clip.move_at, 'end': clip.count},
+        ],
+    }
+    assert processor.run_batch(paths, config, WIDTH, HEIGHT) == 0
+
+    shape = clip.alpha - clip.alpha.mean()
+    for index in (clip.move_at // 2, clip.move_at + 40):
+        x, y = clip.corner(index)
+        w, h = MARK
+        patch = cv2.cvtColor(cv2.imread(paths[index])[y:y + h, x:x + w],
+                             cv2.COLOR_BGR2GRAY).astype(np.float32)
+        detail = patch - cv2.medianBlur(patch.astype(np.uint8), 21).astype(np.float32)
+        detail -= detail.mean()
+        size = np.linalg.norm(detail) * np.linalg.norm(shape)
+        legible = float((detail * shape).sum() / size) if size > 1e-6 else 0.0
+        assert legible < 0.25, f'frame {index} still shows the mark at {legible:.3f}'
+
+
+def test_a_confirmed_region_with_no_mark_in_it_is_left_alone(clip, tmp_path):
+    """
+    The user can point at anything. Where the solve finds no blend, the frames
+    come back as they were rather than divided by an opacity that is not there.
+    """
+    import processor
+
+    paths = []
+    for position in range(60):
+        path = tmp_path / f'f{position:05d}.png'
+        cv2.imwrite(str(path), clip.truth(position))
+        paths.append(str(path))
+    before = [cv2.imread(path) for path in paths]
+
+    config = {'method': 'recover', 'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
+              'regions': [{'x': 120, 'y': 60, 'w': 110, 'h': 80,
+                           'start': 0, 'end': 60}]}
+    processor.run_batch(paths, config, WIDTH, HEIGHT)
+
+    for path, original in zip(paths, before):
+        moved = np.abs(cv2.imread(path).astype(np.float32)
+                       - original.astype(np.float32)).mean()
+        assert moved < 2.0, f'{path} moved by {moved:.2f} levels'

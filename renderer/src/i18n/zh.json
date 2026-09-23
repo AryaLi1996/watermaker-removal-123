@@ -113,7 +113,8 @@
     "temporalProcessing": "时间修复处理中，耗时较长…",
     "encoding": "正在编码视频…",
     "preparingPreview": "正在准备预览…",
-    "deepProcessing": "深度学习修复中——需要较长时间…"
+    "deepProcessing": "深度学习修复中——需要较长时间…",
+    "scanning": "正在检查视频里的水印…"
   },
   "estimate": {
     "export": "导出：{time}",
@@ -325,5 +326,19 @@
     "yes": "是",
     "no": "否",
     "unknown": "未知"
+  },
+  "findings": {
+    "heading": "在这个视频上检测到",
+    "scanning": "正在检查视频…",
+    "none": "没有找到水印形状的内容。请手动框出你要去掉的部分。",
+    "failed": "自动检查没有完成。请手动框出你要去掉的部分。",
+    "noMarks": "没有找到平台水印。",
+    "watermark": "水印",
+    "subtitle": "字幕",
+    "other": "其他固定元素",
+    "showRest": "显示另外检测到的 {{count}} 项",
+    "hideRest": "收起其他检测结果",
+    "hint": "勾选的会被去除。字幕和花字默认不勾选——去掉它们等于毁掉你自己做的内容。全部取消勾选，则改用你手动框选的区域。",
+    "rescan": "重新检查"
   }
 }

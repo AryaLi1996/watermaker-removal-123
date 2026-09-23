@@ -364,6 +364,18 @@ function handleBackendLine(line, ctx) {
     send('job:preview-ready', previewPath);
     return;
   }
+  const findingsMatch = line.match(/^STATE:findings:(.+)$/);
+  if (findingsMatch) {
+    try {
+      send('job:findings', JSON.parse(findingsMatch[1].trim()));
+      ctx.answered = true;
+    } catch {
+      // A survey that cannot be parsed is a survey that did not happen: the
+      // UI falls back to asking the user for a box, which is where it was
+      // before detection existed.
+    }
+    return;
+  }
   const metaMatch = line.match(/^STATE:meta:(.+)$/);
   if (metaMatch) {
     try {
@@ -900,10 +912,14 @@ ipcMain.handle('job:start', (_event, payload) => {
   }
 
   if (currentJob) {
+    // A survey is the app's own idea, not the user's. Anything they ask for
+    // takes the backend off it — without this, the minute or two after a video
+    // opens is a minute or two in which Preview does nothing.
+    //
     // Previews are short probes the app starts on its own (a still on load, a
     // one-second clip on request). If one is still running when the user hits Export,
     // the export wins — refusing it silently would look like a dead button.
-    if (isExport && !currentJob.isExport) {
+    if (currentJob.isDetect || (isExport && !currentJob.isExport)) {
       currentJob.superseded = true;
       currentJob.child.kill('SIGTERM');
     } else {
@@ -935,7 +951,10 @@ ipcMain.handle('job:start', (_event, payload) => {
   }
 
   const child = spawn(command, args, { env: backendEnv() });
-  const job = { child, isExport, cancelled: false, superseded: false };
+  const job = {
+    child, isExport, cancelled: false, superseded: false,
+    isDetect: payload?.mode === 'detect',
+  };
   currentJob = job;
 
   // Counted once the run is under way. Counting before the spawn would charge
@@ -946,7 +965,10 @@ ipcMain.handle('job:start', (_event, payload) => {
   }
 
   // Per-job state shared with the line parser.
-  const ctx = { outputPath: null, errored: false, mode: payload?.mode ?? 'full' };
+  const ctx = {
+    outputPath: null, errored: false, answered: false,
+    mode: payload?.mode ?? 'full',
+  };
 
   // stdout arrives in arbitrary chunks; keep the trailing partial line buffered
   // so a message split across two chunks is still parsed correctly.
@@ -1001,6 +1023,10 @@ ipcMain.handle('job:start', (_event, payload) => {
     // temp path; and a job that printed an ERROR line, whatever it then exits
     // with — that line is the backend's verdict on a file it never wrote.
     if (code === 0 && !ctx.errored) {
+      // A survey that ends without saying anything has still ended. Left
+      // unsaid, the panel reads "checking the video" until its own timeout
+      // gives up, minutes after the backend stopped.
+      if (job.isDetect && !ctx.answered) send('job:findings', []);
       if (job.isExport) send('job:done', ctx.outputPath ?? jobPayload.outputPath ?? null);
     } else if (!ctx.errored) {
       send('job:error', `Process exited with code ${code}`);

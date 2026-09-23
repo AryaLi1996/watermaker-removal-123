@@ -10,6 +10,40 @@ export interface ROI {
   h: number;
 }
 
+/** What the survey decided a region is. */
+export type FindingKind = 'watermark' | 'subtitle' | 'other';
+
+/**
+ * One thing the backend found on the video.
+ *
+ * Coordinates are the video's own pixels and times are seconds, so a finding
+ * means the same thing to the canvas (which draws on the video) and to the
+ * export (which reads every frame of it).
+ */
+export interface Finding {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  start: number;
+  end: number;
+  kind: FindingKind;
+  /** Whether the backend offers this for removal without being asked. */
+  proposed: boolean;
+  /** How much of the box the solve found a mark in, 0–1. */
+  coverage: number;
+}
+
+/** A region to remove, as the job carries it. */
+export interface Region {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  start: number;
+  end: number;
+}
+
 export type RemovalMethod =
   | 'recover'
   | 'inpaint'
@@ -26,7 +60,14 @@ export interface JobConfig {
   outputPath: string;
   roi: ROI;
   method: RemovalMethod;
-  mode?: 'full' | 'preview' | 'preview_frame';
+  mode?: 'full' | 'preview' | 'preview_frame' | 'detect';
+  /**
+   * What to remove, confirmed by the user. Only the recovery method reads it.
+   * Empty means the backend finds the mark itself, using `roi` as a hint —
+   * which is what happens when the survey found nothing, or the user unticked
+   * everything to go back to their own box.
+   */
+  regions?: Region[];
   radius?: number;
   kernelSize?: number;
   color?: [number, number, number];
@@ -265,6 +306,12 @@ declare global {
       onJobDone: (cb: (outputPath: string | null) => void) => void;
       onJobMeta: (cb: (meta: VideoMeta) => void) => void;
       onPreviewReady: (cb: (path: string) => void) => void;
+      /**
+       * What a detect job found. Optional: a main process from before
+       * detection existed never sends it, and the app falls back to asking
+       * the user for a box, which is where it was.
+       */
+      onFindings?: (cb: (findings: Finding[]) => void) => void;
       onTemporalFallback: (cb: (report: TemporalFallback) => void) => void;
       onDeepNotice: (cb: (notice: DeepNotice) => void) => void;
       onUpdateAvailable: (cb: (version: string | null) => void) => void;

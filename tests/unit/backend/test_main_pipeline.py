@@ -897,3 +897,79 @@ def test_a_run_with_nothing_to_report_stays_quiet(
     """
     lines = _pipeline_lines(monkeypatch, capsys, sample_video, tmp_path, degraded=0)
     assert not any(line.startswith('STATE:temporal_fallback:') for line in lines)
+
+
+# ─── Confirmed regions ──────────────────────────────────────────────────────
+
+def test_job_config_accepts_confirmed_regions(existing_file):
+    config = backend_main.JobConfig.model_validate({
+        'inputPath': str(existing_file), 'outputPath': str(existing_file),
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1}, 'method': 'recover',
+        'regions': [{'x': 4, 'y': 5, 'w': 100, 'h': 40, 'start': 0, 'end': 6}],
+    })
+    assert config.regions[0].w == 100 and config.regions[0].end == 6
+
+
+def test_a_region_with_no_times_covers_the_whole_video(existing_file):
+    """A box drawn by hand is a box that is there for as long as the video is."""
+    config = backend_main.JobConfig.model_validate({
+        'inputPath': str(existing_file), 'outputPath': str(existing_file),
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1}, 'method': 'recover',
+        'regions': [{'x': 4, 'y': 5, 'w': 100, 'h': 40}],
+    })
+    assert config.regions[0].start == 0
+    assert backend_main.regions_in_frames(config.regions, 30.0, 900) == [
+        {'x': 4, 'y': 5, 'w': 100, 'h': 40, 'start': 0, 'end': 900},
+    ]
+
+
+def test_job_config_rejects_a_region_that_ends_before_it_starts(existing_file):
+    with pytest.raises(ValidationError, match='must be after its start'):
+        backend_main.JobConfig.model_validate({
+            'inputPath': str(existing_file), 'outputPath': str(existing_file),
+            'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1}, 'method': 'recover',
+            'regions': [{'x': 4, 'y': 5, 'w': 10, 'h': 10, 'start': 9, 'end': 2}],
+        })
+
+
+def test_job_config_without_regions_is_an_older_renderer(existing_file):
+    """Absent means "you find it", which is what the method did before this."""
+    config = backend_main.JobConfig.model_validate({
+        'inputPath': str(existing_file), 'outputPath': str(existing_file),
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1}, 'method': 'recover',
+    })
+    assert config.regions == []
+
+
+def _region(**over):
+    return backend_main.Region.model_validate(
+        {'x': 0, 'y': 0, 'w': 10, 'h': 10, **over})
+
+
+def test_regions_are_placed_in_frames_at_the_videos_own_rate():
+    placed = backend_main.regions_in_frames([_region(start=1.0, end=3.0)], 25.0, 500)
+    assert placed[0]['start'] == 25 and placed[0]['end'] == 75
+
+
+def test_a_preview_places_regions_against_the_clip_it_extracted():
+    """
+    A region is timed against the video the user watched. A preview of ten
+    seconds in has to subtract those ten seconds, or every mark lands that far
+    early and the preview shows a result the export will not produce.
+    """
+    placed = backend_main.regions_in_frames(
+        [_region(start=12.0, end=14.0)], 30.0, 60, time_offset=12.0)
+    assert placed[0]['start'] == 0 and placed[0]['end'] == 60
+
+
+def test_a_region_outside_the_clip_is_dropped_not_flattened():
+    """
+    Clamping it to nothing would hand the solve a model to fit from no frames;
+    the honest answer is that this clip does not contain it.
+    """
+    assert backend_main.regions_in_frames(
+        [_region(start=90.0, end=95.0)], 30.0, 60, time_offset=0.0) == []
+
+
+def test_regions_need_a_frame_rate_to_be_placed_at_all():
+    assert backend_main.regions_in_frames([_region(start=0, end=1)], 0.0, 60) == []
