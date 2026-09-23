@@ -14,6 +14,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Stage, Layer, Image as KonvaImage, Rect, Transformer } from 'react-konva';
 import useImage from 'use-image';
 import type Konva from 'konva';
+import type { Finding } from '../types';
 
 interface VideoCanvasProps {
   /** URL of the preview PNG, as built by `mediaUrl` */
@@ -22,6 +23,14 @@ interface VideoCanvasProps {
   containerHeight: number;
   onScaleChange: (scale: number) => void;
   onROIChange: (roi: { x: number; y: number; w: number; h: number }) => void;
+  /**
+   * What the survey found, in the video's own pixels. Drawn so that the list
+   * in the sidebar has somewhere to point: a row reading "watermark, 0–6s"
+   * means nothing until you can see which corner it is talking about.
+   */
+  findings?: Finding[];
+  /** Indices of `findings` the user has ticked. */
+  selectedFindings?: ReadonlySet<number>;
 }
 
 const INITIAL_BOX_RATIO = 0.2; // default box is 20% of canvas width/height
@@ -33,6 +42,8 @@ export default function VideoCanvas({
   containerHeight,
   onScaleChange,
   onROIChange,
+  findings = [],
+  selectedFindings,
 }: VideoCanvasProps) {
   const [image] = useImage(previewSrc);
 
@@ -117,6 +128,28 @@ export default function VideoCanvas({
               <Rect x={rect.x + rect.width} y={rect.y} width={stageW - rect.x - rect.width} height={rect.height} fill="rgba(0,0,0,0.35)" listening={false} />
             </>
           )}
+
+          {/* What the survey found. Drawn under the selection box, and never
+              listening: these are a picture of the answer, and the thing the
+              user drags is still their own box. */}
+          {image && findings.map((finding, index) => {
+            const chosen = selectedFindings?.has(index) ?? false;
+            return (
+              <Rect
+                key={`${finding.x}-${finding.y}-${finding.start}-${index}`}
+                x={finding.x * scale}
+                y={finding.y * scale}
+                width={finding.w * scale}
+                height={finding.h * scale}
+                stroke={chosen ? '#6ee7b7' : 'rgba(255,255,255,0.45)'}
+                strokeWidth={chosen ? 2 : 1}
+                dash={chosen ? undefined : [4, 4]}
+                shadowColor="rgba(0,0,0,0.8)"
+                shadowBlur={chosen ? 6 : 0}
+                listening={false}
+              />
+            );
+          })}
 
           {/* ROI selection rect */}
           {image && (

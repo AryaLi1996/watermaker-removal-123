@@ -363,6 +363,43 @@ def extract_frames(
     return len([f for f in os.listdir(output_dir) if f.endswith('.png')])
 
 
+def extract_sampled_frames(
+    input_path: str,
+    output_dir: str,
+    fps: float,
+    size: 'tuple[int, int] | None' = None,
+    expected_frames: Optional[int] = None,
+    on_progress: Optional[Callable[[float], None]] = None,
+) -> int:
+    """
+    Extract `fps` frames a second, optionally scaled, as lossless PNGs.
+
+    For looking at a video rather than reproducing it. The survey asks whether
+    something holds still while the picture moves, and that question survives
+    both a lower frame rate and a smaller picture — while decoding every frame
+    of a two-minute clip at full size, to answer it, would cost more than the
+    export the user is waiting for.
+
+    `size` is passed through to ffmpeg's scaler as given; the caller computes
+    it, because the caller has the probe and knows the aspect ratio it wants to
+    keep.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    filters = [f'fps={fps}']
+    if size:
+        filters.append(f'scale={size[0]}:{size[1]}')
+    _run_reporting([
+        ffmpeg_bin(), '-y',
+        '-v', 'error',
+        '-i', input_path,
+        '-vf', ','.join(filters),
+        '-compression_level', str(PNG_COMPRESSION),
+        '-f', 'image2',
+        os.path.join(output_dir, 'frame_%06d.png'),
+    ], expected_frames, on_progress)
+    return len([f for f in os.listdir(output_dir) if f.endswith('.png')])
+
+
 def extract_clip(input_path: str, output_path: str, start: float, duration: float) -> None:
     """Extract a short clip from `start` seconds for `duration` seconds."""
     _run([

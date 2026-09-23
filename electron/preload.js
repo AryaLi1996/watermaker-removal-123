@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onJobDone:     (cb) => ipcRenderer.on('job:done',     (_e, v) => cb(v)),
   onJobMeta:     (cb) => ipcRenderer.on('job:meta',     (_e, v) => cb(v)),
   onPreviewReady:(cb) => ipcRenderer.on('job:preview-ready', (_e, v) => cb(v)),
+  // What a detect job found: everything on the video that holds still, each
+  // with what it is and when it is on screen.
+  onFindings:    (cb) => ipcRenderer.on('job:findings',  (_e, v) => cb(v)),
   // {degraded, total} — frames the temporal engine could not rebuild
   onTemporalFallback: (cb) => ipcRenderer.on('job:temporal-fallback', (_e, v) => cb(v)),
   // {kind, detail} — the learned engine stood aside, or ran a lower preset
@@ -97,7 +100,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Remove all listeners (call on component unmount)
   removeJobListeners: () => {
     ['job:progress','job:state','job:error','job:done','job:meta','job:preview-ready',
-     'job:temporal-fallback','job:deep-notice']
+     'job:findings','job:temporal-fallback','job:deep-notice']
       .forEach((ch) => ipcRenderer.removeAllListeners(ch));
   },
 });

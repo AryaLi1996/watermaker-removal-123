@@ -414,8 +414,10 @@ def _run_recover(
     Find the mark over the whole sequence, solve it where it sits, and undo the
     blend on the frames it covers.
 
-    The user's box is a hint, not a boundary: it says which of the things that
-    hold still is the one they want gone. Where the scan finds nothing under it
+    Where the job carries confirmed regions — a survey the user was shown and
+    agreed with, or boxes they drew — those are what runs, exactly as given.
+    Otherwise the user's box is a hint, not a boundary: it says which of the
+    things that hold still is the one they want gone. Where the scan finds nothing under it
     — footage too short to scan, a box drawn over nothing, a mark that moves
     with the picture — the box itself is solved as a single placement over the
     whole clip: the user did point at something, and solving what they pointed
@@ -455,14 +457,43 @@ def _run_recover(
         report(SCAN_PROGRESS_SHARE
                + (FIT_PROGRESS_SHARE - SCAN_PROGRESS_SHARE) * done / max(count, 1))
 
-    solved = recover.locate(read, total, box, width, height, on_progress=solving)
-    if not solved:
+    # Regions the user has confirmed are not re-litigated. They were found by a
+    # survey they were shown and agreed with, or drawn by hand; scanning again
+    # here would be slower and could disagree with what they approved, which is
+    # the one thing a confirmation step must not do.
+    confirmed = config.get('regions') or []
+    if confirmed:
+        solved = []
+        for done, region in enumerate(confirmed, start=1):
+            placement = recover.Placement(
+                region['start'], region['end'],
+                recover.clamp_box((region['x'], region['y'], region['w'], region['h']),
+                                  width, height))
+            if placement.frames < recover.MIN_SOLVE_FRAMES:
+                continue
+            model = recover.fit_placement(read, placement)
+            if recover.believable(model):
+                solved.append((placement, model))
+            solving(done, len(confirmed))
+        skipped = len(confirmed) - len(solved)
+        if skipped:
+            notice('recover_region_empty',
+                   f'{skipped} of {len(confirmed)} confirmed region(s) held no '
+                   f'blend to undo and were left alone')
+    else:
+        solved = recover.locate(read, total, box, width, height, on_progress=solving)
+
+    if not solved and not confirmed:
         # The user pointed at something, so solve what they pointed at. It is
         # the old behaviour, and a far better answer than an export that
         # silently did nothing.
         fallback = recover.Placement(0, total, recover.clamp_box(box, width, height))
         solved = [(fallback, recover.fit_placement(read, fallback))]
         notice('recover_no_mark', 'no mark found by the scan; solving the selection')
+
+    if not solved:
+        report(100.0)
+        return
 
     placements = [placement for placement, _ in solved]
     models = [model for _, model in solved]

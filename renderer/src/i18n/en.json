@@ -113,7 +113,8 @@
     "temporalProcessing": "Temporal fill in progress — this takes longer…",
     "encoding": "Encoding video…",
     "preparingPreview": "Preparing preview…",
-    "deepProcessing": "Deep learning fill in progress — this takes longer…"
+    "deepProcessing": "Deep learning fill in progress — this takes longer…",
+    "scanning": "Checking the video for watermarks…"
   },
   "estimate": {
     "export": "Export: {time}",
@@ -325,5 +326,19 @@
     "yes": "yes",
     "no": "no",
     "unknown": "unknown"
+  },
+  "findings": {
+    "heading": "Found on this video",
+    "scanning": "Checking the video…",
+    "none": "Nothing mark-shaped was found. Draw a box around what you want gone.",
+    "failed": "The check did not finish. Draw a box around what you want gone.",
+    "noMarks": "No platform watermark found.",
+    "watermark": "Watermark",
+    "subtitle": "Subtitle",
+    "other": "Other fixed element",
+    "showRest": "Show {{count}} other thing(s) found",
+    "hideRest": "Hide the other things found",
+    "hint": "Ticked items are removed. Subtitles and captions arrive unticked, because removing them destroys what you made. Untick everything to use your own box instead.",
+    "rescan": "Check again"
   }
 }
