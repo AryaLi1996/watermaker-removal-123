@@ -24,24 +24,35 @@
 /**
  * Who is doing the processing, and who receives it abroad.
  *
- * TODO(contact): fill these in before any build that can reach a real service.
- * They are empty on purpose rather than guessed at: a consent notice naming
- * the wrong company, or an address that bounces, is worse than one that is
- * visibly incomplete — the user can see an empty bracket and refuse, and
- * cannot see a plausible-looking lie. `consentIsComplete` is what stops a
- * build shipping with them blank.
+ * `processorName` is the name on the business registration, not the product's.
+ * They are nearly the same word here and that is a coincidence worth not
+ * relying on: what a consent notice has to name is the entity that can be
+ * written to and held to this, which is the registered one.
+ *
+ * Changing any of these changes what the user is being told, so it goes with a
+ * bump to `CONSENT_VERSION` — an agreement given to one processor is not an
+ * agreement given to a different one.
  */
 export const CLOUD_PARTIES = {
-  /** The company processing the upload. */
-  processorName: '',
+  /** The registered entity processing the upload. */
+  processorName: '舒音 (SmootheVoice)',
   /** Where to write to exercise any of the rights below. */
-  processorEmail: '',
+  processorEmail: 'smoothevoice@outlook.com',
   /** The overseas recipient, named as PIPL art. 39 requires. */
   recipientName: 'Amazon Web Services, Inc.',
   /** Where that recipient holds and processes it. */
   recipientRegion: 'US East (N. Virginia) — us-east-1',
-  /** Where to write to exercise rights against the overseas recipient. */
-  recipientContact: '',
+  /**
+   * Where to write about what the overseas recipient holds.
+   *
+   * The same address, because that is how it actually works: AWS processes
+   * this on the operator's instructions and has no relationship with the user,
+   * so a request goes to the operator, who acts on it and passes on what has
+   * to be passed on. Article 39 wants the user told *how* to exercise their
+   * rights against the recipient, and this is how — saying so plainly beats
+   * printing an address at AWS that would not answer them.
+   */
+  recipientContact: 'smoothevoice@outlook.com',
 } as const;
 
 /**
@@ -63,10 +74,20 @@ export interface CloudConsent {
 
 export const NO_CONSENT: CloudConsent = { version: null, agreedAt: null };
 
-/** Whether the notice can honestly be shown to anyone. */
-export function consentIsComplete(parties = CLOUD_PARTIES): boolean {
+/**
+ * Whether the notice can honestly be shown to anyone.
+ *
+ * Every field the dialog presents as a fact, including where the recipient
+ * holds it: a row reading "held in [ to be filled in ]" is not a notice that
+ * has been given, and the point of this check is that there is no version of
+ * the dialog with a gap in it.
+ */
+export function consentIsComplete(
+  parties: Record<keyof typeof CLOUD_PARTIES, string> = CLOUD_PARTIES,
+): boolean {
   return Boolean(parties.processorName && parties.processorEmail
-                 && parties.recipientName && parties.recipientContact);
+                 && parties.recipientName && parties.recipientRegion
+                 && parties.recipientContact);
 }
 
 /** Whether this user has agreed to *this* wording. */

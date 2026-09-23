@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "SmoothVoice Watermark Remover",
+    "name": "SmootheVoice Watermark Remover",
     "language": "Language"
   },
   "nav": {
@@ -19,7 +19,7 @@
     "theme_system": "System",
     "themeFollowing": "Following your system: {resolved}",
     "about": "About",
-    "aboutName": "SmoothVoice Watermark Remover",
+    "aboutName": "SmootheVoice Watermark Remover",
     "version": "Version {version}",
     "fileHandling": "File handling",
     "copyToTemp": "Copy the video here before processing",
@@ -360,7 +360,7 @@
     "retentionLabel": "Kept for",
     "retention": "Deleted as soon as the frame is returned, and in no case longer than 24 hours. Never used to train anything. Never given to anyone else.",
     "rightsLabel": "Your rights",
-    "rights": "You may ask what was sent, ask for it to be deleted, or withdraw this agreement, with either party at the addresses above.",
+    "rights": "You may ask what was sent, ask for it to be deleted, or withdraw this agreement, by writing to the address above. Requests about what the overseas recipient holds go to the same address: it processes this only on our instructions, so we act on your request and pass on whatever has to be passed on.",
     "alternative": "You do not have to agree. Choosing to process on this machine removes the watermark too, with a faint trace left where it was, and nothing leaves your computer.",
     "agreeLabel": "I have read the above and agree to the upload and the transfer out of the country described in it",
     "accept": "Agree and use the service",

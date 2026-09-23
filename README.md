@@ -1,4 +1,4 @@
-# SmoothVoice Watermark Remover
+# SmootheVoice Watermark Remover
 
 舒音水印去除 — the app names itself in whichever language the interface is set to.
 
