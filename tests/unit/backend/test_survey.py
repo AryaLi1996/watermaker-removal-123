@@ -250,3 +250,53 @@ def test_a_mark_is_not_swallowed_by_something_that_is_not_one():
     mark = Finding((10, 10, 60, 30), 0, 100, WATERMARK, 0.3, 0.95, 0.5, 5)
     kept = survey._merged([picture, mark])
     assert mark in kept and picture in kept
+
+
+# ─── Not solving what the answer cannot depend on ───────────────────────────
+
+class _Model:
+    """Just enough of a solved model for `classify`."""
+
+    def __init__(self, peak: float, residual: float):
+        self.alpha = np.full((10, 10), peak, np.float32)
+        self.residual = residual
+
+
+def test_the_screen_never_rejects_something_that_is_a_mark():
+    """
+    The invariant the optimisation rests on: `could_be_a_mark` is a *necessary*
+    condition of `classify` returning a watermark. If it can ever be false
+    where classify would say watermark, the survey silently stops finding
+    marks — the one failure this whole module exists to prevent.
+    """
+    boxes = [(0, 0, 40, 30), (46, 0, 40, 30), (46, 46, 40, 30),
+             (2, 60, 40, 30), (60, 60, 40, 30), (99, 99, 40, 30)]
+    for box in boxes:
+        for stable in (-0.5, 0.0, 0.5, 0.79, 0.8, 0.95, 1.0):
+            for peak in (0.1, 0.5, 0.94, 0.95, 1.0):
+                for residual in (0.0, 15.9, 16.0, 16.1, 60.0):
+                    model = _Model(peak, residual)
+                    if survey.classify(box, model, stable, 200, 200) != WATERMARK:
+                        continue
+                    assert survey.could_be_a_mark(box, stable, 200, 200), (
+                        f'screen rejects a mark: {box} stable={stable} '
+                        f'peak={peak} residual={residual}')
+
+
+def test_screening_does_not_change_what_the_survey_reports(clip, findings):
+    """
+    The same answer, reached without solving the stretches whose answer could
+    not have mattered. Measured on the reported clip: 131.7s to 53.3s, and the
+    twelve findings identical.
+    """
+    def unscreened(*args, **kwargs):
+        return True
+
+    real, survey.could_be_a_mark = survey.could_be_a_mark, unscreened
+    try:
+        everything = survey.survey(clip.read, clip.count, WIDTH, HEIGHT, window=WINDOW)
+    finally:
+        survey.could_be_a_mark = real
+
+    assert [(f.kind, f.box, f.start, f.end) for f in everything] == \
+           [(f.kind, f.box, f.start, f.end) for f in findings]
