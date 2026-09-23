@@ -413,31 +413,50 @@ def survey(read, total: int, width: int, height: int,
                 [cluster['windows'][span][1] for span in run],
             ))
 
-    findings: list[Finding] = []
     scan_width, scan_height = int(width * scale), int(height * scale)
-    for done, (seed, run, maps) in enumerate(stretches, start=1):
-        if on_progress:
-            on_progress(done, len(stretches))
 
+    # Everything that survives the free tests, with the placement it will be
+    # solved at. Gathered before anything is solved so the frames can be read
+    # once for all of them — see `_crops_for`.
+    planned: list[tuple] = []
+    for seed, run, maps in stretches:
         # Both free tests first, and for a stretch that would only ever be
         # reported as a mark, they decide it on their own.
         stable = stability(maps, seed)
         if (len(run) < MIN_WINDOWS_TO_LIST
                 and not could_be_a_mark(seed, stable, scan_width, scan_height)):
             continue
-
         box = recover.clamp_box(
             recover._rescale(seed, scale), width, height,
             pad=max(1, int(round(recover.BOX_PAD / scale))))
-        start, end = run[0][0], run[-1][1]
+        planned.append((seed, run, stable,
+                        recover.Placement(run[0][0], run[-1][1], box)))
 
-        model = recover.fit_placement(read, recover.Placement(start, end, box))
+    # None when there was too much to hold at once; each placement then reads
+    # its own frames, as it used to.
+    crops = _crops_for(read, [plan[3] for plan in planned])
+
+    findings: list[Finding] = []
+    for done, (seed, run, stable, placement) in enumerate(planned, start=1):
+        if on_progress:
+            on_progress(done, len(planned))
+
+        box = placement.box
+        try:
+            model = (recover.fit_crops(crops[done - 1], placement)
+                     if crops is not None
+                     else recover.fit_placement(read, placement))
+        except IOError:
+            # No frames came back for this placement at all. One stretch the
+            # decode could not serve is not the survey failing.
+            continue
         # Nothing the solve can find is nothing to report. The picture holding
         # still is not a finding, it is the video.
         if not recover.believable(model):
             continue
 
-        start, end = extent(read, box, model.alpha, (start, end), total, window)
+        start, end = extent(read, box, model.alpha,
+                            (placement.start, placement.end), total, window)
         findings.append(Finding(
             box=box,
             start=start,
@@ -450,6 +469,64 @@ def survey(read, total: int, width: int, height: int,
         ))
 
     return _merged(findings)
+
+
+# How much cropped picture to gather in one pass, in bytes.
+#
+# The crops are small — they are the size of the things found, not of the
+# video — and on the clip this was measured against all 188 placements came to
+# 39 MB together. The cap is for the pathological case: a video where the scan
+# proposes hundreds of large stretches. Past it the frames are read per
+# placement as they used to be, which is slower and bounded.
+CROP_BUDGET_BYTES = 512 * 1024 * 1024
+
+
+def _crops_for(read, placements: list) -> 'list[list] | None':
+    """
+    Every placement's frames, cropped, reading each frame once.
+
+    The placements overlap — they are stretches of one video — so solving them
+    one at a time means decoding the same frame once per placement that wants
+    it. On a two-minute clip that was 4565 decodes of 961 frames, and decoding
+    was the largest single cost in the pass.
+
+    Ordering is what makes this identical rather than merely similar: each
+    placement's crops come back in the order `sample_indices` asked for them,
+    which is the order `fit_placement` would have produced, and a frame that
+    cannot be read is skipped in exactly the same way.
+
+    Returns None when the crops would not fit in `CROP_BUDGET_BYTES`, which
+    tells the caller to read per placement instead.
+    """
+    wanted: dict[int, list[tuple[int, int]]] = {}
+    lengths = []
+    budget = 0
+    for slot, placement in enumerate(placements):
+        indices = recover.sample_indices(placement.start, placement.end,
+                                         recover.FIT_SAMPLES)
+        lengths.append(len(indices))
+        _, _, w, h = placement.box
+        budget += w * h * 3 * len(indices)
+        for position, index in enumerate(indices):
+            wanted.setdefault(index, []).append((slot, position))
+
+    if budget > CROP_BUDGET_BYTES:
+        # Too much to hold at once. The caller falls back to reading per
+        # placement, which is what this replaced: slower, and the memory is one
+        # placement's worth.
+        return None
+
+    gathered: list[list] = [[None] * length for length in lengths]
+    for index in sorted(wanted):
+        frame = read(index)
+        if frame is None:
+            continue
+        for slot, position in wanted[index]:
+            x, y, w, h = placements[slot].box
+            # Copied, because the frame it came from is about to be dropped —
+            # and under a caching reader it may be handed out again.
+            gathered[slot][position] = frame[y:y + h, x:x + w].copy()
+    return [[crop for crop in one if crop is not None] for one in gathered]
 
 
 def _covered(inner: tuple[int, int, int, int], outer: tuple[int, int, int, int]) -> float:

@@ -537,8 +537,10 @@ def _run_recover(
         if progress_callback:
             progress_callback(max(0.0, min(100.0, value)))
 
-    def read(index: int):
-        return cv2.imread(frame_paths[index])
+    # Same reasoning as run_detect's: the scan and the fits revisit frames, and
+    # a frame decoded twice is a frame decoded once too often. Purely a
+    # speed-up — what comes back is what imread returned.
+    read = recover.caching_reader(lambda index: cv2.imread(frame_paths[index]))
 
     total = len(frame_paths)
     roi = config['roi']

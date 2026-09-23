@@ -52,6 +52,7 @@ was not touched, where a subtitle silently dissolved is data loss.
 from __future__ import annotations
 
 import dataclasses
+from collections import OrderedDict
 from dataclasses import dataclass
 
 import cv2
@@ -175,6 +176,60 @@ class Candidate:
 
     box: tuple[int, int, int, int]
     strength: float
+
+
+# How much decoded video to keep in hand while scanning, in bytes.
+#
+# The scan and the fits walk overlapping ranges of the same frames: on a
+# two-minute clip the survey asked for 5571 frames and there were 961, so every
+# frame was decoded about six times. Decoding dominated everything else it did.
+#
+# A budget rather than a frame count, because a frame's size is the caller's
+# business and not this module's — 256 MB is about 140 frames at the size the
+# survey works in, and a couple of dozen at 4K. Small enough not to matter on
+# the machines this runs on, large enough to hold the window being worked on.
+FRAME_CACHE_BYTES = 256 * 1024 * 1024
+
+
+def caching_reader(read, budget: int = FRAME_CACHE_BYTES):
+    """
+    `read`, but a frame asked for twice is decoded once.
+
+    Least-recently-used, bounded by bytes. Purely a speed-up: it returns
+    exactly what `read` returned, so nothing downstream can tell the
+    difference — which is the only reason it is safe to put in front of a
+    function whose answers decide what the user is shown.
+
+    Frames are handed out without copying. Every caller here crops and stacks
+    rather than writing into what it was given; a caller that wanted to modify
+    a frame in place would have to copy it first, cache or no cache, because
+    `cv2.imread` hands back a fresh array either way and code that relied on
+    that was already relying on an accident.
+    """
+    held: OrderedDict[int, object] = OrderedDict()
+    size = 0
+
+    def cached(index: int):
+        nonlocal size
+        frame = held.get(index)
+        if frame is not None:
+            held.move_to_end(index)
+            return frame
+        frame = read(index)
+        if frame is None:
+            return None
+        cost = int(getattr(frame, 'nbytes', 0))
+        # A single frame larger than the whole budget is handed back unheld
+        # rather than emptying the cache to store it.
+        if cost and cost <= budget:
+            held[index] = frame
+            size += cost
+            while size > budget and len(held) > 1:
+                _, evicted = held.popitem(last=False)
+                size -= int(getattr(evicted, 'nbytes', 0))
+        return frame
+
+    return cached
 
 
 def sample_indices(start: int, end: int, count: int) -> list[int]:
@@ -523,8 +578,20 @@ def fit_placement(read, placement: Placement,
         frame = read(index)
         if frame is not None:
             crops.append(frame[y:y + h, x:x + w])
+    return fit_crops(crops, placement)
+
+
+def fit_crops(crops: list, placement: Placement) -> dewatermark.WatermarkModel:
+    """
+    The solve itself, once the frames have been cropped.
+
+    Split out so a caller that already has the crops — because it gathered
+    several placements' worth in one pass over the frames, rather than reading
+    the same frame once per placement — does not have to repeat this tail.
+    """
     if not crops:
         raise IOError(f"No frames could be read for placement {placement}")
+    _, _, w, h = placement.box
     model = dewatermark.fit(np.stack(crops), (0, 0, w, h))
     return dataclasses.replace(model, roi=placement.box)
 

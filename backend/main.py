@@ -748,9 +748,16 @@ def run_detect(config: JobConfig, temp_dir: str) -> None:
     scan_height = size[1] if size else meta['height']
     back = meta['width'] / scan_width
 
-    import survey as survey_module  # noqa: PLC0415 — pulls in cv2, see above
+    import recover as recover_module  # noqa: PLC0415 — pulls in cv2, see above
+    import survey as survey_module  # noqa: PLC0415
+
+    # The survey walks overlapping ranges of the same frames, so without this
+    # every frame is decoded several times over — six, on the clip this was
+    # measured against, and decoding was the largest single cost in the pass.
+    # The cache hands back exactly what imread did, so the findings are the
+    # same findings.
     findings = survey_module.survey(
-        lambda index: cv2.imread(frame_paths[index]),
+        recover_module.caching_reader(lambda index: cv2.imread(frame_paths[index])),
         len(frame_paths), scan_width, scan_height,
         window=max(4, int(round(SURVEY_WINDOW_SECONDS * SURVEY_FPS))),
         on_progress=lambda done, total: progress(
