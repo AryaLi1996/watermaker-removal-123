@@ -268,3 +268,37 @@ def test_a_solve_does_not_depend_on_what_ran_before_it(marked):
     after = dewatermark.fit(frames, marked.roi, iterations=3)
 
     assert after.residual == alone.residual
+
+
+def test_the_background_estimate_does_not_depend_on_how_many_threads_ran_it(monkeypatch):
+    """
+    Threading the inpaint is a speed-up and nothing else.
+
+    Each frame is inpainted independently, so running them at once returns the
+    same array sooner — and this asserts exactly that, because a difference
+    here would be an invisible one: the solve would simply reach a slightly
+    different answer, and the user would see a slightly different list.
+    """
+    rng = np.random.default_rng(20260923)
+    frames = rng.integers(0, 255, (8, 24, 32, 3)).astype(np.float32)
+    mask = np.zeros((24, 32), np.uint8)
+    mask[6:18, 8:24] = 1
+
+    monkeypatch.setattr(dewatermark, 'INPAINT_THREADS', 1)
+    serial = dewatermark._background_estimate(frames, mask)
+    monkeypatch.setattr(dewatermark, 'INPAINT_THREADS', 4)
+    threaded = dewatermark._background_estimate(frames, mask)
+    assert np.array_equal(serial, threaded)
+
+
+def test_a_short_stack_skips_the_pool_and_still_agrees(monkeypatch):
+    rng = np.random.default_rng(7)
+    frames = rng.integers(0, 255, (2, 16, 16, 3)).astype(np.float32)
+    mask = np.zeros((16, 16), np.uint8)
+    mask[4:12, 4:12] = 1
+
+    monkeypatch.setattr(dewatermark, 'INPAINT_THREADS', 4)
+    assert len(frames) < dewatermark.INPAINT_THREAD_FLOOR
+    short = dewatermark._background_estimate(frames, mask)
+    monkeypatch.setattr(dewatermark, 'INPAINT_THREADS', 1)
+    assert np.array_equal(short, dewatermark._background_estimate(frames, mask))

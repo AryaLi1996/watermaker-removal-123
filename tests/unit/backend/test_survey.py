@@ -300,3 +300,78 @@ def test_screening_does_not_change_what_the_survey_reports(clip, findings):
 
     assert [(f.kind, f.box, f.start, f.end) for f in everything] == \
            [(f.kind, f.box, f.start, f.end) for f in findings]
+
+
+# ── Gathering every placement's crops in one pass ────────────────────────────
+
+def _placement(start, end, box):
+    return recover.Placement(start, end, box)
+
+
+def _reader(total, size=(40, 60)):
+    """Frames whose content says which frame they are."""
+    height, width = size
+
+    def read(index):
+        frame = np.zeros((height, width, 3), np.uint8)
+        frame[:] = index % 251
+        return frame
+
+    return read
+
+
+def test_the_gathered_crops_are_what_reading_per_placement_would_have_given():
+    # The property the whole optimisation rests on. Anything else here is
+    # detail; if this is false the survey answers differently.
+    read = _reader(50)
+    placements = [_placement(0, 40, (2, 3, 10, 8)),
+                  _placement(10, 50, (5, 1, 12, 6)),
+                  _placement(0, 12, (0, 0, 20, 20))]
+    gathered = survey._crops_for(read, placements)
+    for crops, placement in zip(gathered, placements):
+        x, y, w, h = placement.box
+        expected = [read(i)[y:y + h, x:x + w]
+                    for i in recover.sample_indices(placement.start, placement.end,
+                                                    recover.FIT_SAMPLES)]
+        assert len(crops) == len(expected)
+        for got, want in zip(crops, expected):
+            assert np.array_equal(got, want)
+
+
+def test_each_frame_is_read_once_however_many_placements_want_it():
+    asked = []
+    read = _reader(50)
+
+    def counted(index):
+        asked.append(index)
+        return read(index)
+
+    placements = [_placement(0, 40, (2, 3, 10, 8)),
+                  _placement(0, 40, (5, 1, 12, 6)),
+                  _placement(0, 40, (1, 1, 8, 8))]
+    survey._crops_for(counted, placements)
+    assert len(asked) == len(set(asked))
+
+
+def test_a_frame_that_cannot_be_read_is_skipped_not_substituted():
+    read = _reader(50)
+    placements = [_placement(0, 40, (2, 3, 10, 8))]
+    wanted = recover.sample_indices(0, 40, recover.FIT_SAMPLES)
+    missing = wanted[3]
+
+    crops = survey._crops_for(
+        lambda i: None if i == missing else read(i), placements)
+    assert len(crops[0]) == len(wanted) - wanted.count(missing)
+    assert all(crop is not None for crop in crops[0])
+
+
+def test_too_much_to_hold_at_once_reads_per_placement_instead():
+    # The pathological video: hundreds of large stretches. The answer is to
+    # stop gathering, not to spend the memory.
+    read = _reader(50)
+    placements = [_placement(0, 40, (0, 0, 600, 400)) for _ in range(200)]
+    assert survey._crops_for(read, placements) is None
+
+
+def test_nothing_to_gather_is_not_a_failure():
+    assert survey._crops_for(_reader(10), []) == []

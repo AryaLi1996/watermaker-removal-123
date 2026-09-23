@@ -618,3 +618,59 @@ def test_the_service_is_not_asked_again_after_it_has_failed_once(
     # not just the batch that was actually sent.
     assert any(key == 'cloud_fallback' and str(count) in detail
                for key, detail in notices), notices
+
+
+# ── Reading each frame once ──────────────────────────────────────────────────
+# The scan and the fits walk overlapping ranges of the same frames, so a reader
+# that decodes on every ask decodes each frame several times over. These are
+# about the one property that makes a cache safe to put in front of something
+# whose answers decide what the user is shown: it must be invisible.
+
+def test_the_cache_hands_back_what_the_reader_returned():
+    frames = {i: np.full((4, 4, 3), i, np.uint8) for i in range(3)}
+    read = recover.caching_reader(lambda i: frames[i])
+    for i in range(3):
+        assert np.array_equal(read(i), frames[i])
+        assert np.array_equal(read(i), frames[i])
+
+
+def test_a_frame_asked_for_twice_is_read_once():
+    asked = []
+
+    def read(index):
+        asked.append(index)
+        return np.zeros((4, 4, 3), np.uint8)
+
+    cached = recover.caching_reader(read)
+    cached(7), cached(7), cached(8), cached(7)
+    assert asked == [7, 8]
+
+
+def test_the_cache_gives_up_its_oldest_frames_rather_than_growing():
+    frame_bytes = 4 * 4 * 3
+    asked = []
+
+    def read(index):
+        asked.append(index)
+        return np.zeros((4, 4, 3), np.uint8)
+
+    # Room for two frames.
+    cached = recover.caching_reader(read, budget=2 * frame_bytes)
+    cached(1), cached(2), cached(3)   # 1 is evicted here
+    cached(3), cached(2)              # both still held
+    cached(1)                         # and 1 has to be read again
+    assert asked == [1, 2, 3, 1]
+
+
+def test_a_frame_that_could_not_be_read_is_not_remembered_as_one():
+    # Otherwise a transient read failure would be cached as a permanent one.
+    answers = [None, np.zeros((4, 4, 3), np.uint8)]
+    cached = recover.caching_reader(lambda i: answers.pop(0))
+    assert cached(0) is None
+    assert cached(0) is not None
+
+
+def test_a_frame_too_large_for_the_budget_is_still_returned():
+    big = np.zeros((64, 64, 3), np.uint8)
+    cached = recover.caching_reader(lambda i: big, budget=16)
+    assert np.array_equal(cached(0), big)
