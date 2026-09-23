@@ -24,7 +24,9 @@ import sys
 from collections import OrderedDict
 
 import cv2
+import numpy as np
 
+import cloud_fill
 import dewatermark
 import recover
 import temporal_core
@@ -110,6 +112,12 @@ RECOVER_SEQUENTIAL_CHUNK_LIMIT = 2
 # several hundred frames reads as a hung job.
 SCAN_PROGRESS_SHARE = 15.0
 FIT_PROGRESS_SHARE = 25.0
+
+# Frames sent to the fill service in one go, mirroring its own batch size. The
+# patches for this many are held in memory at once — a few tens of megabytes
+# for a typical mark — which is what keeps a long clip from needing the whole
+# video's worth of them.
+CLOUD_BATCH_FRAMES = cloud_fill.FRAMES_PER_REQUEST
 
 # Where the deep engine writes its mask and the frames it produces. Beside the
 # frames directory rather than in it, for the same reason as above: ffmpeg
@@ -402,6 +410,84 @@ def _run_deep(
     return True
 
 
+def _cloud_batch(frame_paths: list[str], model, parcel, endpoint: dict) -> bool:
+    """
+    Undo the blend on a run of frames, with the service painting what the
+    arithmetic could not recover. True where it did; False where anything at
+    all went wrong and these frames still need the local filler.
+
+    Frames are read, solved and written here rather than in a worker pool: the
+    wait is the round trip, not the arithmetic, and one caller asking for a
+    batch at a time is both easier to reason about and kinder to the service
+    than four processes asking at once.
+    """
+    frames, recovered, patches = [], [], []
+    x, y, w, h = parcel.box
+    for frame_path in frame_paths:
+        frame = cv2.imread(frame_path)
+        if frame is None:
+            raise IOError(f"Could not read frame: {frame_path}")
+        patch = dewatermark.unblend(frame, model)
+        frames.append(frame)
+        recovered.append(patch)
+        patches.append(patch[y:y + h, x:x + w].astype(np.uint8))
+
+    try:
+        returned = cloud_fill.fill(parcel, patches, endpoint['url'],
+                                   endpoint.get('token'))
+    except Exception:
+        # Every failure is the same failure here — refused, timed out, an
+        # answer of the wrong shape. What the caller does about it does not
+        # depend on which, and these frames have not been written yet.
+        return False
+
+    for frame_path, frame, patch, filled_box in zip(frame_paths, frames, recovered, returned):
+        filled = patch.copy()
+        filled[y:y + h, x:x + w] = filled_box.astype(np.float32)
+        cv2.imwrite(frame_path, dewatermark.compose(frame, model, patch, filled),
+                    [cv2.IMWRITE_PNG_COMPRESSION, PNG_COMPRESSION])
+    return True
+
+
+def _run_cloud(frame_paths: list[str], runs: list, endpoint: dict,
+               report, notice) -> int:
+    """
+    The whole job, with the service doing the filling. Returns how many frames
+    fell back to the local filler.
+
+    A batch that fails is filled locally and counted, rather than failing the
+    export or leaving those frames with their watermark on. The user is told
+    the number: a handful of frames filled by the other method is a seam they
+    may want to know about, and silence about it would be the app deciding for
+    them that it does not matter.
+    """
+    degraded = 0
+    total = sum(end - start for start, end, _ in runs) or 1
+    done = 0
+
+    for run_start, run_end, models in runs:
+        for model in models:
+            parcel = cloud_fill.parcel_for(dewatermark.reachable_mask(model))
+            for start in range(run_start, run_end, CLOUD_BATCH_FRAMES):
+                batch = frame_paths[start:min(start + CLOUD_BATCH_FRAMES, run_end)]
+                # No parcel means the arithmetic recovered all of it and there
+                # is nothing to invent — so nothing to send anywhere, and the
+                # local path finishes the frame without that being a fallback.
+                sent = parcel is not None and _cloud_batch(batch, model, parcel, endpoint)
+                if not sent:
+                    if parcel is not None:
+                        degraded += len(batch)
+                    _process_recover_chunk((batch, (model,)))
+                done += len(batch)
+                report(FIT_PROGRESS_SHARE
+                       + (100.0 - FIT_PROGRESS_SHARE) * min(done / total, 1.0))
+
+    if degraded:
+        notice('cloud_fallback', f'{degraded} frame(s) were filled on this '
+                                 f'machine because the service did not answer')
+    return degraded
+
+
 def _run_recover(
     frame_paths: list[str],
     config: dict,
@@ -465,8 +551,12 @@ def _run_recover(
     if confirmed:
         solved = []
         for done, region in enumerate(confirmed, start=1):
+            # Clamped to the frames actually in hand. `regions_in_frames` does
+            # this too, against the same sequence; here as well because a range
+            # that runs past the end reads frames that are not there, and the
+            # export dies on an IndexError naming nothing the user can act on.
             placement = recover.Placement(
-                region['start'], region['end'],
+                max(0, region['start']), min(total, region['end']),
                 recover.clamp_box((region['x'], region['y'], region['w'], region['h']),
                                   width, height))
             if placement.frames < recover.MIN_SOLVE_FRAMES:
@@ -506,8 +596,19 @@ def _run_recover(
            f'{len(placements)} placement(s) over {covered}/{total} frames')
     report(FIT_PROGRESS_SHARE)
 
+    runs = recover.schedule(placements, models, total)
+
+    # The service fills what the arithmetic could not recover, where the job
+    # says there is one. Whether there is one is not decided here: consent and
+    # the count behind it belong where the user is, and this process is told
+    # the answer rather than reaching its own.
+    endpoint = config.get('cloudFill')
+    if endpoint and endpoint.get('url'):
+        _run_cloud(frame_paths, runs, endpoint, report, notice)
+        return
+
     jobs: list[tuple] = []
-    for run_start, run_end, needed in recover.schedule(placements, models, total):
+    for run_start, run_end, needed in runs:
         for start in range(run_start, run_end, RECOVER_CHUNK_FRAMES):
             jobs.append((frame_paths[start:min(start + RECOVER_CHUNK_FRAMES, run_end)],
                          needed))

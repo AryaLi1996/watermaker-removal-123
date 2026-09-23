@@ -27,6 +27,8 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 import cv2
 import numpy as np
@@ -149,3 +151,66 @@ def batches(count: int, size: int = FRAMES_PER_REQUEST):
     """The frame ranges a clip is split into."""
     for start in range(0, count, size):
         yield start, min(start + size, count)
+
+
+# Hosts the frames may travel to over plain HTTP. Only the loopback ones, so a
+# stub service in a test does not need a certificate — and nothing else does,
+# because everything that leaves this machine is part of the user's picture and
+# they were asked before it went.
+LOCAL_HOSTS = frozenset({'127.0.0.1', 'localhost', '::1', '[::1]'})
+
+
+def check_endpoint(url: str) -> None:
+    """
+    Refuse an endpoint that would send the picture in the clear.
+
+    Raised rather than warned: the consent the user gave was to one named
+    service over a link nobody else can read, and quietly settling for less
+    than that is the one failure they cannot see happening.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme == 'https':
+        return
+    if parsed.scheme == 'http' and parsed.hostname in LOCAL_HOSTS:
+        return
+    raise ValueError(
+        f'the fill service must be reached over https, not {parsed.scheme!r}')
+
+
+def post(url: str, body: bytes, token: str | None = None,
+         timeout: float = REQUEST_TIMEOUT_SECONDS) -> bytes:
+    """
+    One request to the fill service.
+
+    Separated from `fill` so the rest of this file can be tested without a
+    socket, and so there is exactly one place that knows how the service is
+    addressed.
+    """
+    check_endpoint(url)
+    request = Request(url, data=body, method='POST')
+    request.add_header('Content-Type', 'application/json')
+    if token:
+        request.add_header('Authorization', f'Bearer {token}')
+    with urlopen(request, timeout=timeout) as response:  # noqa: S310 — scheme checked above
+        return response.read()
+
+
+def fill(parcel: Parcel, patches: list[np.ndarray], url: str,
+         token: str | None = None, timeout: float = REQUEST_TIMEOUT_SECONDS,
+         transport=None) -> list[np.ndarray]:
+    """
+    Every frame's box, filled by the service, in the order they were given.
+
+    Raises on anything at all — a refusal, a timeout, an answer that is not the
+    shape that was asked for. That is deliberate: the caller's job is to fall
+    back to the local filler and say so, and it can only do that if this does
+    not quietly hand back something half-right.
+    """
+    # Looked up now rather than bound as a default, so that a test can put a
+    # stub service in `post` and have this find it.
+    send = transport or post
+    filled: list[np.ndarray] = []
+    for start, end in batches(len(patches)):
+        reply = send(url, request_body(parcel, patches[start:end]), token, timeout)
+        filled.extend(read_reply(reply, parcel, end - start))
+    return filled

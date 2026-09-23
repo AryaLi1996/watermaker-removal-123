@@ -573,6 +573,33 @@ function sendTemporalUsage() {
 
 ipcMain.handle('temporal:usage', () => temporalUsageState());
 
+// ─── Cloud fill: how many are left, and where to send them ────────────
+//
+// The renderer asks before an export and tells us after one. Nothing about
+// the allowance or the price is decided here — see cloud-quota.js.
+let cloudQuota = null;
+function getCloudQuota() {
+  if (!cloudQuota) {
+    const { createCloudQuota } = require('./cloud-quota');
+    const { getDeviceId } = require('./device-id');
+    cloudQuota = createCloudQuota({
+      request: createRequest(net),
+      appId: APP_ID,
+      deviceId: async () => getDeviceId(app.getPath('userData')),
+    });
+  }
+  return cloudQuota;
+}
+
+function cloudContext() {
+  return { userId: getMonitor().getUserId() };
+}
+
+ipcMain.handle('cloud:quota', () => getCloudQuota().status(cloudContext()));
+ipcMain.handle('cloud:consume', (_event, units) => (
+  getCloudQuota().consume(cloudContext(), Number(units) || 0)
+));
+
 ipcMain.handle('payment:getPlans', () => getMonitor().getPlans());
 ipcMain.handle('payment:getMethods', (_event, lang) => getMonitor().getPaymentMethods(lang));
 ipcMain.handle('payment:createOrder', (_event, planId, method) => getMonitor().createOrder(planId, method));

@@ -150,3 +150,106 @@ def test_a_clip_is_split_into_requests_that_cover_it_once():
     assert spans[0][0] == 0 and spans[-1][1] == 1000
     assert all(b == spans[i + 1][0] for i, (_, b) in enumerate(spans[:-1]))
     assert all(hi - lo <= 240 for lo, hi in spans)
+
+
+# ─── Where the pixels may go ────────────────────────────────────────────────
+
+def test_a_plain_http_endpoint_is_refused():
+    """
+    What the user agreed to was one named service over a link nobody else can
+    read. Settling for less is the one failure they cannot see happening.
+    """
+    with pytest.raises(ValueError, match='https'):
+        cloud_fill.check_endpoint('http://fill.example.com/inpaint')
+
+
+def test_https_is_what_the_service_is_reached_over():
+    cloud_fill.check_endpoint('https://fill.example.com/inpaint')
+
+
+def test_a_stub_on_this_machine_needs_no_certificate():
+    """Only loopback, and only so a test does not need one."""
+    cloud_fill.check_endpoint('http://127.0.0.1:8080/inpaint')
+    cloud_fill.check_endpoint('http://localhost:8080/inpaint')
+
+
+def test_anything_else_is_refused():
+    for url in ('ftp://host/x', 'file:///etc/passwd', 'x://y', ''):
+        with pytest.raises(ValueError):
+            cloud_fill.check_endpoint(url)
+
+
+# ─── Asking the service ─────────────────────────────────────────────────────
+
+def _parcel_and_patches(count: int = 3):
+    mark = np.zeros((40, 60), np.uint8)
+    mark[12:22, 18:40] = 1
+    parcel = cloud_fill.parcel_for(mark)
+    rng = np.random.default_rng(5)
+    patches = [rng.integers(0, 255, (parcel.box[3], parcel.box[2], 3), dtype=np.uint8)
+               for _ in range(count)]
+    return parcel, patches
+
+
+def test_fill_asks_once_per_batch_and_keeps_the_order():
+    parcel, patches = _parcel_and_patches(5)
+    asked = []
+
+    def transport(url, body, token, timeout):
+        asked.append(json.loads(body.decode())['frames_webp'])
+        sent = [cloud_fill.decode_patch(b, (parcel.box[3], parcel.box[2]))
+                for b in asked[-1]]
+        # Answer with a frame the caller can tell apart from what it sent.
+        # Spaced well apart because the wire format is lossy: the point is
+        # which frame came back where, not that a level survived exactly.
+        return json.dumps({'frames_webp': [
+            cloud_fill.encode_patch(np.full_like(p, 20 + 50 * i))
+            for i, p in enumerate(sent)
+        ]}).encode()
+
+    filled = cloud_fill.fill(parcel, patches, 'https://x/inpaint',
+                             transport=transport)
+    assert len(asked) == 1, 'five frames is one batch'
+    assert len(filled) == 5
+    assert [round(float(f.mean()) / 50) for f in filled] == [0, 1, 2, 3, 4]
+
+
+def test_fill_splits_a_long_clip_into_batches():
+    parcel, patches = _parcel_and_patches(cloud_fill.FRAMES_PER_REQUEST + 2)
+    sizes = []
+
+    def transport(url, body, token, timeout):
+        sent = json.loads(body.decode())['frames_webp']
+        sizes.append(len(sent))
+        return json.dumps({'frames_webp': sent}).encode()
+
+    cloud_fill.fill(parcel, patches, 'https://x/inpaint', transport=transport)
+    assert sizes == [cloud_fill.FRAMES_PER_REQUEST, 2]
+
+
+def test_fill_carries_the_token_where_there_is_one():
+    parcel, patches = _parcel_and_patches(1)
+    seen = {}
+
+    def transport(url, body, token, timeout):
+        seen['token'] = token
+        return json.dumps({'frames_webp': json.loads(body.decode())['frames_webp']}).encode()
+
+    cloud_fill.fill(parcel, patches, 'https://x/inpaint', token='abc',
+                    transport=transport)
+    assert seen['token'] == 'abc'
+
+
+def test_fill_does_not_hand_back_something_half_right():
+    """
+    The caller's job is to fall back and say so, and it can only do that if a
+    short or malformed answer raises rather than being quietly accepted.
+    """
+    parcel, patches = _parcel_and_patches(3)
+
+    def short(url, body, token, timeout):
+        sent = json.loads(body.decode())['frames_webp']
+        return json.dumps({'frames_webp': sent[:1]}).encode()
+
+    with pytest.raises(ValueError, match='asked for 3'):
+        cloud_fill.fill(parcel, patches, 'https://x/inpaint', transport=short)

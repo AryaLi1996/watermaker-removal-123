@@ -458,3 +458,124 @@ def test_a_confirmed_region_with_no_mark_in_it_is_left_alone(clip, tmp_path):
         moved = np.abs(cv2.imread(path).astype(np.float32)
                        - original.astype(np.float32)).mean()
         assert moved < 2.0, f'{path} moved by {moved:.2f} levels'
+
+
+# ─── The filler that is not on this machine ─────────────────────────────────
+
+def _frames_on_disk(clip, tmp_path, count):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for index in range(count):
+        path = tmp_path / f'f{index:05d}.png'
+        cv2.imwrite(str(path), clip.frame(index))
+        paths.append(str(path))
+    return paths
+
+
+def _painting_service(colour):
+    """A stand-in that paints the masked pixels, so they can be recognised."""
+    import base64
+    import json
+
+    import cloud_fill
+
+    def post(url, body, token, timeout):
+        payload = json.loads(body.decode())
+        mask = cv2.imdecode(
+            np.frombuffer(base64.b64decode(payload['mask_png']), np.uint8),
+            cv2.IMREAD_GRAYSCALE)
+        answered = []
+        for blob in payload['frames_webp']:
+            patch = cloud_fill.decode_patch(blob, mask.shape).copy()
+            patch[mask > 0] = colour
+            answered.append(cloud_fill.encode_patch(patch))
+        return json.dumps({'frames_webp': answered}).encode()
+
+    return post
+
+
+def _region_config(clip, endpoint=None, frames=None):
+    config = {
+        'method': 'recover',
+        'roi': {'x': 0, 'y': 0, 'w': 1, 'h': 1},
+        'regions': [{**dict(zip('xywh', (TOP_LEFT[0], TOP_LEFT[1], *MARK))),
+                     'start': 0,
+                     'end': min(clip.move_at, frames) if frames else clip.move_at}],
+    }
+    if endpoint:
+        config['cloudFill'] = endpoint
+    return config
+
+
+def test_the_service_fills_the_pixels_the_arithmetic_could_not(clip, tmp_path, monkeypatch):
+    """
+    What comes back from the service is what ends up in the frame — in the
+    pixels beyond recovery, and only there.
+    """
+    import cloud_fill
+    import processor
+
+    count = 120
+    local_paths = _frames_on_disk(clip, tmp_path / 'local', count)
+    cloud_paths = _frames_on_disk(clip, tmp_path / 'cloud', count)
+
+    processor.run_batch(local_paths, _region_config(clip, frames=count), WIDTH, HEIGHT)
+
+    magenta = (255, 0, 255)
+    monkeypatch.setattr(cloud_fill, 'post', _painting_service(magenta))
+    processor.run_batch(
+        cloud_paths,
+        _region_config(clip, {'url': 'https://fill.example.com/inpaint'}, frames=count),
+        WIDTH, HEIGHT)
+
+    model = recover.fit_placement(
+        clip.read, recover.Placement(0, count, (*TOP_LEFT, *MARK)))
+    core = model.unrecoverable > 0
+    assert core.any(), 'this mark should have pixels beyond recovery'
+
+    x, y = TOP_LEFT
+    w, h = MARK
+    local = cv2.imread(local_paths[10])[y:y + h, x:x + w]
+    cloud = cv2.imread(cloud_paths[10])[y:y + h, x:x + w]
+
+    # Where nothing had to be invented, both fillers leave the same picture.
+    outside = ~(dewatermark.reachable_mask(model) > 0)
+    assert np.abs(local[outside].astype(int) - cloud[outside].astype(int)).mean() < 2.0
+
+    # Where it did, the service's answer is the one that is there.
+    towards_magenta = np.array(magenta) - local[core].mean(axis=0)
+    moved = cloud[core].mean(axis=0) - local[core].mean(axis=0)
+    assert float(moved @ towards_magenta) > 0, 'the frame did not take the service colour'
+    assert np.abs(cloud[core].astype(int) - np.array(magenta)).mean() < 40
+
+
+def test_a_service_that_does_not_answer_leaves_a_finished_export(clip, tmp_path, monkeypatch):
+    """
+    Refused, timed out, nonsense back — all the same failure. The frames come
+    out as the local filler would have made them, and the user is told how many.
+    """
+    import cloud_fill
+    import processor
+
+    count = 60
+    local_paths = _frames_on_disk(clip, tmp_path / 'local', count)
+    cloud_paths = _frames_on_disk(clip, tmp_path / 'cloud', count)
+
+    processor.run_batch(local_paths, _region_config(clip, frames=count), WIDTH, HEIGHT)
+
+    def refuse(url, body, token, timeout):
+        raise OSError('connection refused')
+
+    monkeypatch.setattr(cloud_fill, 'post', refuse)
+    notices = []
+    processor.run_batch(
+        cloud_paths,
+        _region_config(clip, {'url': 'https://fill.example.com/inpaint'}, frames=count),
+        WIDTH, HEIGHT, on_notice=lambda key, detail: notices.append((key, detail)))
+
+    for local_path, cloud_path in zip(local_paths, cloud_paths):
+        assert np.array_equal(cv2.imread(local_path), cv2.imread(cloud_path)), (
+            f'{cloud_path} is not what the local filler would have produced')
+
+    assert any(key == 'cloud_fallback' for key, _ in notices), notices
+    assert any(str(count) in detail for key, detail in notices if key == 'cloud_fallback')

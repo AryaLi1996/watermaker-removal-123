@@ -384,37 +384,80 @@ def fit(frames: np.ndarray, roi: tuple[int, int, int, int], iterations: int = 6)
     )
 
 
-def restore(frame: np.ndarray, model: WatermarkModel) -> np.ndarray:
+def reachable_mask(model: WatermarkModel) -> np.ndarray:
     """
-    Undo the blend on one frame. `frame` is a full uint8 BGR frame; the result
-    is a copy with the mark's region replaced.
+    The pixels a filler has to repaint: the ones beyond recovery, plus the
+    ramp band that blends towards them.
+
+    A property of the model rather than of any one frame, which is what lets a
+    filler be asked about a whole placement once instead of per frame.
+
+    The ramp band is in here, not just the pixels that need it outright,
+    because a fill masked to the unrecoverable set alone gives the ramp nothing
+    to blend towards: the weighted sum in `compose` then reduces to the divided
+    result at every pixel and the ramp does nothing at all, which is what it
+    did until this was noticed.
+    """
+    return np.maximum(
+        model.unrecoverable,
+        (model.alpha >= _ramp_floor()).astype(np.uint8),
+    )
+
+
+def _ramp_floor() -> float:
+    return max(ALPHA_CEILING - ALPHA_RAMP, ALPHA_FLOOR)
+
+
+def unblend(frame: np.ndarray, model: WatermarkModel) -> np.ndarray:
+    """
+    The mark's region with the blend divided out, as float32.
+
+    Everything the arithmetic can recover, and nothing invented. Where the
+    opacity approaches one this is noise — `reachable_mask` says where — and
+    somebody else has to paint those pixels.
     """
     x, y, w, h = model.roi
     patch = frame[y:y + h, x:x + w].astype(np.float32)
-
     keep = np.clip(1.0 - model.alpha, 1.0 - ALPHA_CEILING, 1.0)[..., None]
-    recovered = np.clip((patch - model.alpha[..., None] * model.colour) / keep, 0, 255)
+    return np.clip((patch - model.alpha[..., None] * model.colour) / keep, 0, 255)
 
-    # The fill has to cover the ramp band as well as the pixels that need it
-    # outright. cv2.inpaint leaves everything outside its mask untouched, so a
-    # fill masked only to the unrecoverable set gives the ramp nothing to blend
-    # towards: the weighted sum below then reduces to the divided result at
-    # every pixel and the ramp does nothing at all, which is what it did until
-    # this was noticed.
-    ramp_floor = max(ALPHA_CEILING - ALPHA_RAMP, ALPHA_FLOOR)
-    reachable = np.maximum(
-        model.unrecoverable,
-        (model.alpha >= ramp_floor).astype(np.uint8),
-    )
-    filled = cv2.inpaint(
-        recovered.astype(np.uint8), reachable, FILL_RADIUS, cv2.INPAINT_TELEA,
+
+def local_fill(recovered: np.ndarray, model: WatermarkModel) -> np.ndarray:
+    """Telea over the reachable pixels: the filler that needs nothing."""
+    return cv2.inpaint(
+        recovered.astype(np.uint8), reachable_mask(model), FILL_RADIUS,
+        cv2.INPAINT_TELEA,
     ).astype(np.float32)
 
+
+def compose(frame: np.ndarray, model: WatermarkModel, recovered: np.ndarray,
+            filled: np.ndarray) -> np.ndarray:
+    """
+    One frame with the mark's region replaced: what was recovered, ramping to
+    what was filled where the recovery cannot be trusted.
+
+    `filled` only has to be right inside `reachable_mask`. Outside it the ramp
+    is zero and this never reads it, which is what lets a filler that works on
+    a crop hand back a crop.
+    """
+    ramp_floor = _ramp_floor()
     ramp = np.maximum(
         np.clip((model.alpha - ramp_floor) / max(ALPHA_CEILING - ramp_floor, 1e-6), 0.0, 1.0),
         model.unrecoverable.astype(np.float32),
     )[..., None]
 
+    x, y, w, h = model.roi
     result = frame.copy()
-    result[y:y + h, x:x + w] = np.clip(recovered * (1 - ramp) + filled * ramp, 0, 255).astype(np.uint8)
+    result[y:y + h, x:x + w] = np.clip(
+        recovered * (1 - ramp) + filled * ramp, 0, 255).astype(np.uint8)
     return result
+
+
+def restore(frame: np.ndarray, model: WatermarkModel) -> np.ndarray:
+    """
+    Undo the blend on one frame with the filler that needs nothing but this
+    machine. `frame` is a full uint8 BGR frame; the result is a copy with the
+    mark's region replaced.
+    """
+    recovered = unblend(frame, model)
+    return compose(frame, model, recovered, local_fill(recovered, model))
