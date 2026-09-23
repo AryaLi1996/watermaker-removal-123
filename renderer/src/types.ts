@@ -34,6 +34,23 @@ export interface Finding {
   coverage: number;
 }
 
+/**
+ * The service's answer about this user's allowance.
+ *
+ * `endpoint` is only ever present when `allowed` is true, and is the only
+ * place an export learns where to send anything.
+ */
+export interface CloudQuotaReply {
+  allowed: boolean;
+  limit: number | null;
+  used: number | null;
+  remaining: number | null;
+  periodEnds: string | null;
+  overagePrice: string | null;
+  endpoint: { url: string; token: string | null } | null;
+  reason: string | null;
+}
+
 /** A region to remove, as the job carries it. */
 export interface Region {
   x: number;
@@ -68,6 +85,12 @@ export interface JobConfig {
    * everything to go back to their own box.
    */
   regions?: Region[];
+  /**
+   * Where to send the pixels the arithmetic cannot recover. Present only when
+   * the user has agreed to it and the service says their allowance covers this
+   * export; absent means everything stays on this machine.
+   */
+  cloudFill?: { url: string; token?: string | null };
   radius?: number;
   kernelSize?: number;
   color?: [number, number, number];
@@ -312,6 +335,13 @@ declare global {
        * the user for a box, which is where it was.
        */
       onFindings?: (cb: (findings: Finding[]) => void) => void;
+      /**
+       * What the service says about this user's cloud-fill allowance, and the
+       * count told to it afterwards. Optional: a main process from before the
+       * service existed offers neither, and the feature stays off.
+       */
+      cloudQuota?: () => Promise<CloudQuotaReply>;
+      cloudConsume?: (units: number) => Promise<CloudQuotaReply>;
       onTemporalFallback: (cb: (report: TemporalFallback) => void) => void;
       onDeepNotice: (cb: (notice: DeepNotice) => void) => void;
       onUpdateAvailable: (cb: (version: string | null) => void) => void;

@@ -29,6 +29,7 @@ import shutil
 import signal
 import sys
 import tempfile
+from urllib.parse import urlparse
 from glob import glob
 from typing import Annotated, Literal
 
@@ -147,6 +148,37 @@ class Region(BaseModel):
         return self
 
 
+class CloudFill(BaseModel):
+    """
+    Where to send the pixels the arithmetic cannot recover, if anywhere.
+
+    The backend is told this rather than deciding it. Whether the user agreed
+    to anything leaving their machine, and whether their allowance covers this
+    export, are questions about a person and an account; both are answered
+    where the person is, and this process does as it is told.
+    """
+
+    url: str
+    token: str | None = None
+
+    @field_validator('url')
+    @classmethod
+    def must_not_send_the_picture_in_the_clear(cls, v: str) -> str:
+        # Checked again in `cloud_fill.check_endpoint`, at the point where the
+        # bytes actually leave. Here as well because a job that names a plain
+        # http endpoint should be refused with that sentence, rather than
+        # starting, falling back frame by frame and finishing an export that
+        # quietly used the other filler.
+        parsed = urlparse(v)
+        if parsed.scheme == 'https':
+            return v
+        if parsed.scheme == 'http' and parsed.hostname in (
+                '127.0.0.1', 'localhost', '::1'):
+            return v
+        raise ValueError(
+            f'the fill service must be reached over https, not {parsed.scheme!r}')
+
+
 class JobConfig(BaseModel):
     inputPath: str
     outputPath: str
@@ -174,6 +206,11 @@ class JobConfig(BaseModel):
     # older renderer sends and what the method did before there was anywhere
     # to put a confirmed answer.
     regions: list[Region] = Field(default_factory=list)
+    # The fill service, where the user has agreed to one and their allowance
+    # covers this export. Absent means everything stays on this machine, which
+    # is what every job did before there was a service and what every job does
+    # when anything about the answer is unclear.
+    cloudFill: CloudFill | None = None
 
     @field_validator('color')
     @classmethod
@@ -821,6 +858,7 @@ def run_pipeline(
         'method': config.method,
         'regions': regions_in_frames(config.regions, meta['fps'],
                                      len(frame_paths), time_offset),
+        'cloudFill': config.cloudFill.model_dump() if config.cloudFill else None,
         'roi': {'x': roi_dict['x'], 'y': roi_dict['y'],
                 'w': roi_dict['w'], 'h': roi_dict['h']},
         'radius': config.radius,

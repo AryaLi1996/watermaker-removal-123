@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import EmptyState from './components/EmptyState';
 import VideoCanvas from './components/VideoCanvas';
 import FindingsPanel from './components/FindingsPanel';
+import CloudFillCard from './components/CloudFillCard';
+import CloudConsentDialog from './components/CloudConsentDialog';
 import MethodPicker from './components/MethodPicker';
 import ProgressPanel from './components/ProgressPanel';
 import DonePanel from './components/DonePanel';
@@ -15,7 +17,7 @@ import type { Screen } from './components/Sidebar';
 import SubscriptionPage from './pages/SubscriptionPage';
 import SettingsPage from './pages/SettingsPage';
 import DiagnosticPanel from './components/DiagnosticPanel';
-import type { AppState, DeepNotice, JobConfig, Region, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
+import type { AppState, CloudQuotaReply, DeepNotice, JobConfig, Region, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
 import { deepAvailability, deepPresetFor, previewSecondsFor, qualityForJob, temporalAvailability, usesDeepEngine, TEMPORAL_PREVIEW_MAX_SECONDS } from './capabilities';
 import type { Availability } from './capabilities';
 import { normalizeCoordinates, defaultOutputName, defaultOutputPath, formatDuration, mediaUrl, NULL_SINK } from './utils';
@@ -24,6 +26,7 @@ import type { FriendlyError } from './errors';
 import { BUILT_IN_PRESETS, loadCustomPresets, saveCustomPresets, presetFromCurrent } from './presets';
 import { loadSettings, saveSettings } from './config';
 import type { AppSettings } from './config';
+import { cloudFillReady, grantConsent, hasConsented } from './cloud';
 import { topbarInset } from './titlebar';
 import type { Preset, PresetParams } from './presets';
 import { useHistory } from './hooks/useHistory';
@@ -69,6 +72,10 @@ function App() {
   // The file the load in flight belongs to, so the survey that follows it is
   // started for that file and not for whatever state has caught up to.
   const loadingPath = useRef<string | null>(null);
+  // Whether the export now running was sent an endpoint. A ref rather than
+  // state: it is read once, when the job finishes, and re-rendering on it
+  // would say nothing to anyone.
+  const usedCloud = useRef(false);
   const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
   const [canvasScale, setCanvasScale] = useState(1);
   const [canvasROI, setCanvasROI] = useState<ROI>({ x: 0, y: 0, w: 200, h: 100 });
@@ -79,6 +86,11 @@ function App() {
   // there is no second copy of the answer to keep in step with the first.
   const [findingOverrides, setFindingOverrides] =
     useState<ReadonlyMap<number, boolean>>(new Map());
+  // What the service last said about this user's allowance, and whether the
+  // upload notice is on screen. Null until it has been asked, which is not the
+  // same as "not allowed" — the card says nothing rather than guessing.
+  const [cloudQuota, setCloudQuota] = useState<CloudQuotaReply | null>(null);
+  const [askingConsent, setAskingConsent] = useState(false);
   const [radius, setRadius] = useState(3);
   const [kernelSize, setKernelSize] = useState(51);
   const [color, setColor] = useState<[number, number, number]>([0, 0, 0]);
@@ -200,6 +212,54 @@ function App() {
     [selectedMethod, detection.findings, chosenFindings],
   );
 
+  // Asked when the switch is on and agreed to, and not before: a request that
+  // names this user should not go out because they opened a video.
+  const wantsCloud = selectedMethod === 'recover'
+    && appSettings.cloudFillEnabled
+    && hasConsented(appSettings.cloudConsent);
+
+  useEffect(() => {
+    // Left as it was when the switch goes off, rather than cleared here. A
+    // stale allowance cannot authorise anything on its own — `cloudFillReady`
+    // wants the switch and the agreement as well — and it is asked for again
+    // the moment the switch comes back on.
+    if (!wantsCloud) return;
+    const ask = window.electronAPI.cloudQuota;
+    if (!ask) return;
+    let current = true;
+    void ask()
+      .then((reply) => { if (current) setCloudQuota(reply); })
+      // An older main process, or one that could not reach the service. The
+      // card reads this as "stays on this machine", which it does.
+      .catch(() => { if (current) setCloudQuota(null); });
+    return () => { current = false; };
+  }, [wantsCloud, inputPath]);
+
+  /** Where an export started now would send what it cannot recover, if anywhere. */
+  const cloudEndpoint = useMemo(() => {
+    const ready = cloudFillReady(appSettings.cloudFillEnabled,
+                                 appSettings.cloudConsent,
+                                 cloudQuota?.allowed ?? false);
+    return ready && cloudQuota?.endpoint?.url
+      ? { url: cloudQuota.endpoint.url, token: cloudQuota.endpoint.token }
+      : undefined;
+  }, [appSettings.cloudFillEnabled, appSettings.cloudConsent, cloudQuota]);
+
+  const updateAppSettings = useCallback((next: AppSettings) => {
+    setAppSettings(next);
+    saveSettings(next);
+  }, []);
+
+  const toggleCloudFill = useCallback((next: boolean) => {
+    // Turning it on is where the asking happens. Turning it off is immediate
+    // and needs no ceremony: withdrawing is supposed to be easier than giving.
+    if (next && !hasConsented(appSettings.cloudConsent)) {
+      setAskingConsent(true);
+      return;
+    }
+    updateAppSettings({ ...appSettings, cloudFillEnabled: next });
+  }, [appSettings, updateAppSettings]);
+
   const toggleFinding = useCallback((index: number) => {
     setFindingOverrides((current) => {
       const next = new Map(current);
@@ -281,10 +341,6 @@ function App() {
     void ask().then(setDiagnosticEnabled).catch(() => setDiagnosticEnabled(false));
   }, []);
 
-  const updateAppSettings = useCallback((next: AppSettings) => {
-    setAppSettings(next);
-    saveSettings(next);
-  }, []);
 
   const handleSelectFile = useCallback(async () => {
     const path = await window.electronAPI.openFile();
@@ -322,6 +378,17 @@ function App() {
       setDoneOutputPath(written);
       setProgress(100);
       setAppState('done');
+      // Counted after the fact, and only for an export that actually used the
+      // service: what the user is charged for should be what they got. The
+      // reply carries the new allowance, so the card is right without asking
+      // again. A failure here is the service's to reconcile — the file is
+      // written either way and losing the export over a count would not be.
+      if (usedCloud.current && window.electronAPI.cloudConsume) {
+        usedCloud.current = false;
+        void window.electronAPI.cloudConsume(1)
+          .then(setCloudQuota)
+          .catch(() => undefined);
+      }
       // A long export usually finishes while the user is in another window.
       if (written) {
         void window.electronAPI.notify(
@@ -350,7 +417,8 @@ function App() {
     // over and runs for minutes, which is what makes a dropped share
     // expensive; a one-second preview would pay the whole copy to save a read
     // it does once.
-    const payload: JobConfig = { inputPath, outputPath: out, roi: videoROI, method, mode: 'full', regions: chosenRegions, radius, kernelSize, color, dx, dy, temporalQuality, useDeepLearning: usesDeep, copyInputLocally: appSettings.copyToTempBeforeProcessing, copyInputMaxBytes: appSettings.maxTempFileSizeMB * 1024 * 1024 };
+    const payload: JobConfig = { inputPath, outputPath: out, roi: videoROI, method, mode: 'full', regions: chosenRegions, cloudFill: cloudEndpoint, radius, kernelSize, color, dx, dy, temporalQuality, useDeepLearning: usesDeep, copyInputLocally: appSettings.copyToTempBeforeProcessing, copyInputMaxBytes: appSettings.maxTempFileSizeMB * 1024 * 1024 };
+    usedCloud.current = Boolean(cloudEndpoint);
     setProgress(0); setStateLabel(''); setSamples([]); setTemporalFallback(null); setDeepNotice(null); setAppState('processing');
     registerJobListeners();
     const started = await window.electronAPI.startJob(payload);
@@ -359,7 +427,7 @@ function App() {
       // "processing" state that nothing will ever complete.
       failWith(`${OWN_MESSAGE_PREFIX}errors.jobRunning`);
     }
-  }, [inputPath, outputPath, canvasROI, canvasScale, method, chosenRegions, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, appSettings, registerJobListeners, failWith]);
+  }, [inputPath, outputPath, canvasROI, canvasScale, method, chosenRegions, cloudEndpoint, radius, kernelSize, color, dx, dy, temporalQuality, usesDeep, appSettings, registerJobListeners, failWith]);
 
   const handlePreview = useCallback(async () => {
     if (!inputPath) return;
@@ -653,6 +721,15 @@ function App() {
             />
 
             {method === 'recover' && (
+              <CloudFillCard
+                enabled={appSettings.cloudFillEnabled}
+                consent={appSettings.cloudConsent}
+                quota={cloudQuota}
+                disabled={!isLoaded}
+                onToggle={toggleCloudFill}
+              />
+            )}
+            {method === 'recover' && (
               <FindingsPanel
                 findings={detection.findings}
                 scanning={detection.scanning}
@@ -805,6 +882,23 @@ function App() {
         />
       )}
 
+      {askingConsent && (
+        <CloudConsentDialog
+          onAgree={() => {
+            setAskingConsent(false);
+            updateAppSettings({
+              ...appSettings,
+              cloudFillEnabled: true,
+              cloudConsent: grantConsent(),
+            });
+          }}
+          onDecline={() => {
+            // Left exactly as it was. Declining is a choice about this export
+            // and every one after it, not a dialog to get past.
+            setAskingConsent(false);
+          }}
+        />
+      )}
       {screen === 'settings' && <SettingsPage systemInfo={systemInfo} settings={appSettings} onSettingsChange={updateAppSettings} />}
       </div>
       </div>

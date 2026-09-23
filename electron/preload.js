@@ -23,6 +23,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // What a detect job found: everything on the video that holds still, each
   // with what it is and when it is on screen.
   onFindings:    (cb) => ipcRenderer.on('job:findings',  (_e, v) => cb(v)),
+
+  // Cloud fill: what the service says this user's allowance is, and the count
+  // told to it after an export that used it. Every number comes from there.
+  cloudQuota: () => ipcRenderer.invoke('cloud:quota'),
+  cloudConsume: (units) => ipcRenderer.invoke('cloud:consume', units),
   // {degraded, total} — frames the temporal engine could not rebuild
   onTemporalFallback: (cb) => ipcRenderer.on('job:temporal-fallback', (_e, v) => cb(v)),
   // {kind, detail} — the learned engine stood aside, or ran a lower preset
