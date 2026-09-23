@@ -1,0 +1,224 @@
+name: Deploy Cloud Inpaint
+
+# Deploys services/cloud-inpaint — the learned filler the app hands the mark's
+# opaque pixels to. Modelled on the licence service's deploy-license.yml in
+# AryaLi1996/ruanjian123, deliberately: same three jobs, same privilege split,
+# same approval gate, so operating one teaches you the other.
+#
+#   test   no AWS credentials at all — runs the service's unit suite. A red
+#          test here stops the run before anything reaches AWS.
+#   plan   assumes AWS_INPAINT_PLAN_ROLE_ARN, whose IAM policy has no
+#          cloudformation:ExecuteChangeSet and no DeleteStack. Runs
+#          scripts/deploy-inpaint.sh with PLAN_ONLY=true, which builds the
+#          image, creates a CloudFormation change-set and prints it without
+#          executing it. This job cannot change production even if it is
+#          compromised.
+#   apply  gated on the `inpaint-production` GitHub Environment. Assumes
+#          AWS_INPAINT_DEPLOY_ROLE_ARN and performs the deployment.
+#
+# The split is the point: the destructive credential is only ever handed to a
+# job a human released, and what that human approves was printed, in full, by
+# a job that could not have applied it.
+#
+# This deploys to AWS account 677840207937 — **not** the licence service's
+# 641628981129. Two services, two accounts, so a compromise of the endpoint
+# that strangers can reach cannot touch the tables holding licences and orders.
+# scripts/deploy-inpaint.sh enforces that with an EXPECTED_ACCOUNT guard.
+#
+# One-time AWS + GitHub setup is required before this can succeed — see
+# services/cloud-inpaint/CI_DEPLOY_SETUP.md. Until it is done, every run fails
+# at "Check required secrets are configured" naming what is missing, rather
+# than silently doing nothing.
+#
+# ── About `environment:` and the OIDC `sub` claim — READ BEFORE EDITING ─────
+# Naming a GitHub Environment on a job changes the OIDC `sub` claim GitHub
+# issues from `repo:OWNER/REPO:ref:refs/heads/BRANCH` to
+# `repo:OWNER/REPO:environment:ENV_NAME` — *even with zero protection rules
+# configured*. Both AWS jobs below name an environment, so both trust policies
+# must be written for the `environment:` form. Renaming an environment here
+# means editing that role's trust policy in the same change, and landing the
+# IAM edit first, or the next run fails at assume-role. This exact mistake has
+# already cost the licence service a broken deploy once.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/cloud-inpaint/**'
+      - 'scripts/deploy-inpaint.sh'
+      - '.github/workflows/deploy-inpaint.yml'
+  # Manual re-deploy from the Actions tab. The push trigger only fires when the
+  # service's own files change, so there was otherwise no way to re-run after
+  # rotating the signing secret or recovering a rolled-back stack. This widens
+  # who can *start* a run, not what a run can do.
+  workflow_dispatch:
+
+# A second push landing mid-deploy queues behind the first rather than
+# cancelling it: an interrupted `sam deploy` can leave the stack in
+# UPDATE_ROLLBACK_FAILED, which needs manual intervention to clear. This also
+# holds the queue while `apply` waits for its reviewer.
+concurrency:
+  group: deploy-inpaint
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Unit tests (pre-deploy gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # No id-token here: this job never talks to AWS, so it is not given the
+    # ability to request an OIDC token at all.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # requirements-dev.txt pulls in requirements.txt and adds what the
+      # tests need on top — httpx, for fastapi's TestClient, which has no
+      # business being inside the deployed image.
+      - name: Install the service's dependencies
+        working-directory: services/cloud-inpaint
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      # Discovery rather than named modules, so a suite added next to these
+      # runs without this step having to be remembered. None of them needs the
+      # ONNX model: the tests that exercise the routes stub `inpaint.fill`,
+      # which is what keeps this gate to seconds rather than a 208 MB download.
+      - name: Run the service's unit tests
+        working-directory: services/cloud-inpaint
+        run: python -m unittest discover -p 'test_*.py' -v
+
+      # Catches a template that CloudFormation would reject, before the plan
+      # job spends several minutes building a container image to find out.
+      # Offline and credential-free — it parses, it does not call AWS.
+      - name: Check template.yaml parses
+        working-directory: services/cloud-inpaint
+        run: |
+          python -m pip install --quiet 'cfn-lint>=1,<2'
+          # W3002 wants packaged artifacts to already be in S3; the whole point
+          # of `sam build` is that they are not yet.
+          #
+          # `cfn-lint`, not `python -m cfnlint` — the package has no
+          # __main__, so the module form exits 1 with "cannot be directly
+          # executed" and would have failed this step on every run.
+          cfn-lint template.yaml --ignore-checks W3002
+
+  plan:
+    name: Plan (change-set preview, cannot apply)
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Scopes the plan role ARN and signing secret to this job. Give this
+    # environment NO reviewers — it is not an approval gate, it is a secret
+    # boundary, and a reviewer requirement here would only mean approving
+    # twice. Do restrict its deployment branches to `main`.
+    environment: inpaint-plan
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # An unset secret interpolates to an empty string, and
+      # configure-aws-credentials then silently drops `role-to-assume` and
+      # falls back to the default provider chain — failing with "Could not
+      # load credentials from any providers", which names neither the secret
+      # nor this repo's setup doc. Check first so the error says what is
+      # actually missing.
+      - name: Check required secrets are configured
+        env:
+          PLAN_ROLE_ARN:       ${{ secrets.AWS_INPAINT_PLAN_ROLE_ARN }}
+          FILL_SIGNING_SECRET: ${{ secrets.FILL_SIGNING_SECRET }}
+        run: |
+          missing=()
+          [[ -n "$PLAN_ROLE_ARN" ]]       || missing+=("AWS_INPAINT_PLAN_ROLE_ARN")
+          [[ -n "$FILL_SIGNING_SECRET" ]] || missing+=("FILL_SIGNING_SECRET")
+          if (( ${#missing[@]} )); then
+            printf 'Missing environment secret(s) on `inpaint-plan`: %s\n' "${missing[*]}" >&2
+            printf 'This is one-time setup, not a code failure — see\n' >&2
+            printf 'services/cloud-inpaint/CI_DEPLOY_SETUP.md sections 2c, 3 and 4.\n' >&2
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC, plan role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_INPAINT_PLAN_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Set up AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+
+      # PLAN_ONLY=true: builds the image, uploads it, creates and prints a
+      # change-set, then stops. Skips the destructive stale-stack cleanup the
+      # apply job does.
+      - name: Plan (sam build + change-set, no execute)
+        env:
+          PLAN_ONLY: 'true'
+          AWS_REGION: us-east-1
+          FILL_SIGNING_SECRET: ${{ secrets.FILL_SIGNING_SECRET }}
+        run: scripts/deploy-inpaint.sh
+
+  apply:
+    name: Apply (requires approval)
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The approval gate. Configure required reviewers on this environment in
+    # Settings → Environments → inpaint-production; until someone releases the
+    # run, AWS_INPAINT_DEPLOY_ROLE_ARN is never handed out and nothing is
+    # applied.
+    environment: inpaint-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same guard as `plan`. Reached only after a reviewer released the run,
+      # so a missing secret here costs an approval — worth naming precisely
+      # rather than failing opaquely.
+      - name: Check required secrets are configured
+        env:
+          DEPLOY_ROLE_ARN:     ${{ secrets.AWS_INPAINT_DEPLOY_ROLE_ARN }}
+          FILL_SIGNING_SECRET: ${{ secrets.FILL_SIGNING_SECRET }}
+        run: |
+          missing=()
+          [[ -n "$DEPLOY_ROLE_ARN" ]]     || missing+=("AWS_INPAINT_DEPLOY_ROLE_ARN")
+          [[ -n "$FILL_SIGNING_SECRET" ]] || missing+=("FILL_SIGNING_SECRET")
+          if (( ${#missing[@]} )); then
+            printf 'Missing environment secret(s) on `inpaint-production`: %s\n' "${missing[*]}" >&2
+            printf 'This is one-time setup, not a code failure — see\n' >&2
+            printf 'services/cloud-inpaint/CI_DEPLOY_SETUP.md sections 2b, 3 and 4.\n' >&2
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC, deploy role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_INPAINT_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Set up AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+
+      # Recomputes its own change-set rather than executing the one `plan`
+      # created — same commit, same parameters, so the same diff, and it keeps
+      # this job working even if the plan's change-set was pruned while the run
+      # waited for approval. Prints the stack outputs, including the URL the
+      # licence service has to be given, on success.
+      - name: Deploy (sam build + sam deploy)
+        env:
+          AWS_REGION: us-east-1
+          FILL_SIGNING_SECRET: ${{ secrets.FILL_SIGNING_SECRET }}
+        run: scripts/deploy-inpaint.sh

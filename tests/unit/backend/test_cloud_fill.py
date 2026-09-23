@@ -253,3 +253,41 @@ def test_fill_does_not_hand_back_something_half_right():
 
     with pytest.raises(ValueError, match='asked for 3'):
         cloud_fill.fill(parcel, patches, 'https://x/inpaint', transport=short)
+
+
+def test_the_timeout_budget_grows_with_the_batch():
+    # A flat budget was the bug: it has to cover a CPU deployment's minutes
+    # without making a four-frame remainder wait for them.
+    assert cloud_fill.timeout_for(240) > cloud_fill.timeout_for(4)
+    assert cloud_fill.timeout_for(0) == cloud_fill.REQUEST_BASE_SECONDS
+    # Long enough for the deployment we actually have: roughly a second a frame
+    # on four cores, and the deployed Lambda has about six.
+    assert cloud_fill.timeout_for(240) >= 240
+
+
+def test_each_batch_is_given_its_own_budget():
+    parcel, patches = _parcel_and_patches(cloud_fill.FRAMES_PER_REQUEST + 2)
+    budgets = []
+
+    def transport(url, body, token, timeout):
+        budgets.append(timeout)
+        sent = json.loads(body.decode())['frames_webp']
+        return json.dumps({'frames_webp': sent}).encode()
+
+    cloud_fill.fill(parcel, patches, 'https://x/inpaint', transport=transport)
+    assert budgets == [cloud_fill.timeout_for(cloud_fill.FRAMES_PER_REQUEST),
+                       cloud_fill.timeout_for(2)]
+
+
+def test_a_caller_that_names_a_timeout_still_gets_it():
+    parcel, patches = _parcel_and_patches(3)
+    budgets = []
+
+    def transport(url, body, token, timeout):
+        budgets.append(timeout)
+        sent = json.loads(body.decode())['frames_webp']
+        return json.dumps({'frames_webp': sent}).encode()
+
+    cloud_fill.fill(parcel, patches, 'https://x/inpaint', timeout=7.5,
+                    transport=transport)
+    assert budgets == [7.5]

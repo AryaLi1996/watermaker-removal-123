@@ -44,9 +44,33 @@ FRAMES_PER_REQUEST = 240
 # so it does not get the same treatment.
 PATCH_QUALITY = 90
 
-# How long to wait before falling back. A service worth using answers a batch
-# in a few seconds; one that does not is not worth holding an export for.
-REQUEST_TIMEOUT_SECONDS = 120.0
+# How long to wait before falling back, as a budget per batch rather than a
+# flat number.
+#
+# A flat 120 seconds was wrong in both directions. A batch is 240 frames, and
+# what that costs depends entirely on what the service is running on: a few
+# seconds on a GPU, several minutes on the CPU Lambda the stack in
+# services/cloud-inpaint actually deploys today. Against a flat 120 the CPU
+# deployment would have timed out on *every* batch — a service that is up,
+# working, and answering, and that the client abandons every time, which looks
+# from the outside exactly like one that is down.
+#
+# So: a fixed allowance for the round trip and the cold start, plus a per-frame
+# allowance for the work. On a GPU this is never approached; on CPU it is
+# roughly what the job takes.
+#
+# The risk a generous budget carries — an export held for minutes by a service
+# that has hung — is bounded elsewhere: the first batch that fails gives up on
+# the service for the rest of the export (see `_run_cloud` in processor.py), so
+# a hang costs one budget, not one per batch.
+REQUEST_BASE_SECONDS = 45.0
+REQUEST_SECONDS_PER_FRAME = 2.0
+
+
+def timeout_for(frames: int) -> float:
+    """How long a batch of this many frames is worth waiting for."""
+    return REQUEST_BASE_SECONDS + REQUEST_SECONDS_PER_FRAME * max(0, frames)
+
 
 # Clean picture to include around the mark, as a fraction of the box's longer
 # side and at least this many pixels.
@@ -178,7 +202,7 @@ def check_endpoint(url: str) -> None:
 
 
 def post(url: str, body: bytes, token: str | None = None,
-         timeout: float = REQUEST_TIMEOUT_SECONDS) -> bytes:
+         timeout: float | None = None) -> bytes:
     """
     One request to the fill service.
 
@@ -187,6 +211,8 @@ def post(url: str, body: bytes, token: str | None = None,
     addressed.
     """
     check_endpoint(url)
+    if timeout is None:
+        timeout = timeout_for(FRAMES_PER_REQUEST)
     request = Request(url, data=body, method='POST')
     request.add_header('Content-Type', 'application/json')
     if token:
@@ -196,7 +222,7 @@ def post(url: str, body: bytes, token: str | None = None,
 
 
 def fill(parcel: Parcel, patches: list[np.ndarray], url: str,
-         token: str | None = None, timeout: float = REQUEST_TIMEOUT_SECONDS,
+         token: str | None = None, timeout: float | None = None,
          transport=None) -> list[np.ndarray]:
     """
     Every frame's box, filled by the service, in the order they were given.
@@ -211,6 +237,11 @@ def fill(parcel: Parcel, patches: list[np.ndarray], url: str,
     send = transport or post
     filled: list[np.ndarray] = []
     for start, end in batches(len(patches)):
-        reply = send(url, request_body(parcel, patches[start:end]), token, timeout)
+        # Each batch gets its own budget. The last one of a clip is usually a
+        # short remainder, and waiting a full batch's worth for four frames is
+        # four minutes spent establishing something a caller could have known
+        # in twenty seconds.
+        allowed = timeout if timeout is not None else timeout_for(end - start)
+        reply = send(url, request_body(parcel, patches[start:end]), token, allowed)
         filled.extend(read_reply(reply, parcel, end - start))
     return filled

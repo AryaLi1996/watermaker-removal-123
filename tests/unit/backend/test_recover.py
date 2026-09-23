@@ -579,3 +579,42 @@ def test_a_service_that_does_not_answer_leaves_a_finished_export(clip, tmp_path,
 
     assert any(key == 'cloud_fallback' for key, _ in notices), notices
     assert any(str(count) in detail for key, detail in notices if key == 'cloud_fallback')
+
+
+def test_the_service_is_not_asked_again_after_it_has_failed_once(
+        clip, tmp_path, monkeypatch):
+    """
+    One failure ends the service's part in this export.
+
+    Retrying every batch buys nothing — whatever made the first one fail fails
+    the rest the same way — and costs one timeout each, which on a long clip is
+    most of an hour of an export standing still. It is also what lets the
+    timeout be generous enough for a CPU deployment to finish a batch at all.
+    """
+    import cloud_fill
+    import processor
+
+    count = 60
+    paths = _frames_on_disk(clip, tmp_path / 'cloud', count)
+    # Six batches' worth, so "asked once" and "asked for every batch" cannot be
+    # the same number.
+    monkeypatch.setattr(processor, 'CLOUD_BATCH_FRAMES', 10)
+
+    asked = []
+
+    def refuse(url, body, token, timeout):
+        asked.append(url)
+        raise OSError('connection refused')
+
+    monkeypatch.setattr(cloud_fill, 'post', refuse)
+    notices = []
+    processor.run_batch(
+        paths,
+        _region_config(clip, {'url': 'https://fill.example.com/inpaint'}, frames=count),
+        WIDTH, HEIGHT, on_notice=lambda key, detail: notices.append((key, detail)))
+
+    assert len(asked) == 1, f'the service was asked {len(asked)} times'
+    # And the user is still told about every frame that went the other way,
+    # not just the batch that was actually sent.
+    assert any(key == 'cloud_fallback' and str(count) in detail
+               for key, detail in notices), notices

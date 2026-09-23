@@ -25,25 +25,81 @@ picture, and cannot reconstruct it. The mask is one image for the whole job.
     WebP q90, 2.7 KB a frame:  9.5 MB up and the same down for a 2-minute clip
     the whole video file, for comparison:  11.9 MB
 
-## Running it
+## Running it locally
 
-    pip install -r requirements.txt
+    pip install -r requirements-dev.txt
+    FILL_SIGNING_SECRET=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))') \
     LAMA_ONNX=/path/to/lama.onnx python -m uvicorn app:api --port 8000
 
-The model is not vendored: it is a 208 MB file, and where it lives is a
+The model is not vendored here: it is a 208 MB file, and where it lives is a
 deployment decision. `Carve/LaMa-ONNX` on Hugging Face is the one these numbers
-were measured with.
+were measured with, and the deployed image bakes in that repository's
+`lama_fp32.onnx` at a pinned commit with its checksum verified — see
+`Dockerfile`.
+
+Every route but `/health` wants a bearer token. Mint one for a local run with
+the same function the licence service is specified to use:
+
+    python3 -c "import auth, time; print(auth.sign({'app':'shuyin','sub':'me','exp':time.time()+3600}, '<the secret>'))"
+
+The tests are the fast way to check a change:
+
+    python -m unittest discover -p 'test_*.py' -v
+
+None of them needs the model.
+
+## Deploying it
+
+`template.yaml` is the whole deployment: one Lambda, built from `Dockerfile`,
+behind a Function URL. `scripts/deploy-inpaint.sh` applies it, and
+`.github/workflows/deploy-inpaint.yml` is how it is meant to be applied —
+test, then a change-set a reviewer reads, then an apply that reviewer released.
+`CI_DEPLOY_SETUP.md` is the one-time AWS and GitHub setup that has to exist
+first, and is the part nobody can do from a repository.
+
+**A Lambda, not a GPU instance.** With no users yet, an always-on
+`g4dn.xlarge` is about $380 a month to answer nothing, and this is $0. The
+client's answer to an unreachable service is to fill locally and say so, so the
+cheap option's failure mode is a slower, slightly more legible export rather
+than a broken one. The next section is the cost of that choice, and how to
+reverse it.
+
+## How long a batch takes
+
+Inference is about a second a frame on four CPU cores. The deployed Lambda runs
+at 10240 MB, which buys roughly six, so a 240-frame batch is minutes rather
+than the few seconds the same batch takes on a GPU.
+
+That number is why `cloud_fill.REQUEST_TIMEOUT_SECONDS` no longer exists. A
+flat 120-second timeout would have abandoned every single batch this deployment
+answered — a service that is up, working and being given up on, which from the
+app's side is indistinguishable from one that is down. The client now budgets
+per batch (`cloud_fill.timeout_for`), and bounds what a genuinely hung service
+can cost by giving up on it for the rest of the export after one failure.
+
+So on this deployment an export is *slow* and the picture is right. The
+quality numbers above are the model's, and the model is the same one either
+way; only the waiting differs.
+
+**Moving to a GPU costs one environment variable**, on the licence service, and
+nothing on any installed client: the app is handed the endpoint per export by
+whatever just decided the export was allowed. See `METERING_ROUTES.md`. Do it
+when people are waiting; there is nothing to prepare beforehand.
 
 ## What it is not
 
-Deployment, authentication and accounting are not here. The app already shares
-a licence service, and whatever meters this should live alongside it rather
-than being invented twice — at roughly $0.015 of GPU time per two-minute clip,
-something has to.
+Accounting is not here, and should not be. The app already shares a licence
+service, and that is where "who is entitled to what" is already answered —
+`METERING_ROUTES.md` specifies the two routes it needs to grow. This service
+checks a token that service minted (`auth.py`) and holds no account state at
+all.
 
 ## Where it runs
 
-AWS, `us-east-1`. Which is a deployment detail everywhere except in the app,
+AWS account `677840207937`, `us-east-1` — deliberately not the licence
+service's account, so that a compromise of an endpoint strangers can reach
+cannot walk to the tables holding licences and orders. Which is a deployment
+detail everywhere except in the app,
 where it is the thing that decides what the user has to be told: for a user in
 China, every export through this service is a cross-border transfer of personal
 information, and PIPL article 39 asks for the overseas recipient by name, the
@@ -53,9 +109,10 @@ they have agreed to. `renderer/src/cloud.ts` and `CloudConsentDialog.tsx` are
 where that lives; moving the service into China would let both be shorter, and
 moving it anywhere else changes neither.
 
-The account the stack belongs to is not recorded here. It is deployment
-configuration, it identifies a real account, and nothing in this repository
-needs it to build or to run.
+The account number is recorded now, where it was deliberately left out before.
+It is not a secret — it is a routing number, useless without credentials — and
+`scripts/deploy-inpaint.sh` needs it to refuse a deployment aimed at the wrong
+account, which is worth more than the small tidiness of leaving it out.
 
 ## Metering
 
