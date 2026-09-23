@@ -41,7 +41,7 @@
   },
   "build": {
     "appId": "com.smoothvoice.watermark-remover",
-    "productName": "SmoothVoice Watermark Remover",
+    "productName": "SmootheVoice Watermark Remover",
     "copyright": "Copyright © 2026 pandac.in",
     "directories": {
       "buildResources": "build",

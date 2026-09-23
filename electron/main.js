@@ -37,7 +37,21 @@ const isDev = process.env.NODE_ENV === 'development';
  * reads. Inside the app the name is translated (`app.name` in the i18n
  * resources), and the page title takes over as soon as it loads.
  */
-const PRODUCT_NAME = 'SmoothVoice Watermark Remover';
+const PRODUCT_NAME = 'SmootheVoice Watermark Remover';
+
+/**
+ * The folder this app's data lives in, which is deliberately not its name.
+ *
+ * Electron derives `userData` from `app.getName()`, so renaming the product
+ * would move every existing install's settings, trial dates, usage counts and
+ * stored licence to a new folder — and an app that cannot find any of those
+ * looks to its user exactly like one they have never run before. Pinned to the
+ * name the shipped builds have always used, so the product can be called
+ * whatever it is actually called.
+ *
+ * Changing this is a data migration, not a rename.
+ */
+const DATA_DIR_NAME = 'SmoothVoice Watermark Remover';
 
 // ─── Preview media protocol ───────────────────────────────────────
 /**
@@ -1120,6 +1134,9 @@ ipcMain.handle('update:install', () => {
 });
 
 app.whenReady().then(() => {
+  // Before the name changes, and before anything reads it: see DATA_DIR_NAME.
+  app.setPath('userData', path.join(app.getPath('appData'), DATA_DIR_NAME));
+
   // The product name, for the window, the menu bar and the About dialog.
   // package.json's `name` is the npm one — lower case and hyphenated — so
   // without this the app introduces itself as "smoothvoice-watermark-remover".

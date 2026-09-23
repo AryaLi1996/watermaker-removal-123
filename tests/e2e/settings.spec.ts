@@ -45,7 +45,7 @@ test.describe('the settings screen', () => {
   });
 
   test('names the app in the language the user reads', async ({ page }) => {
-    await expect(page.getByTestId('about-name')).toHaveText('SmoothVoice Watermark Remover');
+    await expect(page.getByTestId('about-name')).toHaveText('SmootheVoice Watermark Remover');
   });
 });
 

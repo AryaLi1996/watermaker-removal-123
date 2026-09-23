@@ -358,7 +358,7 @@ npm run test:e2e:debug
 |---|---|
 | Window opens and reaches idle state | `[data-testid="empty-state"]` is visible |
 | Correct prompt text | "Click to browse for a video file" |
-| Top bar title | "SmoothVoice Watermark Remover" |
+| Top bar title | "SmootheVoice Watermark Remover" |
 | Export/Preview hidden in idle state | Buttons absent before file load |
 | Window minimum size | ≥ 900×600 via `BrowserWindow.getSize()` |
 | Context isolation enabled | `nodeIntegration = false` via `getWebPreferences()` |

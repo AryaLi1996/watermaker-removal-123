@@ -120,14 +120,15 @@ function mint({ planId = 'annual', days, appId = APP_ID, userId, licenseKey, now
 }
 
 /**
- * Where an unpackaged run keeps its userData.
+ * Where the app keeps its userData.
  *
- * Electron derives this from the app name, which for a run out of this
- * checkout is package.json's `name`. A *packaged* build uses the productName
- * instead — "SmoothVoice Watermark Remover" — so pass `--user-data` when the
- * licence is meant for one of those.
+ * Electron would derive this from the app name, but the app pins it instead —
+ * see `DATA_DIR_NAME` in electron/main.js — so that the product can be renamed
+ * without every existing install losing its settings and licence. That makes
+ * this one directory for packaged and unpackaged runs alike, and it is *not*
+ * the product's name: it is the name the shipped builds have always used.
  */
-function defaultUserDataDir(appName = 'smoothvoice-watermark-remover', platform = process.platform, home = os.homedir()) {
+function defaultUserDataDir(appName = 'SmoothVoice Watermark Remover', platform = process.platform, home = os.homedir()) {
   if (platform === 'darwin') return path.join(home, 'Library', 'Application Support', appName);
   if (platform === 'win32') return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), appName);
   return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), appName);

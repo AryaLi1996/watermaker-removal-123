@@ -51,18 +51,54 @@ describe('whether the service would be used', () => {
     expect(cloudFillReady(true, agreed, false)).toBe(false);
   });
 
-  it('refuses while the notice cannot name who receives the upload', () => {
-    // The contact details are blank in this build on purpose — see
-    // CLOUD_PARTIES. Until they are filled in, nothing may be uploaded, and
-    // this is the check that makes that true rather than aspirational.
-    expect(consentIsComplete()).toBe(false);
-    expect(cloudFillReady(true, agreed, true)).toBe(false);
+  it('follows the notice: nothing is uploaded that cannot be described', () => {
+    // Asserted against whatever this build actually carries, rather than
+    // against "incomplete", so that filling CLOUD_PARTIES in one field at a
+    // time does not quietly turn this into a test of nothing.
+    expect(cloudFillReady(true, agreed, true)).toBe(consentIsComplete());
   });
 });
 
-describe('the dialog', () => {
-  it('refuses to ask at all while the notice names nobody', async () => {
-    const { default: CloudConsentDialog } = await import('./CloudConsentDialog');
+describe('whether the notice can be shown at all', () => {
+  const COMPLETE = {
+    processorName: 'Example Ltd',
+    processorEmail: 'privacy@example.com',
+    recipientName: 'Amazon Web Services, Inc.',
+    recipientRegion: 'US East (N. Virginia) — us-east-1',
+    recipientContact: 'privacy@example.com',
+  };
+
+  it('is, once every party and address is named', () => {
+    expect(consentIsComplete(COMPLETE)).toBe(true);
+  });
+
+  it('is, in the build that ships', () => {
+    // The gate this guards is the one that decides whether anybody's picture
+    // may leave their machine. If a field is ever emptied again — a refactor,
+    // a merge, an entity that changed name — this is what says so, rather than
+    // the feature silently switching itself off in front of a user.
+    expect(consentIsComplete()).toBe(true);
+  });
+
+  it('is not, while any one of them is missing', () => {
+    for (const field of Object.keys(COMPLETE) as (keyof typeof COMPLETE)[]) {
+      expect(consentIsComplete({ ...COMPLETE, [field]: '' }))
+        .toBe(false);
+    }
+  });
+});
+
+describe('the dialog, where the notice names nobody', () => {
+  async function withoutParties() {
+    vi.doMock('../cloud', async () => {
+      const real = await vi.importActual<typeof import('../cloud')>('../cloud');
+      return { ...real, consentIsComplete: () => false };
+    });
+    return (await import('./CloudConsentDialog')).default;
+  }
+
+  it('refuses to ask at all', async () => {
+    const CloudConsentDialog = await withoutParties();
     render(<CloudConsentDialog onAgree={vi.fn()} onDecline={vi.fn()} />);
 
     expect(screen.getByTestId('cloud-consent-incomplete')).toBeTruthy();
@@ -70,8 +106,8 @@ describe('the dialog', () => {
     expect(screen.queryByTestId('cloud-consent-accept')).toBeNull();
   });
 
-  it('lets the user out of an incomplete notice without agreeing', async () => {
-    const { default: CloudConsentDialog } = await import('./CloudConsentDialog');
+  it('lets the user out without agreeing to anything', async () => {
+    const CloudConsentDialog = await withoutParties();
     const onDecline = vi.fn();
     const onAgree = vi.fn();
     render(<CloudConsentDialog onAgree={onAgree} onDecline={onDecline} />);
