@@ -38,6 +38,10 @@
     "closePreview": "Close preview"
   },
   "method": {
+    "recover": "Watermark Recovery",
+    "recoverDescription": "Undoes the blend and brings the real picture back",
+    "recoverBadge": "New",
+    "recoverNote": "Finds the mark itself, including where it moves to, and solves what it was blended with — so the picture underneath comes back rather than being invented. The box above only says which mark you mean.",
     "heading": "Removal method",
     "inpaint": "Smart Fill",
     "inpaintDescription": "Reconstructs background (best for logos)",

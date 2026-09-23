@@ -80,7 +80,8 @@ Pixels = Annotated[int, BeforeValidator(_round_pixels)]
 PREVIEW_SECONDS = 1.0
 
 
-RemovalMethod = Literal['inpaint', 'blur', 'solidFill', 'cloneStamp', 'temporal']
+RemovalMethod = Literal['recover', 'inpaint', 'blur', 'solidFill',
+                        'cloneStamp', 'temporal']
 TemporalQuality = Literal['fast', 'balanced', 'high']
 JobMode = Literal['full', 'preview', 'preview_frame']
 
@@ -269,11 +270,19 @@ def report_temporal_fallback(degraded: int, total: int) -> None:
         emit(f'STATE:temporal_fallback:{degraded}/{total}')
 
 
-def report_deep_notice(key: str, detail: str) -> None:
+# Notice keys the renderer has a sentence for. Anything else goes to the debug
+# channel instead of the status line: a raw English fragment flashing up in
+# place of the stage label, in an app that is read in Chinese as often as not,
+# is worse than not saying it there. The recovery engine's notices are
+# diagnostics until there is a confirmation step to show them in properly.
+UI_NOTICE_KEYS = frozenset({'deep_fallback', 'deep_quality'})
+
+
+def report_engine_notice(key: str, detail: str) -> None:
     """
-    Relay something the deep engine wants the user to know that is not a
-    failure: that it stood aside for the flow engine, or that it ran a lower
-    preset than the dial asked for.
+    Relay something an engine wants said that is not a failure: that the deep
+    engine stood aside for the flow one, that it ran a lower preset than the
+    dial asked for, or what the recovery scan found.
 
     A single line each, on the same channel as everything else, and always
     said — an export that quietly used a different engine than the one the
@@ -281,7 +290,8 @@ def report_deep_notice(key: str, detail: str) -> None:
     in English: the renderer has a sentence for the key and shows this beside
     it, the way it already does with a backend error.
     """
-    emit(f'STATE:{key}:' + detail.replace('\n', ' '))
+    channel = 'STATE' if key in UI_NOTICE_KEYS else 'DEBUG'
+    emit(f'{channel}:{key}:' + detail.replace('\n', ' '))
 
 
 def describe_exception(exc: BaseException) -> str:
@@ -527,7 +537,7 @@ def resolve_temporal_engine(config: JobConfig) -> str:
     ready = propainter_engine.availability()
     if ready.available:
         return 'deep'
-    report_deep_notice('deep_fallback', ready.detail or 'ProPainter is unavailable')
+    report_engine_notice('deep_fallback', ready.detail or 'ProPainter is unavailable')
     return 'flow'
 
 
@@ -662,7 +672,7 @@ def run_pipeline(
         meta['width'],
         meta['height'],
         progress_callback=_progress_cb,
-        on_notice=report_deep_notice,
+        on_notice=report_engine_notice,
     )
     progress(process_end)
 

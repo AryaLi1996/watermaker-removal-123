@@ -67,7 +67,7 @@ function App() {
   const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
   const [canvasScale, setCanvasScale] = useState(1);
   const [canvasROI, setCanvasROI] = useState<ROI>({ x: 0, y: 0, w: 200, h: 100 });
-  const [selectedMethod, setMethod] = useState<RemovalMethod>('inpaint');
+  const [selectedMethod, setMethod] = useState<RemovalMethod>('recover');
   const [radius, setRadius] = useState(3);
   const [kernelSize, setKernelSize] = useState(51);
   const [color, setColor] = useState<[number, number, number]>([0, 0, 0]);

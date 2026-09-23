@@ -161,20 +161,31 @@ def _grow(mask: np.ndarray, iterations: int = 1) -> np.ndarray:
     return cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=iterations)
 
 
-def persistent_strokes(frames: np.ndarray, threshold: float = 1.5) -> np.ndarray:
+def persistence(frames: np.ndarray) -> np.ndarray:
     """
-    A first guess at where the mark is, from the one thing that sets it apart:
-    it is the only detail that is in the same place in every frame.
+    How much of the detail at each pixel is in the same place in every frame.
 
     A high-pass isolates detail; the median of that across frames keeps what
-    recurs and discards what moved. Returns a uint8 mask.
+    recurs and discards what moved. Returned as the signed float map rather
+    than a mask, because what counts as "enough" depends on the caller: the
+    solve knows where the mark is and wants a fixed, generous floor, while a
+    scan that is still looking for it has to judge the map against itself.
     """
     highpass = []
     for frame in frames[::4]:
         grey = cv2.cvtColor(frame.astype(np.uint8), cv2.COLOR_BGR2GRAY)
         highpass.append(grey.astype(np.float32) - cv2.medianBlur(grey, 21).astype(np.float32))
-    template = np.median(np.stack(highpass), axis=0)
-    return _grow((np.abs(template) > threshold).astype(np.uint8), iterations=2)
+    return np.median(np.stack(highpass), axis=0)
+
+
+def persistent_strokes(frames: np.ndarray, threshold: float = 1.5) -> np.ndarray:
+    """
+    A first guess at where the mark is, from the one thing that sets it apart:
+    it is the only detail that is in the same place in every frame.
+
+    Returns a uint8 mask.
+    """
+    return _grow((np.abs(persistence(frames)) > threshold).astype(np.uint8), iterations=2)
 
 
 def _background_estimate(frames: np.ndarray, mask: np.ndarray) -> np.ndarray:

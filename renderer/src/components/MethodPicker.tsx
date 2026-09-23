@@ -55,7 +55,9 @@ interface MethodPickerProps {
 }
 
 /** Labels come from the resources; the order is what the number keys map to. */
-const METHODS: RemovalMethod[] = ['inpaint', 'blur', 'solidFill', 'cloneStamp', 'temporal'];
+const METHODS: RemovalMethod[] = [
+  'recover', 'inpaint', 'blur', 'solidFill', 'cloneStamp', 'temporal',
+];
 
 function Slider({
   label,
@@ -180,6 +182,11 @@ export default function MethodPicker({
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ color: method === id ? 'var(--accent-soft-text)' : 'var(--text-secondary)', fontSize: 13 }}>{t(`method.${id}`)}</span>
+                {id === 'recover' && (
+                  <span style={{ color: 'var(--accent-link)', background: 'var(--accent-soft)', borderRadius: 3, fontSize: 9, padding: '1px 4px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                    {t('method.recoverBadge')}
+                  </span>
+                )}
                 {id === 'temporal' && (
                   <>
                     <span style={{ color: 'var(--accent-link)', background: 'var(--accent-soft)', borderRadius: 3, fontSize: 9, padding: '1px 4px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
@@ -384,6 +391,14 @@ export default function MethodPicker({
               {t('method.temporalNote')}
             </p>
           </>
+        )}
+        {/* The one method whose box means something different: a hint about
+            which mark, not the area to paint over. Left unsaid, a user drags a
+            tight box and wonders why the result is not tighter. */}
+        {method === 'recover' && (
+          <p data-testid="recover-note" style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.5, background: 'var(--note-bg)', border: '1px solid var(--accent-soft)', borderRadius: 4, padding: '6px 8px' }}>
+            {t('method.recoverNote')}
+          </p>
         )}
         {method === 'cloneStamp' && (
           <>
