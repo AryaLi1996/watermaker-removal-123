@@ -56,6 +56,20 @@ SCALES = (0.70, 0.85, 1.0, 1.18, 1.32, 1.45)
 # that costs the user their own picture.
 MATCH_THRESHOLD = 0.60
 
+# The bar for a second sighting of a mark this video has *already* shown at
+# full confidence. A platform draws one mark and moves it about — 抖音 swaps
+# corners, 小红书 swaps the whole overlay between top and bottom — and the
+# same badge scores differently depending on what is behind it: 小红书's pill
+# reads 0.98 over a pale wall and 0.56 over dark wood, because a white badge's
+# border is a strong edge against one and a weak one against the other.
+#
+# Once `MATCH_THRESHOLD` has established which platform this is, a weaker
+# sighting of the same template is a different proposition from a first
+# sighting, and holding it to the same bar loses half the video. This still
+# clears the highest score measured on footage carrying no mark at all, 0.423
+# across nine clips, so it is a lower bar and not an open door.
+CONFIRMED_THRESHOLD = 0.50
+
 # A frame this small cannot carry a legible mark, and the template scaled down
 # to fit would be matching noise.
 MIN_TEMPLATE_SIDE = 12
@@ -162,7 +176,7 @@ def _featureless(field: np.ndarray, rows: int, cols: int) -> np.ndarray:
 COVERAGE = 0.6
 AREA_LIMIT = 12.0
 
-KNOWN = ('douyin', 'kuaishou')
+KNOWN = ('douyin', 'kuaishou', 'xiaohongshu')
 
 
 def locate_in(frame_paths: list[str], width: int, height: int,
@@ -192,16 +206,40 @@ def locate_in(frame_paths: list[str], width: int, height: int,
         return []
 
     step = max(1, len(frame_paths) // samples)
-    found: list[tuple[tuple[int, int, int, int], int]] = []
+    # Every sighting worth a second look, before deciding which platform this
+    # video belongs to. A mark is scored twice: once to establish the platform
+    # and once, at a lower bar, for the placements it also appears in.
+    seen: list[tuple[str, float, tuple[int, int, int, int], int]] = []
     for index in range(0, len(frame_paths), step)[:samples]:
         frame = cv2.imread(frame_paths[index], cv2.IMREAD_GRAYSCALE)
         if frame is None:
             continue
-        for template in templates:
+        for name, template in zip(KNOWN, templates):
             hit = find(frame, template)
-            if hit and hit[0] >= MATCH_THRESHOLD:
-                found.append((hit[1], index))
-    return found
+            if hit and hit[0] >= CONFIRMED_THRESHOLD:
+                seen.append((name, hit[0], hit[1], index))
+
+    return confirmed(seen)
+
+
+def confirmed(seen: list[tuple[str, float, tuple[int, int, int, int], int]]
+              ) -> list[tuple[tuple[int, int, int, int], int]]:
+    """
+    Which sightings to keep, given every one worth a second look.
+
+    A sighting between the two bars counts only if some sighting of the *same*
+    template cleared the upper one somewhere in the video. Establishing the
+    platform and finding its other placements are different questions, and the
+    evidence needed differs: the first has to rule out every other video in
+    the world, the second only has to rule out coincidence in a video already
+    known to carry that platform's mark.
+
+    Separate from `locate_in` because it is the whole of the rule and none of
+    the decoding, and a rule this consequential should be readable and
+    testable without a video to hand.
+    """
+    established = {name for name, score, _, _ in seen if score >= MATCH_THRESHOLD}
+    return [(box, index) for name, _, box, index in seen if name in established]
 
 
 def placements(hits: list[tuple[tuple[int, int, int, int], int]],
