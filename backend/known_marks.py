@@ -38,8 +38,15 @@ TEMPLATE_WIDTH_AT = 1080.0
 
 # Sizes to try, as a multiple of the frame-relative size. A platform does not
 # draw its mark at one exact fraction across every aspect ratio and every app
-# version, and the cost of a few extra correlations is small.
-SCALES = (0.85, 1.0, 1.18)
+# version, and the cost of a few extra correlations is small — a detect looks
+# at a dozen frames, not all of them.
+#
+# The range is measured, not guessed. Narrowing it to (0.85, 1.0, 1.18) costs
+# real detections: on a 快手 clip downloaded from a different account at a
+# different resolution the mark scored 0.642 with three steps and 0.886 with
+# these six, while the highest score on footage carrying no 快手 mark stayed
+# at 0.472 either way. Widening bought true positives and no false ones.
+SCALES = (0.70, 0.85, 1.0, 1.18, 1.32, 1.45)
 
 # Above this, the shape found is the mark. Chosen from measured separation
 # rather than taste: across eight clips the highest score anywhere in footage
@@ -52,6 +59,16 @@ MATCH_THRESHOLD = 0.60
 # A frame this small cannot carry a legible mark, and the template scaled down
 # to fit would be matching noise.
 MIN_TEMPLATE_SIDE = 12
+
+# The least edge energy a region must have before a match there means
+# anything. `TM_CCOEFF_NORMED` divides by the window's standard deviation, and
+# on a window with none — a black TV screen, a blown-out sky — OpenCV returns
+# a perfect 1.0 rather than an error. Left unguarded that is a false positive
+# with the highest possible score, which is precisely the wrong way round: a
+# mark is made of edges, so a region without any cannot be one. Measured on a
+# 抖音 clip whose television is off, where the unguarded matcher scored 1.0000
+# on a patch with a standard deviation of exactly 0.
+MIN_EDGE_ENERGY = 1.0
 
 
 def _gradient(image: np.ndarray) -> np.ndarray:
@@ -97,29 +114,55 @@ def find(frame: np.ndarray, template: np.ndarray) -> tuple[float, tuple[int, int
     best: tuple[float, tuple[int, int, int, int]] | None = None
     for relative in SCALES:
         scale = (width / TEMPLATE_WIDTH_AT) * relative
-        sized = cv2.resize(template, None, fx=scale, fy=scale,
-                           interpolation=cv2.INTER_AREA)
-        rows, cols = sized.shape[:2]
+        # Decide the size before asking for it: `cv2.resize` raises on a
+        # target that rounds away to nothing, so on a thumbnail-sized frame
+        # the smallest scale would throw rather than be skipped.
+        rows = int(round(template.shape[0] * scale))
+        cols = int(round(template.shape[1] * scale))
         if min(rows, cols) < MIN_TEMPLATE_SIDE or rows >= height or cols >= width:
             continue
+        sized = cv2.resize(template, (cols, rows), interpolation=cv2.INTER_AREA)
         response = cv2.matchTemplate(
             field, _gradient(sized * 255.0), cv2.TM_CCOEFF_NORMED)
+        response[_featureless(field, rows, cols)] = -1.0
         _, score, _, corner = cv2.minMaxLoc(response)
         if best is None or score > best[0]:
             best = (float(score), (int(corner[0]), int(corner[1]), cols, rows))
     return best
 
 
-# Every platform whose mark ships as a template. One so far: 抖音 is the case
-# the project was built for, and the rest wait on the same kind of paired
-# footage that produced this one — the same clip with and without the mark.
+def _featureless(field: np.ndarray, rows: int, cols: int) -> np.ndarray:
+    """
+    Where a window of this size holds too little structure to match against.
+
+    The shape returned lines up with `matchTemplate`'s response, one entry per
+    candidate top-left corner. Standard deviation over each window, by the
+    usual two box filters, so the whole map costs one pass rather than one per
+    position.
+    """
+    ksize = (cols, rows)
+    mean = cv2.boxFilter(field, cv2.CV_32F, ksize, normalize=True,
+                         anchor=(0, 0), borderType=cv2.BORDER_ISOLATED)
+    mean_square = cv2.boxFilter(field * field, cv2.CV_32F, ksize, normalize=True,
+                                anchor=(0, 0), borderType=cv2.BORDER_ISOLATED)
+    variance = mean_square - mean * mean
+    valid = variance[:field.shape[0] - rows + 1, :field.shape[1] - cols + 1]
+    return valid < MIN_EDGE_ENERGY ** 2
+
+
+# Every platform whose mark ships as a template. Each was recovered the same
+# way, from a clip posted to that platform and downloaded back beside the take
+# it was made from; the ones still missing wait on the same paired footage.
+#
+# Only the fixed part of each is kept. Both platforms draw a logo and wordmark
+# over a line naming the account, and the account is different for every user.
 # How much of a recognised mark a finding has to contain to be that mark, and
 # how much bigger than the mark that finding may be. Both from measurement:
 # see `covers`.
 COVERAGE = 0.6
 AREA_LIMIT = 12.0
 
-KNOWN = ('douyin',)
+KNOWN = ('douyin', 'kuaishou')
 
 
 def locate_in(frame_paths: list[str], width: int, height: int,
