@@ -187,3 +187,35 @@ describe('when the check could not tell watermarks from scenery', () => {
     expect(checkbox('finding-0').checked).toBe(false);
   });
 });
+
+describe('what the check has been calibrated against', () => {
+  // The claim has to reach the user in the state where they are most likely to
+  // draw the wrong conclusion from it: a Channels video shows no mark in the
+  // app, so "nothing found" looks like "nothing to remove".
+  it('names the unsupported platform when something was found', () => {
+    panel();
+    expect(screen.getByTestId('findings-platforms').textContent ?? '')
+      .toContain('Channels');
+  });
+
+  it('names it when nothing was found either', () => {
+    panel({ findings: [] });
+    expect(screen.getByTestId('findings-platforms').textContent ?? '')
+      .toContain('Channels');
+  });
+
+  it('stays out of the way until asked', () => {
+    // Collapsed: the summary is the part that changes a decision, and the
+    // reasoning behind it should not push the list off the panel.
+    panel();
+    const note = screen.getByTestId('findings-platforms') as HTMLDetailsElement;
+    expect(note.open).toBe(false);
+  });
+
+  it('says the same thing in Chinese', () => {
+    setLocale('zh');
+    panel();
+    expect(screen.getByTestId('findings-platforms').textContent ?? '')
+      .toContain(t('findings.platforms'));
+  });
+});

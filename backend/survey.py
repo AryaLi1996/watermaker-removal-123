@@ -153,14 +153,20 @@ class Finding:
 # The largest share of one frame the proposals may cover before the survey is
 # treated as having failed to discriminate.
 #
-# Measured on four real clips, as the worst single moment's coverage by
+# Measured on five real clips, as the worst single moment's coverage by
 # everything proposed:
 #
 #     抖音 sample          0.4%     1 proposed of 7
 #     小红书               0.7%     2 of 6
 #     bilibili             4.4%     3 of 9   (one mark, three positions,
 #                                             two of them briefly overlapping)
+#     视频号 screen grab   13.1%    15 of 26  — the phone's own chrome
 #     快手                21.3%    21 of 35  — windows, a plant, the building
+#
+# Both clips above the limit are correctly declined, but note how little room
+# there is between 4.4% and 13.1%: this is an empirical line, not a principled
+# one, and the 视频号 grab would have ticked fifteen pieces of phone UI had it
+# been drawn at 0.14.
 #
 # The 快手 clip is a locked-off shot, and that is what breaks the scan: its
 # premise is that the mark is the only thing holding still while the picture
