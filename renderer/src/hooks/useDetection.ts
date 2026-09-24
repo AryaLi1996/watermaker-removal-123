@@ -40,6 +40,16 @@ export interface Detection {
   progress: number;
   /** Whether the last scan ended without an answer. */
   failed: boolean;
+  /**
+   * The share of the frame the survey would have proposed, when that was so
+   * much that it offered nothing instead. Null when it proposed normally.
+   *
+   * A locked-off shot defeats the scan — everything holds still, so scenery
+   * passes every test a watermark passes. The backend notices that the answer
+   * as a whole is not credible rather than pretending to tell them apart; this
+   * is how the panel knows to say so instead of looking like it found nothing.
+   */
+  crowded: number | null;
   /** Survey `path`, replacing any scan already running. */
   scan: (path: string) => void;
   /** Forget the findings — called when the video changes. */
@@ -51,6 +61,7 @@ export function useDetection(): Detection {
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [failed, setFailed] = useState(false);
+  const [crowded, setCrowded] = useState<number | null>(null);
   // The file the scan in flight belongs to. A ref rather than state: the
   // listeners below close over it, and they must read what is true when the
   // answer arrives, not what was true when they were attached.
@@ -73,6 +84,7 @@ export function useDetection(): Detection {
     setScanning(false);
     setProgress(0);
     setFailed(false);
+    setCrowded(null);
   }, [clearTimer]);
 
   const finish = useCallback((result: Finding[] | null) => {
@@ -95,10 +107,16 @@ export function useDetection(): Detection {
     setScanning(true);
     setFailed(false);
     setProgress(0);
+    setCrowded(null);
 
     api.removeJobListeners();
     api.onJobProgress((value: number) => {
       if (scanningPath.current === path) setProgress(value);
+    });
+    // Arrives before the findings, so it is set by the time the list renders.
+    // Absent on an older main process, which is the same as never crowded.
+    api.onFindingsCrowded?.((share) => {
+      if (scanningPath.current === path) setCrowded(share);
     });
     api.onFindings((result: Finding[]) => {
       if (scanningPath.current !== path) return;
@@ -141,5 +159,5 @@ export function useDetection(): Detection {
     });
   }, [clearTimer, finish]);
 
-  return { findings, scanning, progress, failed, scan, clear };
+  return { findings, scanning, progress, failed, crowded, scan, clear };
 }

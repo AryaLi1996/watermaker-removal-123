@@ -150,6 +150,65 @@ class Finding:
         return self.kind == WATERMARK
 
 
+# The largest share of one frame the proposals may cover before the survey is
+# treated as having failed to discriminate.
+#
+# Measured on four real clips, as the worst single moment's coverage by
+# everything proposed:
+#
+#     抖音 sample          0.4%     1 proposed of 7
+#     小红书               0.7%     2 of 6
+#     bilibili             4.4%     3 of 9   (one mark, three positions,
+#                                             two of them briefly overlapping)
+#     快手                21.3%    21 of 35  — windows, a plant, the building
+#
+# The 快手 clip is a locked-off shot, and that is what breaks the scan: its
+# premise is that the mark is the only thing holding still while the picture
+# moves, and on a tripod nothing moves. The solve cannot rescue it either —
+# with identical frames `I = (1-a)B + aW` is underdetermined, so plain scenery
+# fits beautifully (residual 3.3 to 7.5, coverage up to 0.82) and every test
+# downstream of the solve is satisfied by a window frame.
+#
+# There is no threshold on the solve's own output that separates those two
+# cases, because physically they are the same case: a still pattern on a still
+# background. Two candidates were measured and both fail — the mark in the 抖音
+# sample moves 0.26 levels, *less* than every false positive in the 快手 clip
+# (4.3 to 14.0), so neither absolute nor frame-relative movement can be it.
+#
+# So this does not try to tell them apart. It notices that the answer as a
+# whole is not credible — a video whose watermarks cover a fifth of the picture
+# is not a watermarked video — and declines to tick anything, leaving every
+# region listed for the user to choose from. Telling a watermark from scenery
+# on a tripod needs a test of what a region *looks* like, graphic against
+# photographic, which is a different piece of work.
+PROPOSAL_AREA_LIMIT = 0.12
+
+
+def crowded(findings: list[Finding], width: int, height: int) -> float:
+    """
+    The largest share of one frame everything proposed would remove at once.
+
+    At once, rather than added up over the clip: a mark that moves between
+    three corners is three findings and one mark, and charging it three times
+    would punish exactly the behaviour the scan exists to follow.
+    """
+    marks = [f for f in findings if f.proposed]
+    if not marks or width <= 0 or height <= 0:
+        return 0.0
+
+    worst = 0.0
+    # Every moment a finding starts or ends is where the overlap can change;
+    # between those it cannot, so there is nothing to gain by sampling finer.
+    for moment in sorted({f.start for f in marks}):
+        cover = np.zeros((height, width), np.uint8)
+        for finding in marks:
+            if finding.start <= moment <= finding.end:
+                x, y, w, h = finding.box
+                cover[max(0, y):y + h, max(0, x):x + w] = 1
+        worst = max(worst, float(cover.mean()))
+    return worst
+
+
 def _signature(magnitude: np.ndarray, box: tuple[int, int, int, int]) -> np.ndarray:
     x, y, w, h = box
     patch = cv2.resize(magnitude[y:y + h, x:x + w].astype(np.float32),

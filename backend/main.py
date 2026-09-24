@@ -346,7 +346,7 @@ def report_temporal_fallback(degraded: int, total: int) -> None:
 # place of the stage label, in an app that is read in Chinese as often as not,
 # is worse than not saying it there. The recovery engine's notices are
 # diagnostics until there is a confirmation step to show them in properly.
-UI_NOTICE_KEYS = frozenset({'deep_fallback', 'deep_quality'})
+UI_NOTICE_KEYS = frozenset({'deep_fallback', 'deep_quality', 'detect_crowded'})
 
 
 def report_engine_notice(key: str, detail: str) -> None:
@@ -775,6 +775,21 @@ def run_detect(config: JobConfig, temp_dir: str) -> None:
             frame_paths, boxes, lengths, wanted),
     )
 
+    # When the survey has proposed so much of the picture that it cannot have
+    # been discriminating, nothing is ticked. Everything is still listed — the
+    # user may well recognise the mark in it — but the app does not offer to
+    # cut a fifth of their video out on its own say-so. See
+    # `survey.PROPOSAL_AREA_LIMIT` for the measurements and for why no test on
+    # the solve's output can do better.
+    #
+    # `kind` is left as the survey classified it. Only the offer is withheld:
+    # what the classifier believed is still worth showing, and throwing it away
+    # here would leave the list with nothing to sort by.
+    crowd = survey_module.crowded(findings, scan_width, scan_height)
+    indiscriminate = crowd > survey_module.PROPOSAL_AREA_LIMIT
+    if indiscriminate:
+        report_engine_notice('detect_crowded', f'{crowd * 100:.0f}')
+
     emit('STATE:findings:' + json.dumps([
         {
             'x': int(round(f.box[0] * back)),
@@ -784,7 +799,7 @@ def run_detect(config: JobConfig, temp_dir: str) -> None:
             'start': round(f.start / SURVEY_FPS, 3),
             'end': round(f.end / SURVEY_FPS, 3),
             'kind': f.kind,
-            'proposed': f.proposed,
+            'proposed': f.proposed and not indiscriminate,
             'coverage': round(f.coverage, 4),
         }
         for f in findings

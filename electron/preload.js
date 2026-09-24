@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // What a detect job found: everything on the video that holds still, each
   // with what it is and when it is on screen.
   onFindings:    (cb) => ipcRenderer.on('job:findings',  (_e, v) => cb(v)),
+  // Sent before the findings when the survey proposed so much of the picture
+  // that nothing is offered — see survey.PROPOSAL_AREA_LIMIT.
+  onFindingsCrowded: (cb) => ipcRenderer.on('job:findings-crowded', (_e, v) => cb(v)),
 
   // Cloud fill: what the service says this user's allowance is, and the count
   // told to it after an export that used it. Every number comes from there.
@@ -105,7 +108,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Remove all listeners (call on component unmount)
   removeJobListeners: () => {
     ['job:progress','job:state','job:error','job:done','job:meta','job:preview-ready',
-     'job:findings','job:temporal-fallback','job:deep-notice']
+     'job:findings','job:findings-crowded','job:temporal-fallback','job:deep-notice']
       .forEach((ch) => ipcRenderer.removeAllListeners(ch));
   },
 });

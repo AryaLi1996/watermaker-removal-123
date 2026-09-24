@@ -760,6 +760,7 @@ function App() {
                 failed={detection.failed}
                 selected={chosenFindings}
                 drawnBoxChosen={drawnBoxChosen}
+                crowded={detection.crowded}
                 disabled={!isLoaded}
                 onToggle={toggleFinding}
                 onToggleDrawnBox={() => setDrawnBoxChosen((on) => !on)}

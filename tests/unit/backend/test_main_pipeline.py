@@ -1033,3 +1033,50 @@ def test_run_detect_leaves_the_video_alone(sample_video, tmp_path, monkeypatch):
     after = os.stat(sample_video)
     assert (after.st_size, after.st_mtime) == (before.st_size, before.st_mtime)
     assert not output.exists()
+
+
+@requires_ffmpeg
+def test_a_detect_that_proposed_too_much_ticks_nothing_and_says_so(
+        sample_video, tmp_path, monkeypatch):
+    """
+    The locked-off-shot case, forced by lowering the limit rather than by
+    finding footage that trips it: what matters is that the offer is withheld
+    and the reason is said, not which clip provokes it.
+    """
+    import survey as survey_module
+    lines: list[str] = []
+    monkeypatch.setattr(backend_main, 'emit', lines.append)
+    # Any survey that finds a single thing now counts as crowded.
+    monkeypatch.setattr(survey_module, 'PROPOSAL_AREA_LIMIT', -1.0)
+
+    backend_main.run_detect(backend_main.JobConfig.model_validate({
+        'inputPath': sample_video,
+        'outputPath': str(tmp_path / 'unused.mp4'),
+        'roi': {'x': 0, 'y': 0, 'w': 40, 'h': 20},
+        'method': 'recover',
+        'mode': 'detect',
+    }), str(tmp_path))
+
+    findings = json.loads(
+        [l for l in lines if l.startswith('STATE:findings:')][0][len('STATE:findings:'):])
+    assert not any(f['proposed'] for f in findings), 'nothing may be ticked'
+    # The classification survives: it is the offer that is withheld, not what
+    # the survey believed, and the list has to remain worth reading.
+    assert all(f['kind'] in {'watermark', 'subtitle', 'other'} for f in findings)
+    assert any(line.startswith('STATE:detect_crowded:') for line in lines), \
+        'a list with nothing ticked has to say why'
+
+
+@requires_ffmpeg
+def test_an_ordinary_detect_says_nothing_about_crowding(
+        sample_video, tmp_path, monkeypatch):
+    lines: list[str] = []
+    monkeypatch.setattr(backend_main, 'emit', lines.append)
+    backend_main.run_detect(backend_main.JobConfig.model_validate({
+        'inputPath': sample_video,
+        'outputPath': str(tmp_path / 'unused.mp4'),
+        'roi': {'x': 0, 'y': 0, 'w': 40, 'h': 20},
+        'method': 'recover',
+        'mode': 'detect',
+    }), str(tmp_path))
+    assert not any(line.startswith('STATE:detect_crowded:') for line in lines)

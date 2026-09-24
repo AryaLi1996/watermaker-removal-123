@@ -26,6 +26,11 @@ interface FindingsPanelProps {
   selected: ReadonlySet<number>;
   /** Whether the box drawn on the canvas is one of the things to remove. */
   drawnBoxChosen: boolean;
+  /**
+   * The share of the frame the check would have proposed, when that was too
+   * much to offer and it ticked nothing instead. Null in the normal case.
+   */
+  crowded: number | null;
   disabled: boolean;
   onToggle: (index: number) => void;
   onToggleDrawnBox: () => void;
@@ -122,7 +127,7 @@ function DrawnBoxRow({
 }
 
 export default function FindingsPanel({
-  findings, scanning, failed, selected, drawnBoxChosen, disabled,
+  findings, scanning, failed, selected, drawnBoxChosen, crowded, disabled,
   onToggle, onToggleDrawnBox, onRescan,
 }: FindingsPanelProps) {
   const { t } = useTranslation();
@@ -174,6 +179,21 @@ export default function FindingsPanel({
       <span style={{ color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
         {t('findings.heading')}
       </span>
+
+      {/* The check gave up on choosing rather than choosing badly. Said here
+          because otherwise a list with nothing ticked looks like a list of
+          things it decided were not marks, which is the opposite of true. */}
+      {crowded !== null && (
+        <p
+          data-testid="findings-crowded"
+          style={{
+            color: 'var(--text-secondary)', fontSize: 11, lineHeight: 1.5,
+            background: 'var(--accent-soft)', borderRadius: 4, padding: '6px 8px',
+          }}
+        >
+          {t('findings.crowded', { percent: Math.round(crowded) })}
+        </p>
+      )}
 
       {marks.length === 0 && (
         <p data-testid="findings-no-marks" style={{ color: 'var(--text-muted)', fontSize: 11 }}>
