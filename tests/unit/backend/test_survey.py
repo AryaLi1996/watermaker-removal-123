@@ -163,13 +163,13 @@ def test_findings_lead_with_what_is_proposed(clip, findings):
 
 def test_stability_sees_a_mark_as_itself(clip):
     """The same pixels a window later correlate at nearly one."""
-    maps = [recover._window_magnitude(clip.read, s, s + WINDOW, 1.0)
+    maps = [recover.window_magnitude(clip.read, s, s + WINDOW, 1.0)
             for s in (0, WINDOW, 2 * WINDOW)]
     assert survey.stability(maps, (*MARK_AT, *MARK)) >= survey.STABLE_CONTENT
 
 
 def test_stability_sees_a_subtitle_as_something_else(clip):
-    maps = [recover._window_magnitude(clip.read, s, s + WINDOW, 1.0)
+    maps = [recover.window_magnitude(clip.read, s, s + WINDOW, 1.0)
             for s in (0, 2 * WINDOW, 4 * WINDOW)]
     assert survey.stability(maps, STRIP) < survey.STABLE_CONTENT
 

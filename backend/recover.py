@@ -383,7 +383,7 @@ def candidates(magnitude: np.ndarray) -> list[Candidate]:
     return unique
 
 
-def _window_magnitude(read, start: int, end: int, scale: float) -> np.ndarray | None:
+def window_magnitude(read, start: int, end: int, scale: float) -> np.ndarray | None:
     """How persistent each pixel of one window is, at the scan's scale."""
     frames = []
     for index in sample_indices(start, end, SCAN_WINDOW_SAMPLES):
@@ -514,7 +514,7 @@ def scan(read, total: int, roi: tuple[int, int, int, int],
 
     seen: list[tuple[tuple[int, int], list[Candidate]]] = []
     for start, end in windows(total):
-        magnitude = _window_magnitude(read, start, end, scale)
+        magnitude = window_magnitude(read, start, end, scale)
         if magnitude is None:
             continue
         seen.append(((start, end), candidates(magnitude)))

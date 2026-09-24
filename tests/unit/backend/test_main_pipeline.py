@@ -973,3 +973,63 @@ def test_a_region_outside_the_clip_is_dropped_not_flattened():
 
 def test_regions_need_a_frame_rate_to_be_placed_at_all():
     assert backend_main.regions_in_frames([_region(start=0, end=1)], 0.0, 60) == []
+
+
+# ─── Detect ─────────────────────────────────────────────────────────────────
+# The job that answers "what is on this video" rather than changing it. It had
+# no test at all until the seams that let its three phases run on a pool were
+# added — and the first thing that went wrong was a helper called by the wrong
+# name, which every unit test in the suite missed because none of them ran
+# `run_detect`. So this one runs it, all the way through, for real.
+
+@requires_ffmpeg
+def test_run_detect_reports_findings_and_finishes(sample_video, tmp_path, monkeypatch):
+    lines: list[str] = []
+    monkeypatch.setattr(backend_main, 'emit', lines.append)
+
+    config = backend_main.JobConfig.model_validate({
+        'inputPath': sample_video,
+        'outputPath': str(tmp_path / 'unused.mp4'),
+        'roi': {'x': 0, 'y': 0, 'w': 40, 'h': 20},
+        'method': 'recover',
+        'mode': 'detect',
+    })
+    backend_main.run_detect(config, str(tmp_path))
+
+    reported = [line for line in lines if line.startswith('STATE:findings:')]
+    assert len(reported) == 1, 'a detect says what it found exactly once'
+
+    findings = json.loads(reported[0][len('STATE:findings:'):])
+    assert isinstance(findings, list)
+    for finding in findings:
+        # The shape the renderer reads. Times in seconds, box in the video's
+        # own pixels — not the scaled ones the survey worked in.
+        assert set(finding) >= {'x', 'y', 'w', 'h', 'start', 'end',
+                                'kind', 'proposed', 'coverage'}
+        assert finding['w'] > 0 and finding['h'] > 0
+        assert 0 <= finding['start'] <= finding['end']
+        assert finding['kind'] in {'watermark', 'subtitle', 'other'}
+
+    assert any(line.startswith('PROGRESS:100') for line in lines), \
+        'a detect that finished says so'
+
+
+@requires_ffmpeg
+def test_run_detect_leaves_the_video_alone(sample_video, tmp_path, monkeypatch):
+    # It answers a question; nothing is written but the frames it sampled into
+    # its own temp directory.
+    before = os.stat(sample_video)
+    monkeypatch.setattr(backend_main, 'emit', lambda line: None)
+    output = tmp_path / 'never-written.mp4'
+
+    backend_main.run_detect(backend_main.JobConfig.model_validate({
+        'inputPath': sample_video,
+        'outputPath': str(output),
+        'roi': {'x': 0, 'y': 0, 'w': 40, 'h': 20},
+        'method': 'recover',
+        'mode': 'detect',
+    }), str(tmp_path))
+
+    after = os.stat(sample_video)
+    assert (after.st_size, after.st_mtime) == (before.st_size, before.st_mtime)
+    assert not output.exists()

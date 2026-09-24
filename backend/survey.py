@@ -379,7 +379,8 @@ def _runs(windows: dict, window: int) -> list[list[tuple[int, int]]]:
 
 def survey(read, total: int, width: int, height: int,
            window: int = recover.SCAN_WINDOW_FRAMES,
-           on_progress=None) -> list[Finding]:
+           on_progress=None, fit_all=None, scan_all=None,
+           gather_all=None) -> list[Finding]:
     """
     Everything on this video that holds still, and what each of them is.
 
@@ -391,14 +392,37 @@ def survey(read, total: int, width: int, height: int,
     Returns findings in frame order of the sequence it was given. Converting
     those indices to times is the caller's job, because only the caller knows
     what it sampled at.
+
+    `gather_all(boxes, lengths, wanted)` is the third of these and the same
+    idea: decoding each frame once for every placement that wants it is a list
+    of independent jobs too, and it is the one phase that was still serial.
+
+    `scan_all(spans, scale)` returns each window's persistence map, in order,
+    or None for a window too short to have one. Same seam and same reason as
+    `fit_all`: the windows are independent, and a window is sixteen decodes
+    and a median, so this is where a detect's *decoding* goes parallel too.
+
+    `fit_all(jobs, on_progress)` solves every `(crops, placement)` and returns
+    a model per job, or None where there was nothing to solve. It is used only
+    when the crops were gathered up front; a placement that has to read its own
+    frames is solved here, because a pool in another process cannot carry a
+    reader. It is a seam so
+    that *how* the solves are run — here, or spread over a pool — is the
+    caller's decision and not this module's: the placements are independent
+    and the solve is the largest cost in a detect, but multiprocessing belongs
+    with the code that already owns a pool and knows how to cancel it. The
+    default runs them here, one at a time.
     """
     if total <= 0:
         return []
 
     scale = recover._scale_for(width, height)
+    spans = list(recover.windows(total, window))
+    magnitudes = (scan_all(spans, scale) if scan_all
+                  else [recover.window_magnitude(read, start, end, scale)
+                        for start, end in spans])
     seen = []
-    for span in recover.windows(total, window):
-        magnitude = recover._window_magnitude(read, span[0], span[1], scale)
+    for span, magnitude in zip(spans, magnitudes):
         if magnitude is not None:
             seen.append((span, magnitude, recover.candidates(magnitude)))
 
@@ -434,25 +458,26 @@ def survey(read, total: int, width: int, height: int,
 
     # None when there was too much to hold at once; each placement then reads
     # its own frames, as it used to.
-    crops = _crops_for(read, [plan[3] for plan in planned])
+    crops = _crops_for(read, [plan[3] for plan in planned], gather_all)
+
+    if crops is None:
+        # Too much to gather at once, so each placement reads its own frames —
+        # which a pool in another process cannot do, because what it would
+        # have to carry across is the reader.
+        models = _fit_here([(None, plan[3]) for plan in planned], read, on_progress)
+    else:
+        jobs = [(crops[index], plan[3]) for index, plan in enumerate(planned)]
+        models = (fit_all(jobs, on_progress) if fit_all
+                  else _fit_here(jobs, read, on_progress))
 
     findings: list[Finding] = []
-    for done, (seed, run, stable, placement) in enumerate(planned, start=1):
-        if on_progress:
-            on_progress(done, len(planned))
-
+    for (seed, run, stable, placement), model in zip(planned, models):
         box = placement.box
-        try:
-            model = (recover.fit_crops(crops[done - 1], placement)
-                     if crops is not None
-                     else recover.fit_placement(read, placement))
-        except IOError:
-            # No frames came back for this placement at all. One stretch the
-            # decode could not serve is not the survey failing.
-            continue
-        # Nothing the solve can find is nothing to report. The picture holding
-        # still is not a finding, it is the video.
-        if not recover.believable(model):
+        # None where there was nothing to solve — a stretch the decode could
+        # not serve. One of those is not the survey failing.
+        if model is None or not recover.believable(model):
+            # Nothing the solve can find is nothing to report either. The
+            # picture holding still is not a finding, it is the video.
             continue
 
         start, end = extent(read, box, model.alpha,
@@ -471,6 +496,20 @@ def survey(read, total: int, width: int, height: int,
     return _merged(findings)
 
 
+def _fit_here(jobs: list[tuple], read, on_progress=None) -> list:
+    """Solve every placement in this process, which is what it always did."""
+    models = []
+    for done, (crops, placement) in enumerate(jobs, start=1):
+        if on_progress:
+            on_progress(done, len(jobs))
+        try:
+            models.append(recover.fit_crops(crops, placement) if crops is not None
+                          else recover.fit_placement(read, placement))
+        except IOError:
+            models.append(None)
+    return models
+
+
 # How much cropped picture to gather in one pass, in bytes.
 #
 # The crops are small — they are the size of the things found, not of the
@@ -481,7 +520,7 @@ def survey(read, total: int, width: int, height: int,
 CROP_BUDGET_BYTES = 512 * 1024 * 1024
 
 
-def _crops_for(read, placements: list) -> 'list[list] | None':
+def _crops_for(read, placements: list, gather_all=None) -> 'list[list] | None':
     """
     Every placement's frames, cropped, reading each frame once.
 
@@ -515,6 +554,10 @@ def _crops_for(read, placements: list) -> 'list[list] | None':
         # placement, which is what this replaced: slower, and the memory is one
         # placement's worth.
         return None
+
+    if gather_all is not None:
+        return gather_all([placement.box for placement in placements],
+                          lengths, wanted)
 
     gathered: list[list] = [[None] * length for length in lengths]
     for index in sorted(wanted):

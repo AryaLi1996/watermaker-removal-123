@@ -347,6 +347,236 @@ def _dispatch(
     return results
 
 
+def _gather_crops_job(job: tuple) -> list:
+    """
+    One share of the frames, decoded once and cropped for everything that
+    wanted them. Paths in, small crops out — the module's usual trade.
+    """
+    frame_paths, boxes, wanted = job
+    produced = []
+    for index, slots in wanted:
+        frame = cv2.imread(frame_paths[index])
+        if frame is None:
+            continue
+        for slot, position in slots:
+            x, y, w, h = boxes[slot]
+            produced.append((slot, position, frame[y:y + h, x:x + w].copy()))
+    return produced
+
+
+# Decoding a frame is ~10ms; a pool pays at a few dozen of them.
+GATHER_SEQUENTIAL_LIMIT = 32
+
+
+def gather_crops(frame_paths: list[str], boxes: list[tuple], lengths: list[int],
+                 wanted: dict) -> list[list]:
+    """
+    Every placement's crops, reading each frame once, across all cores.
+
+    `wanted` maps a frame index to the (placement, position) pairs that want
+    it; `lengths` is how many crops each placement asked for. Returns a list
+    of crops per placement, in the order they were asked for, with anything
+    that could not be read left out — which is what the single-process pass in
+    `survey._crops_for` does, and this has to match it exactly.
+    """
+    order = sorted(wanted)
+    total = len(order)
+    gathered: list[list] = [[None] * length for length in lengths]
+
+    def place(produced) -> None:
+        for slot, position, crop in produced:
+            gathered[slot][position] = crop
+
+    workers = min(os.cpu_count() or 1, total) if total else 1
+    if total <= GATHER_SEQUENTIAL_LIMIT or workers == 1:
+        place(_gather_crops_job(
+            (frame_paths, boxes, [(index, wanted[index]) for index in order])))
+        return [[crop for crop in one if crop is not None] for one in gathered]
+
+    # One contiguous share each: neighbouring frames are the ones most likely
+    # to still be in the page cache together.
+    share = max(1, (total + workers - 1) // workers)
+    jobs = [(frame_paths, boxes,
+             [(index, wanted[index]) for index in order[at:at + share]])
+            for at in range(0, total, share)]
+
+    previous_threads = cv2.getNumThreads()
+    threads = opencv_thread_count()
+    if threads > 0:
+        cv2.setNumThreads(threads)
+    try:
+        with multiprocessing.Pool(processes=len(jobs)) as pool:
+            global _current_pool
+            _current_pool = pool
+            for produced in pool.imap_unordered(_gather_crops_job, jobs):
+                place(produced)
+            _current_pool = None
+    finally:
+        cv2.setNumThreads(previous_threads)
+
+    return [[crop for crop in one if crop is not None] for one in gathered]
+
+
+def _scan_window_job(job: tuple) -> tuple:
+    """
+    One window's persistence map, in a worker.
+
+    Takes the frame paths rather than a reader, which is this module's whole
+    convention (see the note at the top of the file): a closure cannot cross
+    a process boundary, and paths are small where frames are not.
+    """
+    index, paths, start, end, scale = job
+    return index, recover.window_magnitude(
+        lambda i: cv2.imread(paths[i]), start, end, scale)
+
+
+# A window is 16 decodes and a median across them — tens of milliseconds, so
+# the bar is the same as the solves below rather than the per-frame work above.
+SCAN_SEQUENTIAL_LIMIT = 4
+
+
+def scan_windows(frame_paths: list[str], spans: list[tuple], scale: float,
+                 on_progress=None) -> list:
+    """
+    Every window's persistence map, in the order the spans were given.
+
+    The windows do not depend on each other and each one decodes its own
+    sixteen frames, so this is where a detect's decoding goes parallel as well
+    as its arithmetic. The maps come back whole — a couple of megabytes each,
+    which is more than this module usually sends over IPC, and still less than
+    the frames they were made from.
+    """
+    total = len(spans)
+    if not total:
+        return []
+
+    def report(done: int) -> None:
+        if on_progress:
+            on_progress(done, total)
+
+    jobs = [(index, frame_paths, start, end, scale)
+            for index, (start, end) in enumerate(spans)]
+    workers = min(os.cpu_count() or 1, total)
+
+    if total <= SCAN_SEQUENTIAL_LIMIT or workers == 1:
+        maps = []
+        for done, job in enumerate(jobs, start=1):
+            maps.append(_scan_window_job(job)[1])
+            report(done)
+        return maps
+
+    previous_threads = cv2.getNumThreads()
+    threads = opencv_thread_count()
+    if threads > 0:
+        cv2.setNumThreads(threads)
+
+    maps: list = [None] * total
+    completed = 0
+    try:
+        with multiprocessing.Pool(processes=workers) as pool:
+            global _current_pool
+            _current_pool = pool
+            for index, magnitude in pool.imap_unordered(_scan_window_job, jobs,
+                                                        chunksize=1):
+                maps[index] = magnitude
+                completed += 1
+                report(completed)
+            _current_pool = None
+    finally:
+        cv2.setNumThreads(previous_threads)
+
+    return maps
+
+
+def _fit_placement_job(job: tuple) -> tuple:
+    """
+    One placement's solve, in a worker.
+
+    `dewatermark` threads the inpaint inside a solve when it runs alone. Here
+    it must not: the pool already owns every core, and N workers each starting
+    N threads is the oversubscription `opencv_thread_count` exists to avoid a
+    few lines up. Setting the module's own count is a plain assignment — no
+    threading machinery is touched, so it is safe after a fork, which
+    `cv2.setNumThreads` would not be.
+    """
+    index, crops, placement = job
+    dewatermark.INPAINT_THREADS = 1
+    try:
+        return index, recover.fit_crops(crops, placement)
+    except IOError:
+        # No frames came back for this placement. One stretch the decode could
+        # not serve is not the survey failing, and the caller reads None the
+        # same way it used to read the exception.
+        return index, None
+
+
+# Solving one placement is ~160ms of arithmetic; a pool pays for itself at a
+# handful of them, unlike the per-frame work above where the bar is higher.
+FIT_SEQUENTIAL_LIMIT = 4
+
+
+def fit_placements(jobs: list[tuple], on_progress=None) -> list:
+    """
+    Solve every placement, on all available cores, in the order given.
+
+    The survey proposes a couple of hundred placements and keeps a dozen;
+    every one of them is solved, they do not depend on each other, and the
+    solve is the largest single cost in a detect. Deterministic per placement
+    — `dewatermark.solve` seeds OpenCV's RNG — so running them at once returns
+    the same models, and the ordering here is restored explicitly rather than
+    relied on.
+
+    `jobs` are `(crops, placement)`. Returns a model per job, or None where
+    there was nothing to solve.
+    """
+    total = len(jobs)
+    if not total:
+        return []
+
+    def report(done: int) -> None:
+        if on_progress:
+            on_progress(done, total)
+
+    indexed = [(index, crops, placement)
+               for index, (crops, placement) in enumerate(jobs)]
+    workers = min(os.cpu_count() or 1, total)
+
+    if total <= FIT_SEQUENTIAL_LIMIT or workers == 1:
+        models = []
+        for done, job in enumerate(indexed, start=1):
+            models.append(_fit_placement_job(job)[1])
+            report(done)
+        return models
+
+    # Before forking, for the reason _dispatch gives: OpenCV's threading
+    # machinery does not survive being called in a child of a parent that has
+    # a warm pool.
+    previous_threads = cv2.getNumThreads()
+    threads = opencv_thread_count()
+    if threads > 0:
+        cv2.setNumThreads(threads)
+
+    models: list = [None] * total
+    completed = 0
+    try:
+        with multiprocessing.Pool(processes=workers) as pool:
+            global _current_pool
+            _current_pool = pool
+            # Unordered, and put back in place by the index each job carries:
+            # the placements differ in cost by more than a chunk's worth, and
+            # an ordered imap would hold the finished ones behind a slow one.
+            for index, model in pool.imap_unordered(_fit_placement_job, indexed,
+                                                    chunksize=1):
+                models[index] = model
+                completed += 1
+                report(completed)
+            _current_pool = None
+    finally:
+        cv2.setNumThreads(previous_threads)
+
+    return models
+
+
 def _sibling_dir(frame_paths: list[str], name: str) -> str:
     """A directory beside the frames directory, created if it is not there."""
     path = os.path.join(
