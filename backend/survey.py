@@ -153,20 +153,53 @@ class Finding:
 # The largest share of one frame the proposals may cover before the survey is
 # treated as having failed to discriminate.
 #
-# Measured on five real clips, as the worst single moment's coverage by
+# Measured on eight real clips, as the worst single moment's coverage by
 # everything proposed:
 #
-#     抖音 sample          0.4%     1 proposed of 7
 #     小红书               0.7%     2 of 6
 #     bilibili             4.4%     3 of 9   (one mark, three positions,
 #                                             two of them briefly overlapping)
+#     抖音 sample         10.4%     2 of 12  — see below
 #     视频号 screen grab   13.1%    15 of 26  — the phone's own chrome
 #     快手                21.3%    21 of 35  — windows, a plant, the building
+#     IMG_3213            32.8%    12 of 32  — phone on a stand, a room
+#     IMG_3215            32.8%    14 of 29  — likewise
+#     IMG_3214            59.4%    16 of 24  — likewise, and the worst seen:
+#                                             one "mark" is 278x567 of a
+#                                             540x960 frame, stability 0.999
 #
-# Both clips above the limit are correctly declined, but note how little room
-# there is between 4.4% and 13.1%: this is an empirical line, not a principled
-# one, and the 视频号 grab would have ticked fifteen pieces of phone UI had it
-# been drawn at 0.14.
+# Five of the eight are above the limit and all five are correctly declined.
+# The three tripod clips were shot to order after 快手 showed the failure, and
+# they make it worse rather than better: with the camera clamped and nothing
+# moving at all, the survey calls between a third and two thirds of an
+# ordinary room a watermark.
+#
+# The 抖音 figure was recorded here as 0.4% and is wrong; it is 10.4%. Its two
+# marks are the top-left and bottom-right pair, on screen together, 5.0% and
+# 5.4% of a 320x568 frame. Re-measured at 30, 60 and 115 seconds of the same
+# clip: 10.4%, 10.5%, 10.4% — so this is not a sampling artefact, and
+# `crowded` does not drift with clip length. 小红书 (0.7%) and bilibili (4.4%)
+# both re-measured exactly as recorded, so the error was this one number.
+#
+# That matters more than a typo, because 抖音 is the case the whole project was
+# built and validated against, and it moves the real margin from
+#
+#     4.4% … 13.1%   (8.7 points, as this comment used to claim)
+#
+# to
+#
+#     10.4% … 13.1%  (2.7 points)
+#
+# The flagship clip sits 1.6 points under the limit that would silence it.
+# Nothing here is safe to loosen, and a platform whose marks are a little
+# larger, or a third mark on screen at once, would tip 抖音 over on its own.
+#
+# The margin also explains why a *partial* fix to the classifier would be
+# worse than none. The valve protects these clips because the false positives
+# are numerous; a test that removed half of them would drop 快手 and the two
+# 32.8% clips under the limit and have the app confidently propose the
+# survivors. Anything that touches the classifier has to be good enough to
+# stand on its own, not merely better than nothing.
 #
 # The 快手 clip is a locked-off shot, and that is what breaks the scan: its
 # premise is that the mark is the only thing holding still while the picture
