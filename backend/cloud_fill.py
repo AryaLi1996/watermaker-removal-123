@@ -21,6 +21,12 @@ Only the mark's bounding box leaves the machine. On the clip this was built
 for that is 119x68 pixels of a 320x568 frame: the service cannot see the rest
 of the picture, and 2.7 KB a frame in WebP is less traffic than sending the
 video would have been.
+
+The service itself is `serverless/cloud-inpaint` in AryaLi1996/ruanjian123,
+beside the licence service — because `fill/quota`, which decides whether an
+export may use it and hands this client the endpoint and token per export, is
+a question about an account, and the accounts are there. This file never holds
+a URL for it.
 """
 from __future__ import annotations
 
@@ -49,11 +55,10 @@ PATCH_QUALITY = 90
 #
 # A flat 120 seconds was wrong in both directions. A batch is 240 frames, and
 # what that costs depends entirely on what the service is running on: a few
-# seconds on a GPU, several minutes on the CPU Lambda the stack in
-# services/cloud-inpaint actually deploys today. Against a flat 120 the CPU
-# deployment would have timed out on *every* batch — a service that is up,
-# working, and answering, and that the client abandons every time, which looks
-# from the outside exactly like one that is down.
+# seconds on a GPU, several minutes on the CPU Lambda deployed today. Against a
+# flat 120 the CPU deployment would have timed out on *every* batch — a service
+# that is up, working, and answering, and that the client abandons every time,
+# which looks from the outside exactly like one that is down.
 #
 # So: a fixed allowance for the round trip and the cold start, plus a per-frame
 # allowance for the work. On a GPU this is never approached; on CPU it is
