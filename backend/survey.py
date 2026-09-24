@@ -177,9 +177,28 @@ class Finding:
 #
 # There is no threshold on the solve's own output that separates those two
 # cases, because physically they are the same case: a still pattern on a still
-# background. Two candidates were measured and both fail — the mark in the 抖音
-# sample moves 0.26 levels, *less* than every false positive in the 快手 clip
-# (4.3 to 14.0), so neither absolute nor frame-relative movement can be it.
+# background. Four candidates have been measured against all four platform
+# clips and all four fail, by overlapping rather than by being close:
+#
+#   movement, absolute       抖音's mark moves 0.26 levels, *less* than every
+#                            快手 false positive (4.3 to 14.0)
+#   movement, frame-relative 抖音 is static throughout, so its mark sits at
+#                            ratio ~0.15, inside 快手's 0.1 to 0.35
+#   grain, absolute          true marks 0.15 to 3.13, 快手 false positives
+#                            0.61 to 6.72
+#   grain, frame-relative    true marks 0.26 to 2.93, 快手 false positives
+#                            0.71 to 4.45
+#
+# The grain pair looked the most promising of the four and is worth knowing
+# about specifically, because "a pasted graphic has no sensor noise" is the
+# obvious next idea and it is wrong twice over. Absolutely, it measures the
+# platform's encoder rather than the content: bilibili's mark reads 0.148 and
+# 快手's *cleanest scenery* reads 0.612, so the same property gives opposite
+# answers on two files. Relative to the frame, it fails for a reason that
+# applies to any look-based test of these regions — the marks are blended, not
+# pasted, so the picture underneath shows through and the region never has a
+# surface of its own to measure. Only a fully opaque mark would, and that is
+# the one case (小红书's pill) the solve already declines for being opaque.
 #
 # So this does not try to tell them apart. It notices that the answer as a
 # whole is not credible — a video whose watermarks cover a fifth of the picture
