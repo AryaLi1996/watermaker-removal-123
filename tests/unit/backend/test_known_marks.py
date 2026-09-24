@@ -195,3 +195,56 @@ def test_a_span_is_padded_but_never_past_the_video():
 
 def test_nothing_seen_is_nothing_placed():
     assert known_marks.placements([], 173, 12) == []
+
+
+# ─── the degenerate match ────────────────────────────────────────────────────
+
+def test_a_featureless_region_cannot_score_a_perfect_match(template):
+    """
+    `TM_CCOEFF_NORMED` divides by the window's standard deviation, and on a
+    window with none OpenCV returns 1.0 rather than an error. Unguarded, a
+    black television scored a perfect match on a real clip — a false positive
+    with the highest score the scale allows, which is the wrong way round.
+    """
+    frame = busy_background(1080, 1920, seed=3)
+    frame[600:1400, 100:900] = 0          # a screen that is off
+    score, _ = known_marks.find(frame, template)
+    assert score < known_marks.MATCH_THRESHOLD
+    # Not merely under the bar: the unguarded failure was a *perfect* score,
+    # so anything near 1.0 means the guard has stopped working. The peak may
+    # still sit at the dead region's edge, where there is structure to match
+    # and nothing wrong with looking.
+    assert score < 0.5
+
+
+def test_a_mark_over_a_dark_region_is_still_found(template):
+    """The guard rejects absence of structure, not darkness."""
+    frame = busy_background(1080, 1920, seed=4)
+    frame[0:600, 0:700] = 6
+    frame = composite(frame, template, 30, 30)
+    score, _ = known_marks.find(frame, template)
+    assert score >= known_marks.MATCH_THRESHOLD
+
+
+# ─── more than one platform ──────────────────────────────────────────────────
+
+def test_every_known_platform_has_a_template():
+    for name in known_marks.KNOWN:
+        assert known_marks.load_template(name).size > 0
+
+
+@pytest.mark.parametrize('drawn', known_marks.KNOWN)
+def test_a_platforms_mark_is_not_matched_by_another_platforms_template(drawn):
+    """
+    Measured across eleven clips: each template fires on its own platform and
+    on no other, 抖音 and 快手 alike. Pinned here because the failure would be
+    silent — the wrong logo removed from the right corner.
+    """
+    frame = composite(busy_background(1080, 1920, seed=11),
+                      known_marks.load_template(drawn), 30, 30)
+    for name in known_marks.KNOWN:
+        score, _ = known_marks.find(frame, known_marks.load_template(name))
+        if name == drawn:
+            assert score >= known_marks.MATCH_THRESHOLD
+        else:
+            assert score < known_marks.MATCH_THRESHOLD, f'{name} matched {drawn}'
