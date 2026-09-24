@@ -375,3 +375,69 @@ def test_too_much_to_hold_at_once_reads_per_placement_instead():
 
 def test_nothing_to_gather_is_not_a_failure():
     assert survey._crops_for(_reader(10), []) == []
+
+
+# ── When the survey cannot discriminate ──────────────────────────────────────
+# A locked-off shot defeats the scan: its premise is that the mark is the only
+# thing holding still while the picture moves, and on a tripod nothing moves.
+# Measured on a real 快手 clip, 21 of 35 findings were proposed and most were
+# scenery — windows, a plant, the building outside. Rather than pretend to tell
+# scenery from a watermark, the app notices that the answer as a whole is not
+# credible and offers nothing.
+
+def _finding(box, start=0, end=10, kind=WATERMARK) -> Finding:
+    return Finding(box=box, start=start, end=end, kind=kind, coverage=0.3,
+                   stability=0.9, peak_alpha=0.5, windows=3)
+
+
+def test_a_mark_sized_proposal_is_not_crowded():
+    # The 抖音 sample: one 93x24 mark on a 644x960 frame, 0.4% of it.
+    assert survey.crowded([_finding((514, 916, 93, 24))], 644, 960) < 0.01
+
+
+def test_one_mark_in_three_places_is_charged_once():
+    # bilibili moves its mark between three corners over half a minute. Adding
+    # the three up would punish exactly the behaviour the scan exists to
+    # follow; only what overlaps in time counts.
+    moving = [_finding((1025, 5, 239, 91), 0, 10),
+              _finding((15, 13, 235, 81), 12, 18),
+              _finding((16, 644, 223, 59), 20, 26)]
+    one = survey.crowded([moving[0]], 1280, 720)
+    assert survey.crowded(moving, 1280, 720) == pytest.approx(one, abs=0.005)
+
+
+def test_things_on_screen_together_do_count_together():
+    both = [_finding((0, 0, 200, 200), 0, 10), _finding((400, 0, 200, 200), 0, 10)]
+    one = survey.crowded([both[0]], 1000, 1000)
+    assert survey.crowded(both, 1000, 1000) == pytest.approx(2 * one, abs=0.005)
+
+
+def test_overlapping_boxes_are_not_counted_twice():
+    # Area of the union, not the sum: the scan reports a mark and its own
+    # strokes as separate stretches often enough for this to matter.
+    stacked = [_finding((0, 0, 200, 200), 0, 10), _finding((0, 0, 200, 200), 0, 10)]
+    assert survey.crowded(stacked, 1000, 1000) == pytest.approx(
+        survey.crowded([stacked[0]], 1000, 1000), abs=0.001)
+
+
+def test_a_frame_full_of_proposals_is_crowded():
+    # The 快手 case: 21 proposals covering 21.3% of the frame at once.
+    wall = [_finding((x, y, 120, 120), 0, 10)
+            for x in range(0, 500, 120) for y in range(0, 500, 120)]
+    assert survey.crowded(wall, 1000, 1000) > survey.PROPOSAL_AREA_LIMIT
+
+
+def test_only_what_is_proposed_counts():
+    # Subtitles and captions are listed, never ticked, and never removed — so
+    # a clip full of burnt-in type is not a clip the survey failed on.
+    listed = [_finding((0, 0, 900, 400), 0, 10, kind=SUBTITLE),
+              _finding((0, 500, 900, 400), 0, 10, kind=OTHER)]
+    assert survey.crowded(listed, 1000, 1000) == 0.0
+
+
+def test_nothing_found_is_not_crowded():
+    assert survey.crowded([], 1000, 1000) == 0.0
+
+
+def test_a_frame_with_no_size_does_not_divide_by_it():
+    assert survey.crowded([_finding((0, 0, 10, 10))], 0, 0) == 0.0

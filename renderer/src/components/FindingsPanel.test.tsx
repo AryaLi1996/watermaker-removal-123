@@ -40,6 +40,7 @@ function panel(props: Partial<Parameters<typeof FindingsPanel>[0]> = {}) {
       failed={false}
       selected={new Set([0])}
       drawnBoxChosen={false}
+      crowded={null}
       disabled={false}
       onToggle={onToggle}
       onToggleDrawnBox={onToggleDrawnBox}
@@ -161,5 +162,28 @@ describe('the box the user drew', () => {
     // be a test of jsdom rather than of this component.
     panel({ disabled: true });
     expect(checkbox('finding-drawn-box').disabled).toBe(true);
+  });
+});
+
+describe('when the check could not tell watermarks from scenery', () => {
+  it('says so rather than letting an empty list speak for it', () => {
+    // A list with nothing ticked otherwise reads as "these were all judged not
+    // to be marks", which is the opposite of what happened.
+    panel({ crowded: 21 });
+    const said = screen.getByTestId('findings-crowded').textContent ?? '';
+    expect(said).toContain('21');
+  });
+
+  it('says nothing in the ordinary case', () => {
+    panel();
+    expect(screen.queryByTestId('findings-crowded')).toBeNull();
+  });
+
+  it('still lists everything it found', () => {
+    // The findings are the useful part even when the app will not tick them:
+    // the user can recognise their own platform's mark in the list.
+    panel({ crowded: 21, selected: new Set() });
+    expect(screen.getByTestId('finding-0')).toBeTruthy();
+    expect(checkbox('finding-0').checked).toBe(false);
   });
 });

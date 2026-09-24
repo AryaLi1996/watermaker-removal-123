@@ -341,7 +341,8 @@
     "hint": "Ticked items are removed, including the box you drew — tick it to take out something the check missed, on top of what it found. Subtitles and captions arrive unticked, because removing them destroys what you made. With nothing ticked, your box is used as a hint instead and the mark under it is found for you.",
     "rescan": "Check again",
     "drawnBox": "The box you drew",
-    "drawnBoxWhen": "whole video"
+    "drawnBoxWhen": "whole video",
+    "crowded": "Too much of the picture looked like a watermark ({{percent}}% of the frame), so nothing is ticked. That usually means the camera did not move — on a locked-off shot the scenery holds still exactly the way a watermark does, and the check cannot tell them apart. Tick what you recognise, or draw a box."
   },
   "cloud": {
     "toggle": "Use the cloud filler",

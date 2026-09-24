@@ -416,6 +416,14 @@ function handleBackendLine(line, ctx) {
   }
   // Same reason: these carry a free-text detail that must not reach the
   // status line as a label.
+  // Same reason again: a detect that could not discriminate says so with a
+  // percentage, and that percentage is not a status label.
+  const crowdedMatch = line.match(/^STATE:detect_crowded:(.*)$/);
+  if (crowdedMatch) {
+    const share = Number(crowdedMatch[1].trim());
+    send('job:findings-crowded', Number.isFinite(share) ? share : null);
+    return;
+  }
   const deepFallbackMatch = line.match(/^STATE:deep_fallback:(.*)$/);
   if (deepFallbackMatch) {
     send('job:deep-notice', { kind: 'fallback', detail: deepFallbackMatch[1].trim() });

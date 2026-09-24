@@ -342,6 +342,9 @@ declare global {
        * the user for a box, which is where it was.
        */
       onFindings?: (cb: (findings: Finding[]) => void) => void;
+      /** The share of the frame a detect would have proposed, when it was
+       *  too much to offer. Absent on an older main process. */
+      onFindingsCrowded?: (cb: (share: number | null) => void) => void;
       /**
        * What the service says about this user's cloud-fill allowance, and the
        * count told to it afterwards. Optional: a main process from before the
