@@ -153,7 +153,7 @@ class Finding:
 # The largest share of one frame the proposals may cover before the survey is
 # treated as having failed to discriminate.
 #
-# Measured on eight real clips, as the worst single moment's coverage by
+# Measured on eleven real clips, as the worst single moment's coverage by
 # everything proposed:
 #
 #     小红书               0.7%     2 of 6
@@ -168,11 +168,39 @@ class Finding:
 #                                             one "mark" is 278x567 of a
 #                                             540x960 frame, stability 0.999
 #
-# Five of the eight are above the limit and all five are correctly declined.
+#     3213 + 抖音          35.9%    12 of 33  — the same three rooms, posted
+#     3215 + 抖音          42.0%    14 of 33    to 抖音 and downloaded back
+#     3214 + 抖音          55.1%    17 of 30    with its mark burned in
+#
+# Eight of the eleven are above the limit and all eight are correctly
+# declined.
 # The three tripod clips were shot to order after 快手 showed the failure, and
 # they make it worse rather than better: with the camera clamped and nothing
 # moving at all, the survey calls between a third and two thirds of an
 # ordinary room a watermark.
+#
+# **The last three are the case that matters, and they are the product's real
+# failure.** They are the tripod clips reposted through 抖音, so each is an
+# ordinary user's ordinary video: a real platform mark, a real locked-off
+# shot. The survey does find the mark — three or four of its regions land in
+# 抖音's two corners every time — but it finds nine to thirteen pieces of the
+# room alongside, so the valve withholds and the user is offered nothing. On
+# a tripod, on the flagship platform, automatic detection does not work. It
+# is safe, because everything is still listed for the user to tick, and it is
+# not solved.
+#
+# Those three also come with their own controls: IMG_3213/3214/3215 are the
+# same rooms, same camera, same light, without the mark. That pairing kills
+# the last excuse for a look-based test. Comparing a true mark in one clip
+# against false positives in another confounds encoder, content and lighting;
+# here they sit in one frame. Alpha stroke thinness, measured that way:
+#
+#     3213   mark 1.91-13.28 (med 6.97)   room 1.91-64.29 (med 10.51)
+#     3214   mark 1.91-17.19 (med 5.75)   room 1.37-22.92 (med  6.68)
+#     3215   mark 5.19-33.35 (med 6.43)   room 3.28-39.60 (med  8.60)
+#
+# The mark's median is lower every time and the ranges overlap almost
+# entirely. With every confound removed it still does not separate.
 #
 # The 抖音 figure was recorded here as 0.4% and is wrong; it is 10.4%. Its two
 # marks are the top-left and bottom-right pair, on screen together, 5.0% and
