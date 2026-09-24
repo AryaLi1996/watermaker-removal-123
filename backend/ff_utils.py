@@ -253,6 +253,40 @@ def terminate() -> None:
         proc.terminate()
 
 
+def _quarter_turned(video_stream: dict) -> bool:
+    """
+    Whether this stream is stored on its side.
+
+    A phone does not rotate the pixels it records; it records them the way the
+    sensor is wired and writes a display matrix saying which way up the result
+    goes. Every portrait clip an iPhone shoots is therefore stored landscape,
+    with a -90 rotation, which is most of what this app is ever given.
+
+    The decoder applies that matrix, so every frame ffmpeg hands back is
+    already upright — and the dimensions beside it in the stream are not.
+    Reporting those raw is reporting a size no frame in the file ever has, and
+    everything downstream that scales by it, or maps a box back through it, is
+    then wrong by the aspect ratio: a 1080x1920 picture squeezed into 960x540
+    for the survey, and its findings mapped back at 1920/960 when the truth is
+    1080/960.
+
+    Rotation lives in side data, may be absent, and may be written as a number
+    or a string; anything unreadable means no rotation, because a clip whose
+    metadata cannot be parsed is still far more likely to be upright than on
+    its side. Only quarter turns swap the axes — 180 leaves them alone.
+    """
+    for side in video_stream.get('side_data_list', []):
+        raw = side.get('rotation')
+        if raw is None:
+            continue
+        try:
+            degrees = int(round(float(raw)))
+        except (TypeError, ValueError):
+            continue
+        return degrees % 180 == 90
+    return False
+
+
 def probe_video(filepath: str) -> dict:
     """
     Return a dict with: width, height, fps (float), duration (float),
@@ -296,9 +330,13 @@ def probe_video(filepath: str) -> dict:
 
     duration = float(data.get('format', {}).get('duration', 0))
 
+    width, height = int(video_stream['width']), int(video_stream['height'])
+    if _quarter_turned(video_stream):
+        width, height = height, width
+
     return {
-        'width': int(video_stream['width']),
-        'height': int(video_stream['height']),
+        'width': width,
+        'height': height,
         'fps': fps,
         'duration': duration,
         'video_codec': video_stream.get('codec_name'),
