@@ -65,9 +65,15 @@ MATCH_THRESHOLD = 0.60
 #
 # Once `MATCH_THRESHOLD` has established which platform this is, a weaker
 # sighting of the same template is a different proposition from a first
-# sighting, and holding it to the same bar loses half the video. This still
-# clears the highest score measured on footage carrying no mark at all, 0.423
-# across nine clips, so it is a lower bar and not an open door.
+# sighting, and holding it to the same bar loses half the video.
+#
+# It is a lower bar, not an open door, but the room is not generous and it
+# shrank when bilibili was added. Across twelve clips the highest score any
+# template reaches on a clip not carrying its mark is 0.470, and the lowest
+# score of a genuine second sighting is 0.551 — 小红书's pill over dark wood.
+# 0.50 sits near the middle of that and there is nowhere better to put it.
+# Adding a platform narrows this gap, so a new template is not just a new
+# file: it has to be measured against every clip already here.
 CONFIRMED_THRESHOLD = 0.50
 
 # A frame this small cannot carry a legible mark, and the template scaled down
@@ -176,7 +182,7 @@ def _featureless(field: np.ndarray, rows: int, cols: int) -> np.ndarray:
 COVERAGE = 0.6
 AREA_LIMIT = 12.0
 
-KNOWN = ('douyin', 'kuaishou', 'xiaohongshu')
+KNOWN = ('douyin', 'kuaishou', 'xiaohongshu', 'bilibili')
 
 
 def locate_in(frame_paths: list[str], width: int, height: int,
