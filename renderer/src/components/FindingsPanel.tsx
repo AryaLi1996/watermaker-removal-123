@@ -126,6 +126,38 @@ function DrawnBoxRow({
   );
 }
 
+/**
+ * Which platforms the check has actually been measured against.
+ *
+ * Here rather than on a help page because this is the moment the claim
+ * matters: the user is looking at a list and deciding whether to trust it, and
+ * a list produced by a check that has never seen their platform's mark is worth
+ * less than one that has. 视频号 is named specifically because its mark exists
+ * only on the saved file — the app never shows it — so a user who checked
+ * before exporting has good reason to think there is nothing to remove.
+ *
+ * Collapsed, and the same in both states of the panel. The summary carries the
+ * part that changes a decision; the body is for the user who wants to know why.
+ */
+function PlatformNote() {
+  const { t } = useTranslation();
+  return (
+    <details data-testid="findings-platforms" style={{ marginTop: 2 }}>
+      <summary
+        style={{
+          color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.5,
+          cursor: 'pointer',
+        }}
+      >
+        {t('findings.platforms')}
+      </summary>
+      <p style={{ color: 'var(--text-faint)', fontSize: 11, lineHeight: 1.5, margin: '4px 0 0 12px' }}>
+        {t('findings.platformsBody')}
+      </p>
+    </details>
+  );
+}
+
 export default function FindingsPanel({
   findings, scanning, failed, selected, drawnBoxChosen, crowded, disabled,
   onToggle, onToggleDrawnBox, onRescan,
@@ -167,6 +199,7 @@ export default function FindingsPanel({
         >
           {t('findings.rescan')}
         </button>
+        <PlatformNote />
       </div>
     );
   }
@@ -230,6 +263,7 @@ export default function FindingsPanel({
       <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.5, marginTop: 2 }}>
         {t('findings.hint')}
       </p>
+      <PlatformNote />
     </div>
   );
 }

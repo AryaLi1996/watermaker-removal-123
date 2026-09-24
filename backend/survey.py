@@ -153,14 +153,20 @@ class Finding:
 # The largest share of one frame the proposals may cover before the survey is
 # treated as having failed to discriminate.
 #
-# Measured on four real clips, as the worst single moment's coverage by
+# Measured on five real clips, as the worst single moment's coverage by
 # everything proposed:
 #
 #     抖音 sample          0.4%     1 proposed of 7
 #     小红书               0.7%     2 of 6
 #     bilibili             4.4%     3 of 9   (one mark, three positions,
 #                                             two of them briefly overlapping)
+#     视频号 screen grab   13.1%    15 of 26  — the phone's own chrome
 #     快手                21.3%    21 of 35  — windows, a plant, the building
+#
+# Both clips above the limit are correctly declined, but note how little room
+# there is between 4.4% and 13.1%: this is an empirical line, not a principled
+# one, and the 视频号 grab would have ticked fifteen pieces of phone UI had it
+# been drawn at 0.14.
 #
 # The 快手 clip is a locked-off shot, and that is what breaks the scan: its
 # premise is that the mark is the only thing holding still while the picture
@@ -171,9 +177,28 @@ class Finding:
 #
 # There is no threshold on the solve's own output that separates those two
 # cases, because physically they are the same case: a still pattern on a still
-# background. Two candidates were measured and both fail — the mark in the 抖音
-# sample moves 0.26 levels, *less* than every false positive in the 快手 clip
-# (4.3 to 14.0), so neither absolute nor frame-relative movement can be it.
+# background. Four candidates have been measured against all four platform
+# clips and all four fail, by overlapping rather than by being close:
+#
+#   movement, absolute       抖音's mark moves 0.26 levels, *less* than every
+#                            快手 false positive (4.3 to 14.0)
+#   movement, frame-relative 抖音 is static throughout, so its mark sits at
+#                            ratio ~0.15, inside 快手's 0.1 to 0.35
+#   grain, absolute          true marks 0.15 to 3.13, 快手 false positives
+#                            0.61 to 6.72
+#   grain, frame-relative    true marks 0.26 to 2.93, 快手 false positives
+#                            0.71 to 4.45
+#
+# The grain pair looked the most promising of the four and is worth knowing
+# about specifically, because "a pasted graphic has no sensor noise" is the
+# obvious next idea and it is wrong twice over. Absolutely, it measures the
+# platform's encoder rather than the content: bilibili's mark reads 0.148 and
+# 快手's *cleanest scenery* reads 0.612, so the same property gives opposite
+# answers on two files. Relative to the frame, it fails for a reason that
+# applies to any look-based test of these regions — the marks are blended, not
+# pasted, so the picture underneath shows through and the region never has a
+# surface of its own to measure. Only a fully opaque mark would, and that is
+# the one case (小红书's pill) the solve already declines for being opaque.
 #
 # So this does not try to tell them apart. It notices that the answer as a
 # whole is not credible — a video whose watermarks cover a fifth of the picture

@@ -342,7 +342,9 @@
     "rescan": "Check again",
     "drawnBox": "The box you drew",
     "drawnBoxWhen": "whole video",
-    "crowded": "Too much of the picture looked like a watermark ({{percent}}% of the frame), so nothing is ticked. That usually means the camera did not move — on a locked-off shot the scenery holds still exactly the way a watermark does, and the check cannot tell them apart. Tick what you recognise, or draw a box."
+    "crowded": "Too much of the picture looked like a watermark ({{percent}}% of the frame), so nothing is ticked. That usually means the camera did not move — on a locked-off shot the scenery holds still exactly the way a watermark does, and the check cannot tell them apart. Tick what you recognise, or draw a box.",
+    "platforms": "Tuned for Douyin · Xiaohongshu · Kuaishou · Bilibili. WeChat Channels is not supported yet.",
+    "platformsBody": "A Channels video carries no watermark while it plays in the app — the mark is burned in when the video is saved. We do not have enough samples of that mark to tune the check for it, so on a Channels video it may find nothing, or tick the wrong thing. Draw a box around what you want gone and it will still be removed."
   },
   "cloud": {
     "toggle": "Use the cloud filler",
