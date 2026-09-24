@@ -654,6 +654,12 @@ def stage_bounds(method: str) -> tuple[float, float]:
 # is missed. The longest side is capped because the question — does this hold
 # still while the picture moves — is the same at any size, while decoding a
 # 4K frame to ask it is not.
+# How many frames of the survey's decode to search for a known mark. The mark
+# is either there for most of the video or not at all, and 抖音's alternates
+# between two corners over several seconds, so a spread of a dozen catches
+# both placements without another pass over the whole decode.
+KNOWN_MARK_SAMPLES = 12
+
 SURVEY_FPS = 8.0
 SURVEY_WINDOW_SECONDS = 2.0
 SURVEY_MAX_SIDE = 960
@@ -748,6 +754,7 @@ def run_detect(config: JobConfig, temp_dir: str) -> None:
     scan_height = size[1] if size else meta['height']
     back = meta['width'] / scan_width
 
+    import known_marks as known_marks_module  # noqa: PLC0415 — cv2, see above
     import recover as recover_module  # noqa: PLC0415 — pulls in cv2, see above
     import survey as survey_module  # noqa: PLC0415
 
@@ -790,6 +797,43 @@ def run_detect(config: JobConfig, temp_dir: str) -> None:
     if indiscriminate:
         report_engine_notice('detect_crowded', f'{crowd * 100:.0f}')
 
+    # A mark that was *recognised* is not subject to that doubt. The valve
+    # exists because the survey infers marks from behaviour and cannot do so
+    # on a locked-off shot; a template match makes no claim about behaviour,
+    # so the reason to distrust the rest of the list does not apply to it.
+    #
+    # This is the whole point of recognising 抖音 rather than deducing it.
+    # Measured on three rooms shot on a stand and reposted through 抖音, the
+    # survey finds the mark every time and buries it in nine to thirteen
+    # pieces of the room, so the valve withholds and the user is offered
+    # nothing. With this, the mark stays ticked and the room stays unticked.
+    hits = known_marks_module.locate_in(
+        frame_paths, scan_width, scan_height, KNOWN_MARK_SAMPLES)
+    marks = known_marks_module.placements(
+        hits, len(frame_paths),
+        max(1, len(frame_paths) // KNOWN_MARK_SAMPLES))
+    recognised = [box for box, _, _ in marks]
+    if marks:
+        # DEBUG rather than a UI notice: `report_engine_notice` puts anything
+        # not in UI_NOTICE_KEYS on the debug channel, and the user-visible
+        # effect of recognising a mark is the mark arriving ticked, which
+        # needs no sentence beside it.
+        report_engine_notice('detect_recognised', str(len(marks)))
+
+    # A recognised mark the survey did not draw a box around is still a mark.
+    # It fragments them: on one measured clip 抖音's top-left mark came back
+    # as a 33% piece and a 27% piece with nothing covering it, and relying on
+    # the survey's boxes would have left that corner in the video for the half
+    # of its length the mark spends there.
+    covered = {
+        index for index, box in enumerate(recognised)
+        if any(known_marks_module.covers(f.box, [box]) for f in findings)
+    }
+    extra = [
+        (box, start, end)
+        for index, (box, start, end) in enumerate(marks) if index not in covered
+    ]
+
     emit('STATE:findings:' + json.dumps([
         {
             'x': int(round(f.box[0] * back)),
@@ -798,11 +842,31 @@ def run_detect(config: JobConfig, temp_dir: str) -> None:
             'h': int(round(f.box[3] * back)),
             'start': round(f.start / SURVEY_FPS, 3),
             'end': round(f.end / SURVEY_FPS, 3),
-            'kind': f.kind,
-            'proposed': f.proposed and not indiscriminate,
+            # A recognised mark is reported as a mark whatever `classify`
+            # made of it. On the measured clips the survey does find 抖音's
+            # mark and calls it `other` — behaviour is all `classify` has to
+            # go on, and on a locked-off shot the mark behaves like the wall
+            # behind it. Recognition is the better evidence, so it wins.
+            'kind': (survey_module.WATERMARK
+                     if known_marks_module.covers(f.box, recognised) else f.kind),
+            'proposed': (known_marks_module.covers(f.box, recognised)
+                         or (f.proposed and not indiscriminate)),
             'coverage': round(f.coverage, 4),
         }
         for f in findings
+    ] + [
+        {
+            'x': int(round(box[0] * back)),
+            'y': int(round(box[1] * back)),
+            'w': int(round(box[2] * back)),
+            'h': int(round(box[3] * back)),
+            'start': round(start / SURVEY_FPS, 3),
+            'end': round(end / SURVEY_FPS, 3),
+            'kind': survey_module.WATERMARK,
+            'proposed': True,
+            'coverage': 1.0,
+        }
+        for box, start, end in extra
     ], separators=(',', ':')))
     progress(100)
 

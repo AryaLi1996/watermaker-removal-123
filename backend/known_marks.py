@@ -1,0 +1,232 @@
+"""
+Recognising a platform's mark instead of inferring one.
+
+Everything else in this project finds marks by *behaviour*: the thing that
+holds still while the picture moves. That premise fails completely on a
+locked-off shot, where the scenery holds still too — measured on five clips
+now, the survey calls between a fifth and two thirds of an ordinary room a
+watermark, and `survey.crowded` has to decline the lot. Six attempts to tell
+the two apart from the solve's own output have been measured and rejected
+(see `survey.PROPOSAL_AREA_LIMIT` for the table).
+
+This module does something different and much narrower: 抖音's mark is a
+*known, fixed* graphic, so it can be recognised rather than deduced. That
+makes no assumption about motion, which is exactly the assumption that breaks.
+
+The template is the mark's alpha, recovered from real footage rather than
+drawn: the same clip was shot on a stand, posted to 抖音 and downloaded back,
+and with the clean version as the background `I = (1-a)B + aW` inverts
+directly to `a = (I - B) / (W - B)` per pixel, no solving required. Only the
+logo and wordmark are kept — the account number underneath varies per user.
+
+Matching is on gradient magnitude, not pixels. The mark is alpha-blended, so
+its colours are whatever is underneath; what survives the blend is a sharp,
+bright edge in a fixed shape.
+"""
+from __future__ import annotations
+
+import os
+
+import cv2
+import numpy as np
+
+MARKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'marks')
+
+# The template was cut from a 1080-wide video, so it is scaled by the frame's
+# width against this before matching.
+TEMPLATE_WIDTH_AT = 1080.0
+
+# Sizes to try, as a multiple of the frame-relative size. A platform does not
+# draw its mark at one exact fraction across every aspect ratio and every app
+# version, and the cost of a few extra correlations is small.
+SCALES = (0.85, 1.0, 1.18)
+
+# Above this, the shape found is the mark. Chosen from measured separation
+# rather than taste: across eight clips the highest score anywhere in footage
+# without the mark was 0.431 (快手), and the lowest score on footage carrying
+# it was 0.837. The midpoint of a gap that wide is not a fine judgement, and
+# 0.60 keeps twice as much room on the false-positive side, which is the side
+# that costs the user their own picture.
+MATCH_THRESHOLD = 0.60
+
+# A frame this small cannot carry a legible mark, and the template scaled down
+# to fit would be matching noise.
+MIN_TEMPLATE_SIDE = 12
+
+
+def _gradient(image: np.ndarray) -> np.ndarray:
+    """
+    The part of a blended mark that survives being blended.
+
+    A mark is drawn over whatever is underneath, so its pixel values are not
+    its own; the edges it introduces are. Blurring first because the template
+    came off one encode and the frame is another, and single-pixel differences
+    between the two are nothing to do with whether the shape is present.
+    """
+    blurred = cv2.GaussianBlur(image.astype(np.float32), (0, 0), 1.0)
+    return cv2.magnitude(
+        cv2.Sobel(blurred, cv2.CV_32F, 1, 0, ksize=3),
+        cv2.Sobel(blurred, cv2.CV_32F, 0, 1, ksize=3),
+    )
+
+
+def load_template(name: str) -> np.ndarray:
+    """A mark's alpha as float32 in [0, 1]. Raises if the asset is missing."""
+    path = os.path.join(MARKS_DIR, f'{name}.png')
+    image = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        raise FileNotFoundError(f'No template for {name!r} at {path}')
+    return image.astype(np.float32) / 255.0
+
+
+def find(frame: np.ndarray, template: np.ndarray) -> tuple[float, tuple[int, int, int, int]] | None:
+    """
+    Where this mark is in this frame, and how sure.
+
+    Returns `(score, box)` for the best placement at any of `SCALES`, or None
+    when the frame is too small to hold the template at all. The score is a
+    normalised correlation, so it is comparable between frames and sizes; the
+    caller decides what is good enough, because a survey that lists everything
+    and an export that removes things do not want the same bar.
+    """
+    if frame.ndim == 3:
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    height, width = frame.shape[:2]
+    field = _gradient(frame)
+
+    best: tuple[float, tuple[int, int, int, int]] | None = None
+    for relative in SCALES:
+        scale = (width / TEMPLATE_WIDTH_AT) * relative
+        sized = cv2.resize(template, None, fx=scale, fy=scale,
+                           interpolation=cv2.INTER_AREA)
+        rows, cols = sized.shape[:2]
+        if min(rows, cols) < MIN_TEMPLATE_SIDE or rows >= height or cols >= width:
+            continue
+        response = cv2.matchTemplate(
+            field, _gradient(sized * 255.0), cv2.TM_CCOEFF_NORMED)
+        _, score, _, corner = cv2.minMaxLoc(response)
+        if best is None or score > best[0]:
+            best = (float(score), (int(corner[0]), int(corner[1]), cols, rows))
+    return best
+
+
+# Every platform whose mark ships as a template. One so far: 抖音 is the case
+# the project was built for, and the rest wait on the same kind of paired
+# footage that produced this one — the same clip with and without the mark.
+# How much of a recognised mark a finding has to contain to be that mark, and
+# how much bigger than the mark that finding may be. Both from measurement:
+# see `covers`.
+COVERAGE = 0.6
+AREA_LIMIT = 12.0
+
+KNOWN = ('douyin',)
+
+
+def locate_in(frame_paths: list[str], width: int, height: int,
+              samples: int) -> list[tuple[tuple[int, int, int, int], int]]:
+    """
+    Every known mark found across a spread of these frames, with when.
+
+    Returns `(box, index)` pairs, the index being into `frame_paths`, so a
+    caller can tell a mark that is on screen throughout from one that comes
+    and goes. 抖音's alternates between two corners every ten seconds or so,
+    and removing it for only half the video would leave the other half marked.
+
+    Sampled rather than exhaustive: a platform mark is on the video for most
+    of its length or not at all, so a dozen frames settle which corners it
+    uses. Boxes come back in the coordinates of the frames handed in, which
+    are the survey's scaled ones.
+
+    Failures are silent by design: a template that cannot be read or a frame
+    that cannot be decoded means no recognition, which leaves the survey
+    exactly as it was before this existed.
+    """
+    if not frame_paths or samples <= 0:
+        return []
+    try:
+        templates = [load_template(name) for name in KNOWN]
+    except (FileNotFoundError, OSError):
+        return []
+
+    step = max(1, len(frame_paths) // samples)
+    found: list[tuple[tuple[int, int, int, int], int]] = []
+    for index in range(0, len(frame_paths), step)[:samples]:
+        frame = cv2.imread(frame_paths[index], cv2.IMREAD_GRAYSCALE)
+        if frame is None:
+            continue
+        for template in templates:
+            hit = find(frame, template)
+            if hit and hit[0] >= MATCH_THRESHOLD:
+                found.append((hit[1], index))
+    return found
+
+
+def placements(hits: list[tuple[tuple[int, int, int, int], int]],
+               total: int, step: int) -> list[tuple[tuple[int, int, int, int], int, int]]:
+    """
+    The same mark seen in the same place, gathered into `(box, start, end)`.
+
+    Hits drift by a pixel or two between frames, so they are grouped by
+    overlap rather than by equality, and the group's box is the union — the
+    mark does not move within a corner, so a union is still the mark.
+
+    The span is padded by one sampling step at each end because only every
+    `step`th frame was looked at: a mark first seen at frame 40 with a stride
+    of 12 was probably already there at 29, and cutting it short would leave
+    the first second of it in the video.
+    """
+    groups: list[list[tuple[tuple[int, int, int, int], int]]] = []
+    for box, index in hits:
+        for group in groups:
+            if _touches(box, group[0][0]):
+                group.append((box, index))
+                break
+        else:
+            groups.append([(box, index)])
+
+    out = []
+    for group in groups:
+        xs = [b[0] for b, _ in group]
+        ys = [b[1] for b, _ in group]
+        rights = [b[0] + b[2] for b, _ in group]
+        bottoms = [b[1] + b[3] for b, _ in group]
+        seen = [i for _, i in group]
+        box = (min(xs), min(ys), max(rights) - min(xs), max(bottoms) - min(ys))
+        out.append((box, max(0, min(seen) - step), min(total, max(seen) + step)))
+    return out
+
+
+def _touches(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+    """Whether two sightings are of a mark in the same place."""
+    wide = max(0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+    tall = max(0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+    return wide * tall * 2 >= min(a[2] * a[3], b[2] * b[3])
+
+
+def covers(box: tuple[int, int, int, int],
+           recognised: list[tuple[int, int, int, int]]) -> bool:
+    """
+    Whether this finding is one of the marks that were recognised.
+
+    The test is how much of the *match* the finding contains, not the other
+    way round, and that direction was a real bug before it was measured. The
+    template is deliberately smaller than the mark it identifies — it is the
+    logo and wordmark, without the account number underneath, because the
+    number varies per user — so the survey's box is normally the larger of
+    the two. Asking how much of the finding sits inside the match scored the
+    real 抖音 region at 49.6% and missed it by a fraction.
+
+    `AREA_LIMIT` stops a region that has swallowed half the picture from
+    claiming the mark by containing it. On the measured clip the two mark
+    regions come to 2.0 and 2.6 times the match, and the room-sized finding
+    that also overlapped covered 8.3% of it and is excluded twice over.
+    """
+    bx, by, bw, bh = box
+    for mx, my, mw, mh in recognised:
+        wide = max(0, min(bx + bw, mx + mw) - max(bx, mx))
+        tall = max(0, min(by + bh, my + mh) - max(by, my))
+        inside = wide * tall
+        if (inside >= COVERAGE * mw * mh
+                and bw * bh <= AREA_LIMIT * mw * mh):
+            return True
+    return False
