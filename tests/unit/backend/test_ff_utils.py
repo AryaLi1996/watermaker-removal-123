@@ -5,6 +5,7 @@ These run real ffmpeg against tiny synthetic clips (see conftest.py) so the
 command lines are verified as ffmpeg actually accepts them, not as we imagine.
 """
 import glob
+import json
 import os
 import subprocess
 
@@ -25,6 +26,55 @@ def test_probe_reports_dimensions_fps_and_duration(sample_video):
     assert meta['duration'] == pytest.approx(1.0, abs=0.2)
     assert meta['video_codec'] == 'h264'
     assert meta['audio_codec'] == 'aac'
+
+
+# A phone stores a portrait clip landscape with a display matrix, and the
+# decoder applies that matrix — so every frame is upright while the dimensions
+# beside it in the stream are not. These pin the swap.
+#
+# Against crafted ffprobe output rather than a rotated file: ffmpeg 7 no longer
+# writes a display matrix on request (`-metadata:s:v:0 rotate=90` is dropped by
+# the mov muxer, and `-display_rotation` on input rotates the pixels instead of
+# tagging them), so a clip built here could not carry the thing under test. The
+# decode side is not in doubt — it is ffmpeg's own contract — and what belongs
+# to this project is reporting the size the frames actually have.
+
+@pytest.mark.parametrize('rotation, swapped', [
+    (-90, True),   # what every iPhone portrait clip carries
+    (90, True),
+    (270, True),
+    (-270, True),
+    (180, False),  # upside down is still 1920 wide
+    (0, False),
+    ('-90', True),      # ffprobe has written it as a string
+    ('-90.00', True),
+    (None, False),
+    ('sideways', False),  # unparseable is not a reason to swap
+])
+def test_probe_reports_the_size_the_frames_actually_have(monkeypatch, rotation, swapped):
+    side_data = [] if rotation is None else [{'rotation': rotation}]
+    payload = {
+        'streams': [{
+            'codec_type': 'video', 'width': 1920, 'height': 1080,
+            'r_frame_rate': '30/1', 'codec_name': 'hevc',
+            'side_data_list': side_data,
+        }],
+        'format': {'duration': '15.9'},
+    }
+
+    class Result:
+        stdout = json.dumps(payload)
+
+    monkeypatch.setattr(ff_utils, '_run', lambda *a, **k: Result())
+    monkeypatch.setattr(ff_utils.os.path, 'isfile', lambda _: True)
+
+    meta = ff_utils.probe_video('anywhere.mov')
+    assert (meta['width'], meta['height']) == ((1080, 1920) if swapped else (1920, 1080))
+
+
+def test_probe_leaves_a_stream_without_side_data_alone():
+    """The common case: no side_data_list key at all."""
+    assert ff_utils._quarter_turned({'width': 1920, 'height': 1080}) is False
 
 
 def test_probe_reports_no_audio_for_a_silent_video(silent_video):
