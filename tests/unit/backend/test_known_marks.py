@@ -248,3 +248,45 @@ def test_a_platforms_mark_is_not_matched_by_another_platforms_template(drawn):
             assert score >= known_marks.MATCH_THRESHOLD
         else:
             assert score < known_marks.MATCH_THRESHOLD, f'{name} matched {drawn}'
+
+
+# ─── establishing a platform, then confirming its other placements ───────────
+#
+# A platform draws one mark and moves it about, and the same badge scores
+# differently depending on what is behind it. 小红书's pill measured 0.98 over
+# a pale wall and 0.56 over dark wood in the same clip: a white badge's border
+# is a strong edge against one and a weak one against the other. Holding the
+# second sighting to the bar that establishes the platform lost half the video.
+
+
+BOX = (30, 30, 120, 48)
+ELSEWHERE = (400, 1700, 120, 48)
+
+
+def test_a_faint_second_sighting_counts_once_the_platform_is_established():
+    kept = known_marks.confirmed([
+        ('douyin', 0.93, BOX, 0),
+        ('douyin', 0.56, ELSEWHERE, 8),
+    ])
+    assert [box for box, _ in kept] == [BOX, ELSEWHERE]
+
+
+def test_a_faint_sighting_alone_establishes_nothing():
+    assert known_marks.confirmed([('douyin', 0.56, BOX, 0)]) == []
+
+
+def test_one_platform_does_not_vouch_for_another():
+    """抖音 being present is no reason to believe a weak 快手 match."""
+    kept = known_marks.confirmed([
+        ('douyin', 0.93, BOX, 0),
+        ('kuaishou', 0.56, ELSEWHERE, 4),
+    ])
+    assert [box for box, _ in kept] == [BOX]
+
+
+def test_nothing_seen_is_nothing_kept():
+    assert known_marks.confirmed([]) == []
+
+
+def test_the_confirmed_bar_is_below_the_establishing_one():
+    assert known_marks.CONFIRMED_THRESHOLD < known_marks.MATCH_THRESHOLD
