@@ -762,6 +762,17 @@ def run_detect(config: JobConfig, temp_dir: str) -> None:
         window=max(4, int(round(SURVEY_WINDOW_SECONDS * SURVEY_FPS))),
         on_progress=lambda done, total: progress(
             SURVEY_EXTRACT_END + done / max(total, 1) * (100 - SURVEY_EXTRACT_END)),
+        # Scanning the windows and solving the placements are the two halves
+        # of a detect, both are lists of independent jobs, and together they
+        # are most of the wait. The pools live in `processor` because that is
+        # what a cancelled job already knows how to terminate, and it takes
+        # paths rather than the reader above because a closure does not cross
+        # a process boundary.
+        scan_all=lambda spans, scale: load_processor().scan_windows(
+            frame_paths, spans, scale),
+        fit_all=load_processor().fit_placements,
+        gather_all=lambda boxes, lengths, wanted: load_processor().gather_crops(
+            frame_paths, boxes, lengths, wanted),
     )
 
     emit('STATE:findings:' + json.dumps([
