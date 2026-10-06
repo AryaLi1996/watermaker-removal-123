@@ -226,13 +226,14 @@ MARK_UNITS = {
 
 
 def locate_in(frame_paths: list[str], width: int, height: int,
-              samples: int) -> list[tuple[tuple[int, int, int, int], int]]:
+              samples: int) -> list[tuple[str, tuple[int, int, int, int], int]]:
     """
     Every known mark found across a spread of these frames, with when.
 
-    Returns `(box, index)` pairs, the index being into `frame_paths`, so a
-    caller can tell a mark that is on screen throughout from one that comes
-    and goes. 抖音's alternates between two corners every ten seconds or so,
+    Returns `(name, box, index)` triples, the index being into `frame_paths`,
+    so a caller can tell a mark that is on screen throughout from one that
+    comes and goes. The name travels only as far as `placements`, which is the
+    one thing that needs it: how much of the mark the template stands for. 抖音's alternates between two corners every ten seconds or so,
     and removing it for only half the video would leave the other half marked.
 
     Sampled rather than exhaustive: a platform mark is on the video for most
@@ -265,11 +266,7 @@ def locate_in(frame_paths: list[str], width: int, height: int,
             if hit and hit[0] >= CONFIRMED_THRESHOLD:
                 seen.append((name, hit[0], hit[1], index))
 
-    # The platform's name survives the rule only this far: what a caller wants
-    # is where to look, and the name's last job is choosing how much of the
-    # mark the template stands for.
-    return [(unit_box(name, box, width, height), index)
-            for name, box, index in confirmed(seen)]
+    return confirmed(seen)
 
 
 def unit_box(name: str, box: tuple[int, int, int, int],
@@ -319,8 +316,9 @@ def confirmed(seen: list[tuple[str, float, tuple[int, int, int, int], int]]
     return [(name, box, index) for name, _, box, index in seen if name in established]
 
 
-def placements(hits: list[tuple[tuple[int, int, int, int], int]],
-               total: int, step: int) -> list[tuple[tuple[int, int, int, int], int, int]]:
+def placements(hits: list[tuple[str, tuple[int, int, int, int], int]],
+               total: int, step: int, width: int = 0,
+               height: int = 0) -> list[tuple[tuple[int, int, int, int], int, int]]:
     """
     The same mark seen in the same place, gathered into `(box, start, end)`.
 
@@ -332,25 +330,34 @@ def placements(hits: list[tuple[tuple[int, int, int, int], int]],
     `step`th frame was looked at: a mark first seen at frame 40 with a stride
     of 12 was probably already there at 29, and cutting it short would leave
     the first second of it in the video.
+
+    The union is grown to the platform's whole mark (`unit_box`) *here*, after
+    grouping, and not where each sighting was found. Growing a sighting
+    anchors on that sighting's own edge, and a union of boxes anchored
+    differently is not the box any of them meant: done the other way round on
+    real footage the bottom-right placement came back fifty pixels short of
+    the mark it was supposed to cover, while every test that worked on the
+    finished box still passed.
     """
-    groups: list[list[tuple[tuple[int, int, int, int], int]]] = []
-    for box, index in hits:
+    groups: list[list[tuple[str, tuple[int, int, int, int], int]]] = []
+    for name, box, index in hits:
         for group in groups:
-            if _touches(box, group[0][0]):
-                group.append((box, index))
+            if _touches(box, group[0][1]):
+                group.append((name, box, index))
                 break
         else:
-            groups.append([(box, index)])
+            groups.append([(name, box, index)])
 
     out = []
     for group in groups:
-        xs = [b[0] for b, _ in group]
-        ys = [b[1] for b, _ in group]
-        rights = [b[0] + b[2] for b, _ in group]
-        bottoms = [b[1] + b[3] for b, _ in group]
-        seen = [i for _, i in group]
+        xs = [b[0] for _, b, _ in group]
+        ys = [b[1] for _, b, _ in group]
+        rights = [b[0] + b[2] for _, b, _ in group]
+        bottoms = [b[1] + b[3] for _, b, _ in group]
+        seen = [i for _, _, i in group]
         box = (min(xs), min(ys), max(rights) - min(xs), max(bottoms) - min(ys))
-        out.append((box, max(0, min(seen) - step), min(total, max(seen) + step)))
+        out.append((unit_box(group[0][0], box, width, height),
+                    max(0, min(seen) - step), min(total, max(seen) + step)))
     return out
 
 

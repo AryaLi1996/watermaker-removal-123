@@ -811,7 +811,8 @@ def run_detect(config: JobConfig, temp_dir: str) -> None:
         frame_paths, scan_width, scan_height, KNOWN_MARK_SAMPLES)
     marks = known_marks_module.placements(
         hits, len(frame_paths),
-        max(1, len(frame_paths) // KNOWN_MARK_SAMPLES))
+        max(1, len(frame_paths) // KNOWN_MARK_SAMPLES),
+        scan_width, scan_height)
     recognised = [box for box, _, _ in marks]
     if marks:
         # DEBUG rather than a UI notice: `report_engine_notice` puts anything

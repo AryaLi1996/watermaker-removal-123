@@ -174,7 +174,8 @@ def test_the_direction_of_the_test_is_coverage_of_the_match():
 
 def test_sightings_of_one_mark_become_one_placement():
     """Hits drift a pixel or two between frames; that is the same mark."""
-    hits = [((14, 15, 120, 48), 0), ((15, 15, 120, 48), 12), ((16, 15, 120, 48), 24)]
+    hits = [('kuaishou', (14, 15, 120, 48), 0), ('kuaishou', (15, 15, 120, 48), 12),
+            ('kuaishou', (16, 15, 120, 48), 24)]
     placed = known_marks.placements(hits, 173, 12)
     assert len(placed) == 1
     (box, start, end), = placed
@@ -183,18 +184,44 @@ def test_sightings_of_one_mark_become_one_placement():
 
 
 def test_the_two_corners_抖音_uses_stay_apart():
-    hits = [((14, 15, 120, 48), 0), ((407, 869, 120, 48), 96)]
-    assert len(known_marks.placements(hits, 173, 12)) == 2
+    hits = [('douyin', (14, 15, 120, 48), 0), ('douyin', (407, 869, 120, 48), 96)]
+    assert len(known_marks.placements(hits, 173, 12, 540, 960)) == 2
 
 
 def test_a_span_is_padded_but_never_past_the_video():
-    hits = [((14, 15, 120, 48), 2), ((14, 15, 120, 48), 170)]
+    hits = [('kuaishou', (14, 15, 120, 48), 2), ('kuaishou', (14, 15, 120, 48), 170)]
     (_, start, end), = known_marks.placements(hits, 173, 12)
     assert start == 0 and end == 173
 
 
 def test_nothing_seen_is_nothing_placed():
     assert known_marks.placements([], 173, 12) == []
+
+
+def test_the_unit_is_grown_from_the_union_not_from_each_sighting():
+    """
+    The bug this pins, found by running the real pipeline after the unit tests
+    were already green.
+
+    `unit_box` keeps the edge nearest the frame's border, so growing a
+    sighting anchors on *that sighting's* edge. Union those and the result is
+    not the box any of them meant: on real footage the bottom-right placement
+    came back fifty pixels short of the mark it was there to cover, because
+    the sightings it unioned each anchored a little differently.
+    """
+    sightings = [('douyin', (742, 1730, 312, 120), 0),
+                 ('douyin', (742, 1760, 312, 120), 12)]
+    union_bottom = 1760 + 120
+
+    (box, _, _), = known_marks.placements(sightings, 173, 12, 1080, 1920)
+    assert box[1] + box[3] == union_bottom, (
+        'the unit should hang off the union\'s bottom edge, not one sighting\'s')
+
+    # Growing each sighting first and unioning afterwards loses that: the
+    # first sighting's unit ends at 1850, the second's at 1920, and a caller
+    # taking the union of *those* gets a box that starts lower than the mark.
+    first = known_marks.unit_box('douyin', sightings[0][1], 1080, 1920)
+    assert first[1] + first[3] < union_bottom
 
 
 # ─── the degenerate match ────────────────────────────────────────────────────
