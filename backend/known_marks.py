@@ -184,15 +184,56 @@ AREA_LIMIT = 12.0
 
 KNOWN = ('douyin', 'kuaishou', 'xiaohongshu', 'bilibili')
 
+# The whole of a platform's mark, as fractions of the frame's width, where the
+# template matches only part of it.
+#
+# 抖音 draws two things together: the logo this recognises, and the uploader's
+# account number on the line below it — "我的抖音号: 79705088708". The template
+# matches the logo, so the account line was never proposed, and an export left
+# it on the video. It is the more legible half of the two.
+#
+# Measured against the clean takes of three matched pairs — the same rooms shot
+# on a stand, posted to 抖音 and downloaded back — by thresholding the
+# difference between each pair at 60 levels, which separates what 抖音 drew
+# from the translucent band it also lays over the top and bottom of the frame:
+#
+#     A top-left      (36,31)-(571,173)      535 x 142
+#     A bottom-right  (506,1741)-(1041,1884) 535 x 143
+#     B bottom-right  (506,1741)-(1042,1882) 536 x 141
+#     C bottom-right  (506,1742)-(1041,1883) 535 x 141
+#
+# 555 x 176 rather than 535 x 142: wider and a good deal taller than the
+# measurement, because the unit is anchored on a *matched* box that drifts by
+# a few pixels — at 545 the bottom-right case came out three pixels short of
+# the measured span, because that match overhung the drawn mark on the right
+# and pushed the whole unit with it — and because overshooting is cheap while
+# falling short is not. Overshooting into clean picture costs nothing measurable — the solve
+# finds no blend there and leaves those pixels as they were, which was checked
+# on a control strip of picture below the mark in all three pairs and moved it
+# by 0.0 levels. Falling short leaves the account number legible.
+#
+# Both dimensions scale with the frame's *width*, which is what a mark on
+# portrait video does. Only 1080x1920 was measured; a landscape clip is
+# untested, and the floor at the matched box's own size keeps this from ever
+# shrinking one.
+#
+# No entry means no expansion, which is what every platform but 抖音 gets:
+# there are no matched pairs for them, and a number nobody measured is worse
+# than none at all.
+MARK_UNITS = {
+    'douyin': (555 / 1080, 176 / 1080),
+}
+
 
 def locate_in(frame_paths: list[str], width: int, height: int,
-              samples: int) -> list[tuple[tuple[int, int, int, int], int]]:
+              samples: int) -> list[tuple[str, tuple[int, int, int, int], int]]:
     """
     Every known mark found across a spread of these frames, with when.
 
-    Returns `(box, index)` pairs, the index being into `frame_paths`, so a
-    caller can tell a mark that is on screen throughout from one that comes
-    and goes. 抖音's alternates between two corners every ten seconds or so,
+    Returns `(name, box, index)` triples, the index being into `frame_paths`,
+    so a caller can tell a mark that is on screen throughout from one that
+    comes and goes. The name travels only as far as `placements`, which is the
+    one thing that needs it: how much of the mark the template stands for. 抖音's alternates between two corners every ten seconds or so,
     and removing it for only half the video would leave the other half marked.
 
     Sampled rather than exhaustive: a platform mark is on the video for most
@@ -228,8 +269,43 @@ def locate_in(frame_paths: list[str], width: int, height: int,
     return confirmed(seen)
 
 
+def unit_box(name: str, box: tuple[int, int, int, int],
+             width: int, height: int) -> tuple[int, int, int, int]:
+    """
+    A matched logo grown to the whole mark it is part of — see MARK_UNITS.
+
+    Sideways, the edge nearest the frame's border stays put: 抖音's account
+    line runs to the right of a top-left logo and to the left of a
+    bottom-right one, so the box grows inward from the side it is against.
+
+    Downwards, the *top* edge always stays put, in both corners. The line sits
+    under the logo wherever the logo is — text reads downward — and a box
+    anchored on the bottom edge instead grows the wrong way: measured on the
+    bottom-right placement it reached 83 pixels above the mark into clean
+    picture and stopped exactly at the logo's foot, with the whole account
+    line outside it.
+
+    Never smaller than the box it was given. A platform with no measured unit,
+    or a frame too small to hold one, comes back unchanged.
+    """
+    unit = MARK_UNITS.get(name)
+    if unit is None or width <= 0 or height <= 0:
+        return box
+    x, y, w, h = box
+    unit_w = min(width, max(w, int(round(unit[0] * width))))
+    unit_h = min(height, max(h, int(round(unit[1] * width))))
+    # Sideways: which half of the frame the mark is in says which way it reads.
+    left = x if x + w / 2 < width / 2 else x + w - unit_w
+    left = max(0, min(int(left), width - unit_w))
+    # Downwards: always from the top, because that is where the logo is and
+    # the rest of the mark hangs off it. Clamped rather than flipped at the
+    # frame's foot, so a mark near the bottom keeps as much as will fit.
+    top = max(0, min(int(y), height - unit_h))
+    return (left, top, unit_w, unit_h)
+
+
 def confirmed(seen: list[tuple[str, float, tuple[int, int, int, int], int]]
-              ) -> list[tuple[tuple[int, int, int, int], int]]:
+              ) -> list[tuple[str, tuple[int, int, int, int], int]]:
     """
     Which sightings to keep, given every one worth a second look.
 
@@ -245,11 +321,12 @@ def confirmed(seen: list[tuple[str, float, tuple[int, int, int, int], int]]
     testable without a video to hand.
     """
     established = {name for name, score, _, _ in seen if score >= MATCH_THRESHOLD}
-    return [(box, index) for name, _, box, index in seen if name in established]
+    return [(name, box, index) for name, _, box, index in seen if name in established]
 
 
-def placements(hits: list[tuple[tuple[int, int, int, int], int]],
-               total: int, step: int) -> list[tuple[tuple[int, int, int, int], int, int]]:
+def placements(hits: list[tuple[str, tuple[int, int, int, int], int]],
+               total: int, step: int, width: int = 0,
+               height: int = 0) -> list[tuple[tuple[int, int, int, int], int, int]]:
     """
     The same mark seen in the same place, gathered into `(box, start, end)`.
 
@@ -261,25 +338,34 @@ def placements(hits: list[tuple[tuple[int, int, int, int], int]],
     `step`th frame was looked at: a mark first seen at frame 40 with a stride
     of 12 was probably already there at 29, and cutting it short would leave
     the first second of it in the video.
+
+    The union is grown to the platform's whole mark (`unit_box`) *here*, after
+    grouping, and not where each sighting was found. Growing a sighting
+    anchors on that sighting's own edge, and a union of boxes anchored
+    differently is not the box any of them meant: done the other way round on
+    real footage the bottom-right placement came back fifty pixels short of
+    the mark it was supposed to cover, while every test that worked on the
+    finished box still passed.
     """
-    groups: list[list[tuple[tuple[int, int, int, int], int]]] = []
-    for box, index in hits:
+    groups: list[list[tuple[str, tuple[int, int, int, int], int]]] = []
+    for name, box, index in hits:
         for group in groups:
-            if _touches(box, group[0][0]):
-                group.append((box, index))
+            if _touches(box, group[0][1]):
+                group.append((name, box, index))
                 break
         else:
-            groups.append([(box, index)])
+            groups.append([(name, box, index)])
 
     out = []
     for group in groups:
-        xs = [b[0] for b, _ in group]
-        ys = [b[1] for b, _ in group]
-        rights = [b[0] + b[2] for b, _ in group]
-        bottoms = [b[1] + b[3] for b, _ in group]
-        seen = [i for _, i in group]
+        xs = [b[0] for _, b, _ in group]
+        ys = [b[1] for _, b, _ in group]
+        rights = [b[0] + b[2] for _, b, _ in group]
+        bottoms = [b[1] + b[3] for _, b, _ in group]
+        seen = [i for _, _, i in group]
         box = (min(xs), min(ys), max(rights) - min(xs), max(bottoms) - min(ys))
-        out.append((box, max(0, min(seen) - step), min(total, max(seen) + step)))
+        out.append((unit_box(group[0][0], box, width, height),
+                    max(0, min(seen) - step), min(total, max(seen) + step)))
     return out
 
 
