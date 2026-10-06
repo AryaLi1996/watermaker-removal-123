@@ -250,6 +250,119 @@ def test_a_platforms_mark_is_not_matched_by_another_platforms_template(drawn):
             assert score < known_marks.MATCH_THRESHOLD, f'{name} matched {drawn}'
 
 
+# ─── the whole mark, not just the part the template matches ──────────────────
+#
+# 抖音 draws its logo and the uploader's account number together, and the
+# template matches only the logo. The numbers below are the drawn marks'
+# measured spans from three matched pairs — the same rooms shot on a stand,
+# posted and downloaded back — thresholded at 60 levels against the clean take,
+# which is what separates what 抖音 drew from the translucent band it lays over
+# the top and bottom of the frame.
+
+MEASURED = [
+    # (what the template matched, what 抖音 actually drew)
+    ('A top-left',     (26, 22, 264, 176),   (36, 31, 571, 173)),
+    ('A bottom-right', (742, 1730, 312, 190), (506, 1741, 1041, 1884)),
+    ('B bottom-right', (742, 1730, 310, 162), (506, 1741, 1042, 1882)),
+    ('C bottom-right', (740, 1732, 310, 158), (506, 1742, 1041, 1883)),
+]
+
+
+@pytest.mark.parametrize('name, matched, drawn', MEASURED,
+                         ids=[m[0] for m in MEASURED])
+def test_the_unit_covers_what_the_platform_actually_drew(name, matched, drawn):
+    """
+    The one assertion that matters: the account line ends up inside the box.
+
+    Before this, the proposed box held 61% of 抖音's drawn marks on the
+    top-left placement and the rest stayed on the exported video.
+    """
+    x, y, w, h = known_marks.unit_box('douyin', matched, 1080, 1920)
+    dx0, dy0, dx1, dy1 = drawn
+    assert x <= dx0 and y <= dy0, f'unit starts inside the mark: {(x, y)} vs {(dx0, dy0)}'
+    assert x + w >= dx1 and y + h >= dy1, (
+        f'unit ends inside the mark: {(x + w, y + h)} vs {(dx1, dy1)}')
+
+
+def test_a_corner_mark_grows_inward_not_off_the_frame():
+    """
+    Which edge stays put is the whole of the geometry.
+
+    抖音's account line runs to the right of a top-left logo and to the left of
+    a bottom-right one. Anchoring on the wrong side grows the box off the frame
+    and leaves the line on the video — which is what a width-only extension
+    did when it was tried: on one clip it reached into a door frame instead of
+    the text, and made that strip worse than leaving it alone.
+    """
+    left = known_marks.unit_box('douyin', (26, 22, 264, 176), 1080, 1920)
+    assert left[0] == 26, 'a left-hand mark should keep its left edge'
+    assert left[1] == 22, 'a top mark should keep its top edge'
+
+    right = known_marks.unit_box('douyin', (742, 1730, 312, 190), 1080, 1920)
+    assert right[0] + right[2] == 742 + 312, 'a right-hand mark should keep its right edge'
+    assert right[1] + right[3] == 1730 + 190, 'a bottom mark should keep its bottom edge'
+
+
+def test_the_unit_is_taller_and_wider_than_the_logo_alone():
+    matched = (26, 22, 264, 176)
+    x, y, w, h = known_marks.unit_box('douyin', matched, 1080, 1920)
+    assert w > matched[2] and h >= matched[3]
+    # And still a small part of the frame: this is a box the solve searches,
+    # and one that swallowed the picture would be a different kind of wrong.
+    assert w * h / (1080 * 1920) < 0.10
+
+
+def test_a_platform_with_no_measured_unit_is_left_exactly_as_it_was():
+    """
+    Three of the four known platforms have no matched pairs behind them. A
+    number nobody measured is worse than no number: it would widen every
+    export's removal on a guess.
+    """
+    box = (26, 22, 264, 176)
+    for name in known_marks.KNOWN:
+        if name in known_marks.MARK_UNITS:
+            continue
+        assert known_marks.unit_box(name, box, 1080, 1920) == box
+
+
+def test_the_unit_scales_with_the_frame():
+    """The mark is drawn as a fraction of the video's width, so a 540-wide
+    copy of the same video carries a half-size mark."""
+    full = known_marks.unit_box('douyin', (26, 22, 264, 176), 1080, 1920)
+    half = known_marks.unit_box('douyin', (13, 11, 132, 88), 540, 960)
+    assert abs(half[2] * 2 - full[2]) <= 2
+    assert abs(half[3] * 2 - full[3]) <= 2
+
+
+def test_a_tiny_frame_gets_a_tiny_unit_rather_than_a_refusal():
+    """
+    The unit is a fraction of the width, so it shrinks with the frame rather
+    than being withheld below some size. A 40-pixel frame still holds one.
+    """
+    x, y, w, h = known_marks.unit_box('douyin', (0, 0, 20, 20), 40, 40)
+    assert (w, h) == (round(known_marks.MARK_UNITS['douyin'][0] * 40),
+                      max(20, round(known_marks.MARK_UNITS['douyin'][1] * 40)))
+    assert x + w <= 40 and y + h <= 40
+
+
+def test_a_frame_with_no_size_is_left_alone():
+    box = (0, 0, 10, 10)
+    assert known_marks.unit_box('douyin', box, 0, 0) == box
+
+
+def test_the_unit_never_shrinks_a_match():
+    big = (0, 0, 900, 900)
+    x, y, w, h = known_marks.unit_box('douyin', big, 1080, 1920)
+    assert w >= big[2] and h >= big[3]
+
+
+def test_the_unit_never_leaves_the_frame():
+    for box in ((26, 22, 264, 176), (742, 1730, 312, 190), (0, 0, 10, 10),
+                (1070, 1910, 10, 10)):
+        x, y, w, h = known_marks.unit_box('douyin', box, 1080, 1920)
+        assert 0 <= x and 0 <= y and x + w <= 1080 and y + h <= 1920, (box, (x, y, w, h))
+
+
 # ─── establishing a platform, then confirming its other placements ───────────
 #
 # A platform draws one mark and moves it about, and the same badge scores
@@ -268,7 +381,7 @@ def test_a_faint_second_sighting_counts_once_the_platform_is_established():
         ('douyin', 0.93, BOX, 0),
         ('douyin', 0.56, ELSEWHERE, 8),
     ])
-    assert [box for box, _ in kept] == [BOX, ELSEWHERE]
+    assert [box for _, box, _ in kept] == [BOX, ELSEWHERE]
 
 
 def test_a_faint_sighting_alone_establishes_nothing():
@@ -281,7 +394,7 @@ def test_one_platform_does_not_vouch_for_another():
         ('douyin', 0.93, BOX, 0),
         ('kuaishou', 0.56, ELSEWHERE, 4),
     ])
-    assert [box for box, _ in kept] == [BOX]
+    assert [box for _, box, _ in kept] == [BOX]
 
 
 def test_nothing_seen_is_nothing_kept():

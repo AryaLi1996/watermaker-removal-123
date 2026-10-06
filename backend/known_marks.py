@@ -184,6 +184,46 @@ AREA_LIMIT = 12.0
 
 KNOWN = ('douyin', 'kuaishou', 'xiaohongshu', 'bilibili')
 
+# The whole of a platform's mark, as fractions of the frame's width, where the
+# template matches only part of it.
+#
+# 抖音 draws two things together: the logo this recognises, and the uploader's
+# account number on the line below it — "我的抖音号: 79705088708". The template
+# matches the logo, so the account line was never proposed, and an export left
+# it on the video. It is the more legible half of the two.
+#
+# Measured against the clean takes of three matched pairs — the same rooms shot
+# on a stand, posted to 抖音 and downloaded back — by thresholding the
+# difference between each pair at 60 levels, which separates what 抖音 drew
+# from the translucent band it also lays over the top and bottom of the frame:
+#
+#     A top-left      (36,31)-(571,173)      535 x 142
+#     A bottom-right  (506,1741)-(1041,1884) 535 x 143
+#     B bottom-right  (506,1741)-(1042,1882) 536 x 141
+#     C bottom-right  (506,1742)-(1041,1883) 535 x 141
+#
+# 555 x 176 rather than 535 x 142: wider and a good deal taller than the
+# measurement, because the unit is anchored on a *matched* box that drifts by
+# a few pixels — at 545 the bottom-right case came out three pixels short of
+# the measured span, because that match overhung the drawn mark on the right
+# and pushed the whole unit with it — and because overshooting is cheap while
+# falling short is not. Overshooting into clean picture costs nothing measurable — the solve
+# finds no blend there and leaves those pixels as they were, which was checked
+# on a control strip of picture below the mark in all three pairs and moved it
+# by 0.0 levels. Falling short leaves the account number legible.
+#
+# Both dimensions scale with the frame's *width*, which is what a mark on
+# portrait video does. Only 1080x1920 was measured; a landscape clip is
+# untested, and the floor at the matched box's own size keeps this from ever
+# shrinking one.
+#
+# No entry means no expansion, which is what every platform but 抖音 gets:
+# there are no matched pairs for them, and a number nobody measured is worse
+# than none at all.
+MARK_UNITS = {
+    'douyin': (555 / 1080, 176 / 1080),
+}
+
 
 def locate_in(frame_paths: list[str], width: int, height: int,
               samples: int) -> list[tuple[tuple[int, int, int, int], int]]:
@@ -225,11 +265,42 @@ def locate_in(frame_paths: list[str], width: int, height: int,
             if hit and hit[0] >= CONFIRMED_THRESHOLD:
                 seen.append((name, hit[0], hit[1], index))
 
-    return confirmed(seen)
+    # The platform's name survives the rule only this far: what a caller wants
+    # is where to look, and the name's last job is choosing how much of the
+    # mark the template stands for.
+    return [(unit_box(name, box, width, height), index)
+            for name, box, index in confirmed(seen)]
+
+
+def unit_box(name: str, box: tuple[int, int, int, int],
+             width: int, height: int) -> tuple[int, int, int, int]:
+    """
+    A matched logo grown to the whole mark it is part of — see MARK_UNITS.
+
+    The mark sits in a corner and reads inward, so the edge nearest the frame's
+    border is the one that stays put: 抖音's account line runs to the right of
+    a top-left logo and to the left of a bottom-right one, and anchoring on the
+    wrong side would grow the box off the frame and leave the line on it.
+
+    Never smaller than the box it was given. A platform with no measured unit,
+    or a frame too small to hold one, comes back unchanged.
+    """
+    unit = MARK_UNITS.get(name)
+    if unit is None or width <= 0 or height <= 0:
+        return box
+    x, y, w, h = box
+    unit_w = min(width, max(w, int(round(unit[0] * width))))
+    unit_h = min(height, max(h, int(round(unit[1] * width))))
+    # Which half of the frame the mark is in decides which way it reads.
+    left = x if x + w / 2 < width / 2 else x + w - unit_w
+    top = y if y + h / 2 < height / 2 else y + h - unit_h
+    left = max(0, min(int(left), width - unit_w))
+    top = max(0, min(int(top), height - unit_h))
+    return (left, top, unit_w, unit_h)
 
 
 def confirmed(seen: list[tuple[str, float, tuple[int, int, int, int], int]]
-              ) -> list[tuple[tuple[int, int, int, int], int]]:
+              ) -> list[tuple[str, tuple[int, int, int, int], int]]:
     """
     Which sightings to keep, given every one worth a second look.
 
@@ -245,7 +316,7 @@ def confirmed(seen: list[tuple[str, float, tuple[int, int, int, int], int]]
     testable without a video to hand.
     """
     established = {name for name, score, _, _ in seen if score >= MATCH_THRESHOLD}
-    return [(box, index) for name, _, box, index in seen if name in established]
+    return [(name, box, index) for name, _, box, index in seen if name in established]
 
 
 def placements(hits: list[tuple[tuple[int, int, int, int], int]],
