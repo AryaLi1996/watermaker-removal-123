@@ -41,8 +41,22 @@ import numpy as np
 
 # Frames per request. Large enough that the per-request overhead disappears
 # against the inference, small enough that a dropped connection costs a few
-# seconds of video rather than the export.
-FRAMES_PER_REQUEST = 240
+# seconds of video rather than the export — and small enough that the service
+# can finish one, which is what this number got wrong.
+#
+# It was 240, and 240 never worked. Measured end to end against the deployed
+# service, on the patch a 抖音 mark really produces (329x237), inference runs
+# at 4.1-5.6 seconds a frame. So 240 frames is about 1130 seconds: past the
+# 900-second ceiling AWS Lambda will not raise, and past this file's own
+# budget for the batch. Every real export fell back to the local filler on the
+# first batch and the service was never used at all. 60 frames is about 280
+# seconds, inside both with room for a cold container.
+#
+# Inference here is linear in the frame count — no batching gain was
+# measurable at any size — so a smaller request costs round trips and nothing
+# else. It must match MaxFramesPerJob on the service, which refuses anything
+# larger with a 413.
+FRAMES_PER_REQUEST = 60
 
 # Lossy for the picture, lossless for the mask. The patches are about to be
 # re-encoded into H.264 regardless, and WebP at this quality measured 2.7 KB a
@@ -64,12 +78,18 @@ PATCH_QUALITY = 90
 # allowance for the work. On a GPU this is never approached; on CPU it is
 # roughly what the job takes.
 #
+# The per-frame figure was an estimate of 2.0 and the measurement says 4.1-5.6
+# (see FRAMES_PER_REQUEST). Set to the top of that range rather than the
+# middle: being early is a fallback to the local filler on a service that was
+# about to answer, which is the expensive mistake here — the picture is worse
+# and the round trip was paid for anyway.
+#
 # The risk a generous budget carries — an export held for minutes by a service
 # that has hung — is bounded elsewhere: the first batch that fails gives up on
 # the service for the rest of the export (see `_run_cloud` in processor.py), so
 # a hang costs one budget, not one per batch.
 REQUEST_BASE_SECONDS = 45.0
-REQUEST_SECONDS_PER_FRAME = 2.0
+REQUEST_SECONDS_PER_FRAME = 6.0
 
 
 def timeout_for(frames: int) -> float:

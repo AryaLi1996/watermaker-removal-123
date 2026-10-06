@@ -643,8 +643,10 @@ def _run_deep(
 def _cloud_batch(frame_paths: list[str], model, parcel, endpoint: dict) -> bool:
     """
     Undo the blend on a run of frames, with the service painting what the
-    arithmetic could not recover. True where it did; False where anything at
-    all went wrong and these frames still need the local filler.
+    arithmetic could not recover. None where it did; where anything at all went
+    wrong, the reason, as a string — these frames still need the local filler,
+    and the caller passes the reason on so a failing deployment can be told
+    apart from an absent one.
 
     Frames are read, solved and written here rather than in a worker pool: the
     wait is the round trip, not the arithmetic, and one caller asking for a
@@ -665,18 +667,22 @@ def _cloud_batch(frame_paths: list[str], model, parcel, endpoint: dict) -> bool:
     try:
         returned = cloud_fill.fill(parcel, patches, endpoint['url'],
                                    endpoint.get('token'))
-    except Exception:
-        # Every failure is the same failure here — refused, timed out, an
-        # answer of the wrong shape. What the caller does about it does not
-        # depend on which, and these frames have not been written yet.
-        return False
+    except Exception as exc:
+        # What the caller *does* about it does not depend on which failure this
+        # was — every one of them means filling these frames here instead, and
+        # they have not been written yet. What it is reported as does depend on
+        # it, and used not to: a 500 from the service, an expired token and a
+        # timeout all reached the log as "the service did not answer", which
+        # is how a service that crashed on every real export for want of a
+        # smaller batch went unnoticed while its own smoke test passed.
+        return f'{type(exc).__name__}: {exc}'[:200]
 
     for frame_path, frame, patch, filled_box in zip(frame_paths, frames, recovered, returned):
         filled = patch.copy()
         filled[y:y + h, x:x + w] = filled_box.astype(np.float32)
         cv2.imwrite(frame_path, dewatermark.compose(frame, model, patch, filled),
                     [cv2.IMWRITE_PNG_COMPRESSION, PNG_COMPRESSION])
-    return True
+    return None
 
 
 def _run_cloud(frame_paths: list[str], runs: list, endpoint: dict,
@@ -708,6 +714,7 @@ def _run_cloud(frame_paths: list[str], runs: list, endpoint: dict,
     total = sum(end - start for start, end, _ in runs) or 1
     done = 0
     giving_up = False
+    why = ""
 
     for run_start, run_end, models in runs:
         for model in models:
@@ -717,20 +724,26 @@ def _run_cloud(frame_paths: list[str], runs: list, endpoint: dict,
                 # No parcel means the arithmetic recovered all of it and there
                 # is nothing to invent — so nothing to send anywhere, and the
                 # local path finishes the frame without that being a fallback.
-                sent = (not giving_up and parcel is not None
-                        and _cloud_batch(batch, model, parcel, endpoint))
-                if not sent:
-                    if parcel is not None:
+                failure = (_cloud_batch(batch, model, parcel, endpoint)
+                           if not giving_up and parcel is not None else 'skipped')
+                if failure is not None:
+                    if parcel is not None and not giving_up:
                         degraded += len(batch)
                         giving_up = True
+                        why = failure
+                    elif parcel is not None:
+                        degraded += len(batch)
                     _process_recover_chunk((batch, (model,)))
                 done += len(batch)
                 report(FIT_PROGRESS_SHARE
                        + (100.0 - FIT_PROGRESS_SHARE) * min(done / total, 1.0))
 
     if degraded:
+        # The reason is the first failure's, which is the only one there was:
+        # the first gives up on the service for the rest of the export.
         notice('cloud_fallback', f'{degraded} frame(s) were filled on this '
-                                 f'machine because the service did not answer')
+                                 f'machine because the service did not answer'
+                                 + (f' ({why})' if why else ''))
     return degraded
 
 
