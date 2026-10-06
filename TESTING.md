@@ -494,6 +494,49 @@ back to unlicensed. `docs/LICENSE_SERVICE.md`, *Minting a test licence*, has
 the rest — including how to mint a licence **key** the deployed service will
 accept, which is the sibling repository's job.
 
+### Reaching the cloud filler
+
+The cloud filler is a separate question from being licensed, and a locally
+minted licence does not open it. Whether an export may use it is answered by
+the deployed licence service (`fill/quota`), which looks for a record it holds
+itself — so a `license.enc` this build verifies offline is a licence the
+service has never heard of, and the answer is `noLicense`. The cloud card in
+the app is not gated on a licence at all; the service is the only gate.
+
+What the service does accept is a demo, and the card that used to ask for one
+is gone from the interface. So ask for it directly:
+
+```bash
+npm run license:demo            # ask for this machine's demo, then report
+npm run license:demo -- --status   # what this machine already has; change nothing
+npm run license:demo -- --json     # both replies verbatim
+```
+
+It prints one line about the demo and one about the cloud filler, and **exits
+non-zero while the cloud path is still shut**, so it can be the first step of a
+test run rather than something to read carefully:
+
+```
+service   https://…lambda-url.us-east-1.on.aws/
+app       shuyin
+device    a1b2…
+
+demo      live, demo until 2026-11-05T12:34:56.000Z
+the cloud filler is open: 100 of 100 exports left this period (resets 2026-11-01T00:00:00Z).
+```
+
+The limit is the service's, not this script's: one demo per app and device, and
+asking twice returns the first window rather than a new one. A demo gets its
+own allowance (`FillDemoUnits`) and never gets overage. If the demo activates
+but the second line still says `noLicense`, the deployment is older than the
+change that made a demo count.
+
+Then, in the app: pick **recover**, turn the cloud switch on, agree to the
+consent, and export. Frames leave the machine only after that consent — see
+`renderer/src/cloud.ts` — and an export that cannot reach the service is filled
+locally instead of failing, which is worth knowing when reading a test result
+that looks like the feature did nothing.
+
 ---
 
 ## 5. Environment Validation
