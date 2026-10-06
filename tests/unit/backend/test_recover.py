@@ -620,6 +620,89 @@ def test_the_service_is_not_asked_again_after_it_has_failed_once(
                for key, detail in notices), notices
 
 
+def test_the_fallback_says_what_actually_went_wrong(clip, tmp_path, monkeypatch):
+    """
+    The reason reaches the notice, not just the count.
+
+    This is the test that would have caught the failure it was written after.
+    The service crashed on every real export — a batch bigger than it could
+    run — and answered the smoke test's small ones perfectly, so the only
+    evidence anywhere was a line reading "the service did not answer", which
+    is also what an unreachable host, an expired token and a timeout all said.
+    One sentence covering four causes is one that identifies none of them.
+    """
+    import cloud_fill
+    import processor
+
+    count = 20
+    paths = _frames_on_disk(clip, tmp_path / 'cloud', count)
+
+    def explode(url, body, token, timeout):
+        raise RuntimeError('HTTP Error 500: Internal Server Error')
+
+    monkeypatch.setattr(cloud_fill, 'post', explode)
+    notices = []
+    processor.run_batch(
+        paths,
+        _region_config(clip, {'url': 'https://fill.example.com/inpaint'}, frames=count),
+        WIDTH, HEIGHT, on_notice=lambda key, detail: notices.append((key, detail)))
+
+    detail = next(d for key, d in notices if key == 'cloud_fallback')
+    assert '500' in detail, detail
+    assert 'RuntimeError' in detail, detail
+    # And still the plain-language half, which is the part a user reads.
+    assert str(count) in detail and 'this machine' in detail
+
+
+def test_a_fallback_reason_cannot_run_away_with_the_notice(
+        clip, tmp_path, monkeypatch):
+    """A service answering with a page of HTML must not put a page of HTML in
+    front of the user."""
+    import cloud_fill
+    import processor
+
+    paths = _frames_on_disk(clip, tmp_path / 'cloud', 20)
+
+    def explode(url, body, token, timeout):
+        raise RuntimeError('x' * 5000)
+
+    monkeypatch.setattr(cloud_fill, 'post', explode)
+    notices = []
+    processor.run_batch(
+        paths,
+        _region_config(clip, {'url': 'https://fill.example.com/inpaint'}, frames=20),
+        WIDTH, HEIGHT, on_notice=lambda key, detail: notices.append((key, detail)))
+
+    detail = next(d for key, d in notices if key == 'cloud_fallback')
+    assert len(detail) < 400, len(detail)
+
+
+def test_a_batch_is_small_enough_for_the_service_to_finish_one():
+    """
+    The budget has to cover the work, and the work has to fit in the service.
+
+    Both numbers were estimates and both were wrong the same way, which is why
+    this is pinned rather than left to the comments. Measured end to end
+    against the deployed service on the patch a 抖音 mark produces: 4.1-5.6
+    seconds a frame. At the old 240 frames that is about 1130 seconds — past
+    AWS Lambda's 900-second ceiling, which cannot be raised — so every real
+    export fell back to the local filler on its first batch and the service
+    was never used at all.
+    """
+    import cloud_fill
+
+    measured_worst = 5.6
+    lambda_ceiling = 900.0
+
+    work = cloud_fill.FRAMES_PER_REQUEST * measured_worst
+    assert work < lambda_ceiling, (
+        f'{cloud_fill.FRAMES_PER_REQUEST} frames is about {work:.0f}s of '
+        f'inference; Lambda stops at {lambda_ceiling:.0f}s')
+    # And this client must not give up on a batch that is still running.
+    assert cloud_fill.timeout_for(cloud_fill.FRAMES_PER_REQUEST) > work, (
+        'the budget is shorter than the work it is budgeting for')
+
+
 # ── Reading each frame once ──────────────────────────────────────────────────
 # The scan and the fits walk overlapping ranges of the same frames, so a reader
 # that decodes on every ask decodes each frame several times over. These are
