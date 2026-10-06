@@ -209,19 +209,22 @@ def test_the_unit_is_grown_from_the_union_not_from_each_sighting():
     came back fifty pixels short of the mark it was there to cover, because
     the sightings it unioned each anchored a little differently.
     """
-    sightings = [('douyin', (742, 1730, 312, 120), 0),
-                 ('douyin', (742, 1760, 312, 120), 12)]
-    union_bottom = 1760 + 120
+    sightings = [('douyin', (742, 1700, 240, 120), 0),
+                 ('douyin', (712, 1730, 240, 120), 12)]
+    union_left, union_top = 712, 1700
 
     (box, _, _), = known_marks.placements(sightings, 173, 12, 1080, 1920)
-    assert box[1] + box[3] == union_bottom, (
-        'the unit should hang off the union\'s bottom edge, not one sighting\'s')
+    assert box[1] == union_top, 'the unit should start at the union, not one sighting'
+    assert box[0] + box[2] == 742 + 240, 'and hang off the union\'s right edge'
 
-    # Growing each sighting first and unioning afterwards loses that: the
-    # first sighting's unit ends at 1850, the second's at 1920, and a caller
-    # taking the union of *those* gets a box that starts lower than the mark.
-    first = known_marks.unit_box('douyin', sightings[0][1], 1080, 1920)
-    assert first[1] + first[3] < union_bottom
+    # Growing each sighting first and unioning afterwards loses that: each one
+    # anchors on its own right edge, so neither contains the other's.
+    units = [known_marks.unit_box('douyin', b, 1080, 1920) for _, b, _ in sightings]
+    assert units[0][0] != units[1][0]
+    assert min(u[1] for u in units) == union_top
+    assert max(u[0] + u[2] for u in units) == 742 + 240
+    # ...and the union of those two is wider than the one box the mark needs.
+    assert (max(u[0] + u[2] for u in units) - min(u[0] for u in units)) > box[2]
 
 
 # ─── the degenerate match ────────────────────────────────────────────────────
@@ -286,12 +289,15 @@ def test_a_platforms_mark_is_not_matched_by_another_platforms_template(drawn):
 # which is what separates what 抖音 drew from the translucent band it lays over
 # the top and bottom of the frame.
 
+# The matched box is the *logo*. In the bottom-right placement the logo
+# occupies rows 1741-1833 and the account line sits under it at 1846-1883,
+# which is the measurement that caught the anchor the wrong way up.
 MEASURED = [
     # (what the template matched, what 抖音 actually drew)
     ('A top-left',     (26, 22, 264, 176),   (36, 31, 571, 173)),
-    ('A bottom-right', (742, 1730, 312, 190), (506, 1741, 1041, 1884)),
-    ('B bottom-right', (742, 1730, 310, 162), (506, 1741, 1042, 1882)),
-    ('C bottom-right', (740, 1732, 310, 158), (506, 1742, 1041, 1883)),
+    ('A bottom-right', (742, 1741, 312, 93), (506, 1741, 1041, 1884)),
+    ('B bottom-right', (742, 1741, 310, 92), (506, 1741, 1042, 1882)),
+    ('C bottom-right', (740, 1742, 310, 92), (506, 1742, 1041, 1883)),
 ]
 
 
@@ -313,21 +319,36 @@ def test_the_unit_covers_what_the_platform_actually_drew(name, matched, drawn):
 
 def test_a_corner_mark_grows_inward_not_off_the_frame():
     """
-    Which edge stays put is the whole of the geometry.
+    Which edge stays put is the whole of the geometry, and the two axes do
+    not answer it the same way.
 
-    抖音's account line runs to the right of a top-left logo and to the left of
-    a bottom-right one. Anchoring on the wrong side grows the box off the frame
-    and leaves the line on the video — which is what a width-only extension
-    did when it was tried: on one clip it reached into a door frame instead of
-    the text, and made that strip worse than leaving it alone.
+    Sideways the mark reads away from the border it is against, so the near
+    edge holds. A width-only extension that ignored this reached into a door
+    frame on one clip instead of the text, and made that strip worse than
+    leaving it alone.
     """
     left = known_marks.unit_box('douyin', (26, 22, 264, 176), 1080, 1920)
     assert left[0] == 26, 'a left-hand mark should keep its left edge'
-    assert left[1] == 22, 'a top mark should keep its top edge'
 
-    right = known_marks.unit_box('douyin', (742, 1730, 312, 190), 1080, 1920)
-    assert right[0] + right[2] == 742 + 312, 'a right-hand mark should keep its right edge'
-    assert right[1] + right[3] == 1730 + 190, 'a bottom mark should keep its bottom edge'
+    right = known_marks.unit_box('douyin', (742, 1741, 312, 93), 1080, 1920)
+    assert right[0] + right[2] == 742 + 312, (
+        'a right-hand mark should keep its right edge')
+
+
+def test_the_unit_always_hangs_below_the_logo():
+    """
+    Downwards there is no mirroring: the account line is under the logo in
+    both corners, because text reads downward.
+
+    Anchoring on the bottom edge instead — which is what 'grow inward' means
+    read literally — put the box 83 pixels above the mark on the bottom-right
+    placement and stopped it at the logo's foot, with the whole account line
+    outside. Every unit test of the day passed, because each was handed a box
+    that already spanned both halves of the mark.
+    """
+    for box in ((26, 22, 264, 176), (742, 1741, 312, 93)):
+        x, y, w, h = known_marks.unit_box('douyin', box, 1080, 1920)
+        assert y == box[1], f'{box}: the unit should start at the logo'
 
 
 def test_the_unit_is_taller_and_wider_than_the_logo_alone():

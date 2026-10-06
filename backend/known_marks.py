@@ -274,10 +274,16 @@ def unit_box(name: str, box: tuple[int, int, int, int],
     """
     A matched logo grown to the whole mark it is part of — see MARK_UNITS.
 
-    The mark sits in a corner and reads inward, so the edge nearest the frame's
-    border is the one that stays put: 抖音's account line runs to the right of
-    a top-left logo and to the left of a bottom-right one, and anchoring on the
-    wrong side would grow the box off the frame and leave the line on it.
+    Sideways, the edge nearest the frame's border stays put: 抖音's account
+    line runs to the right of a top-left logo and to the left of a
+    bottom-right one, so the box grows inward from the side it is against.
+
+    Downwards, the *top* edge always stays put, in both corners. The line sits
+    under the logo wherever the logo is — text reads downward — and a box
+    anchored on the bottom edge instead grows the wrong way: measured on the
+    bottom-right placement it reached 83 pixels above the mark into clean
+    picture and stopped exactly at the logo's foot, with the whole account
+    line outside it.
 
     Never smaller than the box it was given. A platform with no measured unit,
     or a frame too small to hold one, comes back unchanged.
@@ -288,11 +294,13 @@ def unit_box(name: str, box: tuple[int, int, int, int],
     x, y, w, h = box
     unit_w = min(width, max(w, int(round(unit[0] * width))))
     unit_h = min(height, max(h, int(round(unit[1] * width))))
-    # Which half of the frame the mark is in decides which way it reads.
+    # Sideways: which half of the frame the mark is in says which way it reads.
     left = x if x + w / 2 < width / 2 else x + w - unit_w
-    top = y if y + h / 2 < height / 2 else y + h - unit_h
     left = max(0, min(int(left), width - unit_w))
-    top = max(0, min(int(top), height - unit_h))
+    # Downwards: always from the top, because that is where the logo is and
+    # the rest of the mark hangs off it. Clamped rather than flipped at the
+    # frame's foot, so a mark near the bottom keeps as much as will fit.
+    top = max(0, min(int(y), height - unit_h))
     return (left, top, unit_w, unit_h)
 
 
