@@ -24,6 +24,7 @@
     "build:backend": "backend/.venv/bin/python scripts/build_backend.py",
     "verify:ffmpeg": "node scripts/verify-ffmpeg-bundle.js",
     "license:test-code": "node scripts/generate-test-license.js",
+    "license:demo": "node scripts/activate-demo.js",
     "dist:mac": "node scripts/write-build-config.js && node scripts/build.js && electron-builder --mac --publish never",
     "dist:win": "node scripts/write-build-config.js && node scripts/build.js && electron-builder --win --publish never",
     "dist:linux": "node scripts/write-build-config.js && node scripts/build.js && electron-builder --linux --publish never",
