@@ -27,6 +27,36 @@ beside the licence service — because `fill/quota`, which decides whether an
 export may use it and hands this client the endpoint and token per export, is
 a question about an account, and the accounts are there. This file never holds
 a URL for it.
+
+**On 抖音 reposts the local filler measures better than the service**, which is
+the opposite of the paragraph above and of the note the service's own
+`inpaint.py` carries. Measured end to end against the clean takes of three
+matched pairs — the same rooms shot on a stand, posted to 抖音 and downloaded
+back — over the pixels the filler is actually asked to paint, every file
+decoded by ffmpeg so that no two sides are read differently:
+
+    run                      untouched   local filler   the service
+    A, 264x176 patch, 1:1         42.7           25.3          46.0
+    A, 556x176 patch, x0.92       49.2           27.7          30.3
+    B, 556x176 patch, x0.92       61.0           33.3          40.1
+    C, 556x176 patch, x0.92       70.4           29.9          37.4
+
+Levels of mean absolute error from the frame that was really filmed. Telea
+wins all four, on 115 of the 122 frames. In the 1:1 row the service left the
+region further from the truth than doing nothing at all, and the glyph came
+back as a solid black note where the mark had been white.
+
+The numbers at the top of this file are not withdrawn: they were measured on
+other material and they are what this path was built for. These are 抖音, one
+camera, indoor, and the product's own priority platform. Both are true, which
+is the useful part — what the service is worth depends on the footage, and
+nothing in this app currently asks that question before spending an
+allowance on it.
+
+Nothing is switched off here on the strength of it. Whether a paid path that
+measures worse than the free one should keep running, for this platform or at
+all, is a product decision; this note exists so that it is made against the
+measurement rather than against the paragraph above.
 """
 from __future__ import annotations
 
