@@ -53,6 +53,46 @@ filler. That ratio is the whole point: the visible block users complain about
 is what you get when an engine invents a rectangle, and it goes away when there
 is almost nothing left to invent.
 
+The blend above carries an unstated premise: that the file we are handed differs
+from the picture that was filmed *only* by the mark. That premise was measured
+rather than assumed, on the clean takes of three matched pairs — the same rooms
+shot on a stand, posted to Douyin and downloaded back — by fitting the returned
+frame against the filmed one per brightness level, over the middle of the frame
+where no overlay of any kind sits:
+
+    region            slope at every brightness bin   level shift
+    rows 700-1200     1.000 (within +-0.02)           under 1 level
+
+So the re-encode is level-transparent: it applies no tone curve and no gain, and
+``I`` really is the filmed picture plus the mark. Dividing by ``1 - a`` is
+therefore sound arithmetic and not a correction fighting a second, hidden one.
+
+The premise does fail in one place, and it is worth knowing where. Douyin darkens
+the top of the frame — the same fit run over rows 0-200 comes back far below 1,
+and the drop is proportional to brightness at a near-constant 0.20 of it across
+every reliable bin, which is the signature of a multiplicative darkening with a
+black ``W``:
+
+    bin mean      40     56     72     88    104    120    152
+    drop/level   .165   .199   .217   .217   .216   .208   .199
+
+That is ``a`` about 0.20 at row 0, fading smoothly to nothing by row 240-320,
+with an intercept of zero. It is deliberately left alone. It has no edge
+anywhere, so it reads as vignetting rather than as a platform's mark; it does
+not hurt the fill, because a patch inside it takes its context from pixels in
+the same rows and inherits the same darkening; and undoing it would mean a
+per-row gain of about 1.25 that amplifies noise and clips whatever sits near
+white, which is real damage done to something nobody can see. It is also not
+estimable where it would matter: production has no clean take, and one of the
+three pairs could not be fitted there even with one, its background being too
+still to condition the fit.
+
+(The 0.20 here is a different measurement from the 0.037 recorded elsewhere for
+the translucent plate behind the account line. Whether those are two objects or
+one of the two numbers is wrong has not been settled; this one is pooled over
+roughly 100k pixels a bin, the other came from the per-pixel fit, which this
+same test showed to be unreliable wherever the background barely moves.)
+
 Nothing here needs a GPU or a learned model; it is a linear solve over frames
 the app has already decoded.
 """
