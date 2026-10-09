@@ -178,7 +178,8 @@ def test_sightings_of_one_mark_become_one_placement():
             ('kuaishou', (16, 15, 120, 48), 24)]
     placed = known_marks.placements(hits, 173, 12)
     assert len(placed) == 1
-    (box, start, end), = placed
+    (name, box, start, end), = placed
+    assert name == 'kuaishou'
     assert box[:2] == (14, 15)
     assert (start, end) == (0, 36)          # padded by one stride each way
 
@@ -190,7 +191,7 @@ def test_the_two_corners_抖音_uses_stay_apart():
 
 def test_a_span_is_padded_but_never_past_the_video():
     hits = [('kuaishou', (14, 15, 120, 48), 2), ('kuaishou', (14, 15, 120, 48), 170)]
-    (_, start, end), = known_marks.placements(hits, 173, 12)
+    (_, _, start, end), = known_marks.placements(hits, 173, 12)
     assert start == 0 and end == 173
 
 
@@ -213,7 +214,7 @@ def test_the_unit_is_grown_from_the_union_not_from_each_sighting():
                  ('douyin', (712, 1730, 240, 120), 12)]
     union_left, union_top = 712, 1700
 
-    (box, _, _), = known_marks.placements(sightings, 173, 12, 1080, 1920)
+    (_, box, _, _), = known_marks.placements(sightings, 173, 12, 1080, 1920)
     assert box[1] == union_top, 'the unit should start at the union, not one sighting'
     assert box[0] + box[2] == 742 + 240, 'and hang off the union\'s right edge'
 
@@ -451,3 +452,16 @@ def test_nothing_seen_is_nothing_kept():
 
 def test_the_confirmed_bar_is_below_the_establishing_one():
     assert known_marks.CONFIRMED_THRESHOLD < known_marks.MATCH_THRESHOLD
+
+
+def test_a_placement_says_which_platform_it_is():
+    """
+    The name rides along because the box cannot be read back into it.
+
+    What a mark costs to remove well is a per-platform answer — on 抖音 the
+    free local filler measured better than the paid service — and the UI
+    cannot ask that question about a bare rectangle.
+    """
+    hits = [('douyin', (14, 15, 120, 48), 0), ('kuaishou', (407, 869, 120, 48), 96)]
+    placed = known_marks.placements(hits, 173, 12, 540, 960)
+    assert sorted(name for name, _, _, _ in placed) == ['douyin', 'kuaishou']

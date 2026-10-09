@@ -32,6 +32,14 @@ export interface Finding {
   proposed: boolean;
   /** How much of the box the solve found a mark in, 0–1. */
   coverage: number;
+  /**
+   * Which platform's mark this is, where the backend recognised one.
+   *
+   * Absent for anything the survey found but did not recognise, which is most
+   * findings. Present, it answers questions a box cannot: see
+   * `LOCAL_FILLER_WINS` in cloud.ts.
+   */
+  platform?: string;
 }
 
 /**

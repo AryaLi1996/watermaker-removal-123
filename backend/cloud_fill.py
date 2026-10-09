@@ -50,13 +50,21 @@ The numbers at the top of this file are not withdrawn: they were measured on
 other material and they are what this path was built for. These are 抖音, one
 camera, indoor, and the product's own priority platform. Both are true, which
 is the useful part — what the service is worth depends on the footage, and
-nothing in this app currently asks that question before spending an
-allowance on it.
+until this was measured nothing in this app asked that question before
+spending an allowance on it.
 
-Nothing is switched off here on the strength of it. Whether a paid path that
-measures worse than the free one should keep running, for this platform or at
-all, is a product decision; this note exists so that it is made against the
-measurement rather than against the paragraph above.
+It does now, and the answer is acted on rather than left as a note: a 抖音
+mark means the export is filled on this machine, whatever the switch says.
+That decision lives in the renderer, with the consent and the allowance, in
+`LOCAL_FILLER_WINS` — the upload is what has to not happen, so it is vetoed
+where the upload is decided, not here. The list holds 抖音 alone: the other
+platforms are absent because nobody has measured them, which is not the same
+as the service winning on them.
+
+The point is narrower than "the service is worse". It is that consent to send
+someone's picture abroad, and a charge against their allowance, were both
+being taken in exchange for a result we can now show is worse on the footage
+this product exists for. Either half of that would be reason enough.
 """
 from __future__ import annotations
 

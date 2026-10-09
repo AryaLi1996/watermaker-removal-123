@@ -813,7 +813,7 @@ def run_detect(config: JobConfig, temp_dir: str) -> None:
         hits, len(frame_paths),
         max(1, len(frame_paths) // KNOWN_MARK_SAMPLES),
         scan_width, scan_height)
-    recognised = [box for box, _, _ in marks]
+    recognised = [box for _, box, _, _ in marks]
     if marks:
         # DEBUG rather than a UI notice: `report_engine_notice` puts anything
         # not in UI_NOTICE_KEYS on the debug channel, and the user-visible
@@ -831,9 +831,20 @@ def run_detect(config: JobConfig, temp_dir: str) -> None:
         if any(known_marks_module.covers(f.box, [box]) for f in findings)
     }
     extra = [
-        (box, start, end)
-        for index, (box, start, end) in enumerate(marks) if index not in covered
+        (name, box, start, end)
+        for index, (name, box, start, end) in enumerate(marks)
+        if index not in covered
     ]
+
+    # Which recognised mark, if any, each survey finding sits under. `covers`
+    # is the same test that decides `proposed` and `kind` just below, so a
+    # finding never arrives called a mark without the name of the one it is.
+    platform_seen = {}
+    for f in findings:
+        for name, box, _, _ in marks:
+            if known_marks_module.covers(f.box, [box]):
+                platform_seen[id(f)] = name
+                break
 
     emit('STATE:findings:' + json.dumps([
         {
@@ -853,6 +864,10 @@ def run_detect(config: JobConfig, temp_dir: str) -> None:
             'proposed': (known_marks_module.covers(f.box, recognised)
                          or (f.proposed and not indiscriminate)),
             'coverage': round(f.coverage, 4),
+            # Which platform's mark this is, where we recognised one. The UI
+            # spends it on questions a box cannot answer — among them whether
+            # the paid filler is worth offering on this footage at all.
+            **({'platform': platform_seen[id(f)]} if id(f) in platform_seen else {}),
         }
         for f in findings
     ] + [
@@ -866,8 +881,9 @@ def run_detect(config: JobConfig, temp_dir: str) -> None:
             'kind': survey_module.WATERMARK,
             'proposed': True,
             'coverage': 1.0,
+            'platform': name,
         }
-        for box, start, end in extra
+        for name, box, start, end in extra
     ], separators=(',', ':')))
     progress(100)
 

@@ -20,6 +20,7 @@
  * is usually personal information. A Douyin watermark carries the poster's
  * account number, and that is precisely the rectangle being sent.
  */
+import type { CloudQuotaReply } from './types';
 
 /**
  * Who is doing the processing, and who receives it abroad.
@@ -152,4 +153,65 @@ export function cloudFillReady(
   enabled: boolean, consent: CloudConsent, allowed: boolean,
 ): boolean {
   return enabled && hasConsented(consent) && allowed && consentIsComplete();
+}
+
+/**
+ * Platforms whose marks the local filler measured *better* on than the service.
+ *
+ * Measured end to end against the clean takes of three matched pairs — the
+ * same rooms shot on a stand, posted to 抖音 and downloaded back — over the
+ * pixels the filler is actually asked to paint, every file decoded the same
+ * way. Telea won all four configurations, on 115 of 122 frames; in the 1:1
+ * row the service left the region further from the truth than doing nothing
+ * at all. `backend/cloud_fill.py` carries the table.
+ *
+ * So this is not a kill switch for a path that fails. It is the question
+ * nothing in this app used to ask before spending a paid allowance: is the
+ * service worth it *on this footage*. Where the answer is measured and no,
+ * the upload does not happen — which also means we are not obtaining consent
+ * to send someone's face abroad in exchange for a worse picture.
+ *
+ * A platform is listed here only on evidence. The others are absent because
+ * they are untested, not because the service is known to win on them.
+ */
+export const LOCAL_FILLER_WINS: ReadonlySet<string> = new Set(['douyin']);
+
+/**
+ * The platform, if any, whose presence means this export stays on this machine.
+ *
+ * Any one listed mark is enough. The filler is chosen once for the whole
+ * export, so a video carrying a 抖音 mark and another platform's would
+ * otherwise pay for the service and still get the worse result where it
+ * matters most.
+ */
+export function localFillerWinsOn(
+  findings: readonly { platform?: string }[],
+): string | undefined {
+  for (const { platform } of findings) {
+    if (platform && LOCAL_FILLER_WINS.has(platform)) return platform;
+  }
+  return undefined;
+}
+
+/**
+ * Where an export started now would send what it cannot recover, if anywhere.
+ *
+ * The whole decision, in one place and as a pure function, because it is the
+ * one that spends the user's allowance and sends their picture abroad: the
+ * switch, the agreement, the allowance, a notice that names a recipient, and
+ * — last — whether the service is actually the better filler for this footage.
+ *
+ * `undefined` is always a working export filled on this machine, never an
+ * error, which is what makes it safe for every one of these to be a veto.
+ */
+export function cloudEndpointFor(
+  enabled: boolean,
+  consent: CloudConsent,
+  quota: CloudQuotaReply | null,
+  localWinsOn?: string,
+): { url: string; token?: string } | undefined {
+  if (localWinsOn) return undefined;
+  if (!cloudFillReady(enabled, consent, quota?.allowed ?? false)) return undefined;
+  const url = quota?.endpoint?.url;
+  return url ? { url, token: quota?.endpoint?.token } : undefined;
 }
