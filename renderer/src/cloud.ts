@@ -209,9 +209,9 @@ export function cloudEndpointFor(
   consent: CloudConsent,
   quota: CloudQuotaReply | null,
   localWinsOn?: string,
-): { url: string; token?: string } | undefined {
+): { url: string; token: string | null } | undefined {
   if (localWinsOn) return undefined;
   if (!cloudFillReady(enabled, consent, quota?.allowed ?? false)) return undefined;
-  const url = quota?.endpoint?.url;
-  return url ? { url, token: quota?.endpoint?.token } : undefined;
+  const endpoint = quota?.endpoint;
+  return endpoint?.url ? { url: endpoint.url, token: endpoint.token } : undefined;
 }

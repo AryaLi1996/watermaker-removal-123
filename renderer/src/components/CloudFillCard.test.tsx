@@ -16,6 +16,7 @@ import {
   cloudEndpointFor, grantConsent, localFillerWinsOn, LOCAL_FILLER_WINS, NO_CONSENT,
 } from '../cloud';
 import { setLocale } from '../i18n';
+import type { CloudQuotaReply } from '../types';
 
 afterEach(() => {
   cleanup();
@@ -23,9 +24,9 @@ afterEach(() => {
   vi.resetModules();
 });
 
-const quota = {
+const quota: CloudQuotaReply = {
   allowed: true, limit: 20, remaining: 7, used: 13,
-  overagePrice: null, reason: null,
+  periodEnds: null, overagePrice: null, reason: null,
   endpoint: { url: 'https://example.invalid/fill', token: 't' },
 };
 
@@ -120,7 +121,7 @@ describe('whether an export uploads anything', () => {
   });
 
   it('sends nowhere when the service named no url', () => {
-    expect(cloudEndpointFor(true, agreed, { ...quota, endpoint: undefined }))
+    expect(cloudEndpointFor(true, agreed, { ...quota, endpoint: null }))
       .toBeUndefined();
   });
 });
