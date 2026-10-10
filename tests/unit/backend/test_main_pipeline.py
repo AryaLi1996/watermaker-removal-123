@@ -1080,3 +1080,56 @@ def test_an_ordinary_detect_says_nothing_about_crowding(
         'mode': 'detect',
     }), str(tmp_path))
     assert not any(line.startswith('STATE:detect_crowded:') for line in lines)
+
+
+@requires_ffmpeg
+def test_a_recognised_mark_arrives_with_its_platform(sample_video, tmp_path, monkeypatch):
+    """
+    A finding the backend recognised says *which* platform's mark it is.
+
+    The renderer spends this on a question the box cannot answer: on 抖音 the
+    free local filler measured more accurate than the paid service, so an
+    export carrying that mark is not offered the upload. A bare rectangle
+    cannot be read back into a platform, so the name has to travel.
+    """
+    import known_marks
+
+    monkeypatch.setattr(
+        known_marks, 'locate_in',
+        lambda paths, width, height, samples: [('douyin', (2, 2, 24, 12), 0)])
+
+    lines: list[str] = []
+    monkeypatch.setattr(backend_main, 'emit', lines.append)
+    backend_main.run_detect(backend_main.JobConfig.model_validate({
+        'inputPath': sample_video,
+        'outputPath': str(tmp_path / 'unused.mp4'),
+        'roi': {'x': 0, 'y': 0, 'w': 40, 'h': 20},
+        'method': 'recover',
+        'mode': 'detect',
+    }), str(tmp_path))
+
+    findings = json.loads(
+        [l for l in lines if l.startswith('STATE:findings:')][0][len('STATE:findings:'):])
+    named = [f for f in findings if f.get('platform')]
+    assert named, 'the recognised mark should carry its platform'
+    assert all(f['platform'] == 'douyin' for f in named)
+    assert all(f['kind'] == 'watermark' and f['proposed'] for f in named), \
+        'a recognised mark is still offered for removal'
+
+
+@requires_ffmpeg
+def test_an_unrecognised_finding_claims_no_platform(sample_video, tmp_path, monkeypatch):
+    """`platform` is absent rather than guessed: most findings are not marks."""
+    lines: list[str] = []
+    monkeypatch.setattr(backend_main, 'emit', lines.append)
+    backend_main.run_detect(backend_main.JobConfig.model_validate({
+        'inputPath': sample_video,
+        'outputPath': str(tmp_path / 'unused.mp4'),
+        'roi': {'x': 0, 'y': 0, 'w': 40, 'h': 20},
+        'method': 'recover',
+        'mode': 'detect',
+    }), str(tmp_path))
+
+    findings = json.loads(
+        [l for l in lines if l.startswith('STATE:findings:')][0][len('STATE:findings:'):])
+    assert all('platform' not in f for f in findings)

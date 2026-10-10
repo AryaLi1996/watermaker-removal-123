@@ -6,9 +6,15 @@
  * in it, and a change to the commercial terms does not touch it.
  *
  * When the switch is on but the service will not be used — the allowance is
- * spent, or it could not be reached — that says so here rather than surprising
- * the user with a result that is not the one they picked. The export still
+ * spent, it could not be reached, or this video's platform is one the local
+ * filler measured better on — that says so here rather than surprising the
+ * user with a result that is not the one they picked. The export still
  * finishes either way, which is the sentence those cases lead with.
+ *
+ * The measured case is deliberately not a disabled switch. The switch is a
+ * standing preference across exports; this video is one export, and there is
+ * nothing for the user to fix by toggling. So the switch stays as they left
+ * it and the line underneath says what will happen to *this* one.
  */
 import { useTranslation } from '../hooks/useTranslation';
 import type { CloudQuotaReply } from '../types';
@@ -19,11 +25,13 @@ interface CloudFillCardProps {
   consent: CloudConsent;
   quota: CloudQuotaReply | null;
   disabled: boolean;
+  /** The platform on this video the local filler measured better on, if any. */
+  localWinsOn?: string;
   onToggle: (next: boolean) => void;
 }
 
 export default function CloudFillCard({
-  enabled, consent, quota, disabled, onToggle,
+  enabled, consent, quota, disabled, localWinsOn, onToggle,
 }: CloudFillCardProps) {
   const { t } = useTranslation();
 
@@ -31,7 +39,7 @@ export default function CloudFillCard({
   if (!consentIsComplete()) return null;
 
   const agreed = hasConsented(consent);
-  const live = enabled && agreed;
+  const live = enabled && agreed && !localWinsOn;
 
   return (
     <div data-testid="cloud-fill-card"
@@ -51,8 +59,11 @@ export default function CloudFillCard({
         </span>
       </label>
 
-      <p style={{ color: 'var(--text-faint)', fontSize: 11, lineHeight: 1.5, margin: 0 }}>
-        {live ? t('cloud.toggleHint') : t('cloud.off')}
+      <p data-testid={localWinsOn ? 'cloud-fill-local-wins' : undefined}
+         style={{ color: 'var(--text-faint)', fontSize: 11, lineHeight: 1.5, margin: 0 }}>
+        {localWinsOn
+          ? t('cloud.localWins', { platform: t(`cloud.platform.${localWinsOn}`) })
+          : live ? t('cloud.toggleHint') : t('cloud.off')}
       </p>
 
       {live && quota && quota.allowed && quota.remaining !== null && quota.limit !== null && (

@@ -324,11 +324,17 @@ def confirmed(seen: list[tuple[str, float, tuple[int, int, int, int], int]]
     return [(name, box, index) for name, _, box, index in seen if name in established]
 
 
-def placements(hits: list[tuple[str, tuple[int, int, int, int], int]],
-               total: int, step: int, width: int = 0,
-               height: int = 0) -> list[tuple[tuple[int, int, int, int], int, int]]:
+def placements(
+    hits: list[tuple[str, tuple[int, int, int, int], int]],
+    total: int, step: int, width: int = 0, height: int = 0,
+) -> list[tuple[str, tuple[int, int, int, int], int, int]]:
     """
-    The same mark seen in the same place, gathered into `(box, start, end)`.
+    The same mark seen in the same place, gathered into `(name, box, start, end)`.
+
+    The name rides along because which platform's mark this is outlives
+    recognition: what a mark costs to remove well, and whether a paid filler
+    beats the free one on it, are per-platform answers, and the caller cannot
+    recover the name from a box.
 
     Hits drift by a pixel or two between frames, so they are grouped by
     overlap rather than by equality, and the group's box is the union — the
@@ -364,7 +370,7 @@ def placements(hits: list[tuple[str, tuple[int, int, int, int], int]],
         bottoms = [b[1] + b[3] for _, b, _ in group]
         seen = [i for _, _, i in group]
         box = (min(xs), min(ys), max(rights) - min(xs), max(bottoms) - min(ys))
-        out.append((unit_box(group[0][0], box, width, height),
+        out.append((group[0][0], unit_box(group[0][0], box, width, height),
                     max(0, min(seen) - step), min(total, max(seen) + step)))
     return out
 

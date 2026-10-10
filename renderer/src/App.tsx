@@ -26,7 +26,7 @@ import type { FriendlyError } from './errors';
 import { BUILT_IN_PRESETS, loadCustomPresets, saveCustomPresets, presetFromCurrent } from './presets';
 import { loadSettings, saveSettings } from './config';
 import type { AppSettings } from './config';
-import { cloudFillReady, grantConsent, hasConsented } from './cloud';
+import { cloudEndpointFor, grantConsent, hasConsented, localFillerWinsOn } from './cloud';
 import { topbarInset } from './titlebar';
 import type { Preset, PresetParams } from './presets';
 import { useHistory } from './hooks/useHistory';
@@ -259,15 +259,26 @@ function App() {
     return () => { current = false; };
   }, [wantsCloud, inputPath]);
 
+  /**
+   * The platform on this video the local filler measured better on, if any.
+   *
+   * Read from the ticked findings rather than from everything found: a mark
+   * the user unticked is not being removed, so it has no say in how the ones
+   * they did tick get filled.
+   */
+  const localWinsOn = useMemo(
+    () => localFillerWinsOn(
+      detection.findings.filter((_, index) => chosenFindings.has(index)),
+    ),
+    [detection.findings, chosenFindings],
+  );
+
   /** Where an export started now would send what it cannot recover, if anywhere. */
-  const cloudEndpoint = useMemo(() => {
-    const ready = cloudFillReady(appSettings.cloudFillEnabled,
-                                 appSettings.cloudConsent,
-                                 cloudQuota?.allowed ?? false);
-    return ready && cloudQuota?.endpoint?.url
-      ? { url: cloudQuota.endpoint.url, token: cloudQuota.endpoint.token }
-      : undefined;
-  }, [appSettings.cloudFillEnabled, appSettings.cloudConsent, cloudQuota]);
+  const cloudEndpoint = useMemo(
+    () => cloudEndpointFor(appSettings.cloudFillEnabled, appSettings.cloudConsent,
+                           cloudQuota, localWinsOn),
+    [appSettings.cloudFillEnabled, appSettings.cloudConsent, cloudQuota, localWinsOn],
+  );
 
   const updateAppSettings = useCallback((next: AppSettings) => {
     setAppSettings(next);
@@ -750,6 +761,7 @@ function App() {
                 consent={appSettings.cloudConsent}
                 quota={cloudQuota}
                 disabled={!isLoaded}
+                localWinsOn={localWinsOn}
                 onToggle={toggleCloudFill}
               />
             )}
