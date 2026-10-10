@@ -43,6 +43,35 @@ describe('locale resources', () => {
     }
   });
 
+  it('writes placeholders the way t() substitutes them', () => {
+    // `t` matches /\{(\w+)\}/, so a doubled brace leaves one behind: six
+    // strings shipped as `{{limit}}` and reached the user as "{100} MB".
+    //
+    // The parity test above cannot catch this. It compares the two languages
+    // against each other, and both were doubled, so equally wrong passed.
+    // This one checks the text against the substituting code instead.
+    for (const [name, tree] of [['en', en], ['zh', zh]] as const) {
+      setLocale(name);
+      for (const key of collectKeys(tree)) {
+        expect(t(key), `${name}.${key}`).not.toMatch(/\{\{|\}\}/);
+      }
+    }
+  });
+
+  it('leaves no placeholder unsubstituted once its value is given', () => {
+    // The consequence the above is really about: every `{name}` in a string
+    // is a name some call site has to pass, and a brace in the rendered text
+    // is the symptom of their disagreeing.
+    setLocale('en');
+    for (const key of collectKeys(en)) {
+      const names = (t(key).match(/\{(\w+)\}/g) ?? [])
+        .map((whole) => whole.slice(1, -1));
+      if (names.length === 0) continue;
+      const vars = Object.fromEntries(names.map((name) => [name, 'X']));
+      expect(t(key, vars), key).not.toMatch(/[{}]/);
+    }
+  });
+
   it('names every locale in the picker', () => {
     for (const code of LOCALES) {
       expect(LOCALE_NAMES[code]).toBeTruthy();
