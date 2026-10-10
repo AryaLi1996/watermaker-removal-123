@@ -23,7 +23,7 @@
     "version": "Version {version}",
     "fileHandling": "File handling",
     "copyToTemp": "Copy the video here before processing",
-    "copyToTempHint": "For a video on a network share or an external drive. An export reads the file many times over, so a share that drops halfway leaves a half-finished job; copying it here first trades one wait up front for a job the network cannot interrupt. Files over {{limit}} MB are read where they are."
+    "copyToTempHint": "For a video on a network share or an external drive. An export reads the file many times over, so a share that drops halfway leaves a half-finished job; copying it here first trades one wait up front for a job the network cannot interrupt. Files over {limit} MB are read where they are."
   },
   "file": {
     "load": "Load video",
@@ -336,13 +336,13 @@
     "watermark": "Watermark",
     "subtitle": "Subtitle",
     "other": "Other fixed element",
-    "showRest": "Show {{count}} other thing(s) found",
+    "showRest": "Show {count} other thing(s) found",
     "hideRest": "Hide the other things found",
     "hint": "Ticked items are removed, including the box you drew — tick it to take out something the check missed, on top of what it found. Subtitles and captions arrive unticked, because removing them destroys what you made. With nothing ticked, your box is used as a hint instead and the mark under it is found for you.",
     "rescan": "Check again",
     "drawnBox": "The box you drew",
     "drawnBoxWhen": "whole video",
-    "crowded": "Too much of the picture looked like a watermark ({{percent}}% of the frame), so nothing is ticked. That usually means the camera did not move — on a locked-off shot the scenery holds still exactly the way a watermark does, and the check cannot tell them apart. Tick what you recognise, or draw a box.",
+    "crowded": "Too much of the picture looked like a watermark ({percent}% of the frame), so nothing is ticked. That usually means the camera did not move — on a locked-off shot the scenery holds still exactly the way a watermark does, and the check cannot tell them apart. Tick what you recognise, or draw a box.",
     "platforms": "Tuned for Douyin · Xiaohongshu · Kuaishou · Bilibili. WeChat Channels is not supported yet.",
     "platformsBody": "A Channels video carries no watermark while it plays in the app — the mark is burned in when the video is saved. We do not have enough samples of that mark to tune the check for it, so on a Channels video it may find nothing, or tick the wrong thing. Draw a box around what you want gone and it will still be removed."
   },
@@ -374,11 +374,11 @@
     "placeholder": "[ to be filled in ]",
     "incompleteTitle": "This build cannot ask for your agreement",
     "incomplete": "The notice is missing the details it has to name — who processes the upload and where to write about it. Until those are filled in, the cloud filler is unavailable and everything stays on this machine.",
-    "quotaRemaining": "{{remaining}} of {{limit}} left this month",
-    "quotaOverage": "Beyond that, {{price}} each.",
+    "quotaRemaining": "{remaining} of {limit} left this month",
+    "quotaOverage": "Beyond that, {price} each.",
     "quotaUnreachable": "Could not reach the service to check your allowance, so this export stays on this machine.",
     "quotaNotAllowed": "Your plan does not include the cloud filler right now, so this export stays on this machine.",
-    "fallbackNotice": "{{count}} frame(s) were filled on this machine because the service did not answer.",
+    "fallbackNotice": "{count} frame(s) were filled on this machine because the service did not answer.",
     "localWins": "This video carries a {platform} watermark. We measured the local filler as more accurate than the service on this kind of footage, so this export is done on your machine: nothing is uploaded and nothing is charged.",
     "platform": {
       "douyin": "Douyin"
