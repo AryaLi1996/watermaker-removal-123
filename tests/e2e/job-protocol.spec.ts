@@ -28,6 +28,7 @@ async function startCollecting(page: Page) {
     api.onJobDone((v: string | null) => events.push({ type: 'done', value: v }));
     api.onTemporalFallback((v: object) => events.push({ type: 'temporal-fallback', value: v }));
     api.onDeepNotice((v: object) => events.push({ type: 'deep-notice', value: v }));
+    api.onCloudFallback?.((v: object) => events.push({ type: 'cloud-fallback', value: v }));
   });
 }
 
@@ -188,6 +189,32 @@ test.describe('job stdout protocol', () => {
     // The stage label still goes to the status line, as any other stage does.
     expect(received.some(
       (e) => e.type === 'state' && e.value === 'stage:deepProcessing',
+    )).toBe(true);
+  });
+
+  test('frames the cloud filler could not fill arrive on their own channel', async ({ page }) => {
+    // This notice spent its life on the debug channel, where no user reads
+    // it. Promoting it is only safe if the main process parses it ahead of
+    // the generic STATE match — otherwise "12 HTTP 503 from the fill
+    // service" is shown to the user as the status line, which is worse than
+    // the silence it replaced. That is what the second assertion pins.
+    await startCollecting(page);
+    await startJob(page, { scenario: 'cloud_fallback', outputPath: '/tmp/cloud-out.mp4' });
+
+    await page.waitForFunction(
+      () => (window as any).__events.some((e: any) => e.type === 'done'),
+      { timeout: 10_000 },
+    );
+    const received = await events(page);
+
+    expect(received.find((e) => e.type === 'cloud-fallback')?.value)
+      .toEqual({ count: 12, detail: 'HTTP 503 from the fill service' });
+    expect(received.some(
+      (e) => e.type === 'state' && String(e.value).includes('cloud_fallback'),
+    )).toBe(false);
+    // The stage label still reaches the status line, as any stage does.
+    expect(received.some(
+      (e) => e.type === 'state' && e.value === 'stage:recovering',
     )).toBe(true);
   });
 

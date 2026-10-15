@@ -3,9 +3,10 @@
  * Auto-transitions back to loaded state after 5 seconds.
  */
 import { useEffect, useState } from 'react';
-import type { DeepNotice, TemporalFallback } from '../types';
+import type { CloudFallback, DeepNotice, TemporalFallback } from '../types';
 import TemporalFallbackNote from './TemporalFallbackNote';
 import DeepNoticeNote from './DeepNoticeNote';
+import CloudFallbackNote from './CloudFallbackNote';
 import { useTranslation } from '../hooks/useTranslation';
 
 interface DonePanelProps {
@@ -14,6 +15,8 @@ interface DonePanelProps {
   temporalFallback?: TemporalFallback | null;
   /** What the learned engine did differently, or null where it did not. */
   deepNotice?: DeepNotice | null;
+  /** Frames the cloud filler could not fill, or null where it filled them all. */
+  cloudFallback?: CloudFallback | null;
   onReveal: () => void;
   onReset: () => void;
 }
@@ -22,6 +25,7 @@ export default function DonePanel({
   outputPath,
   temporalFallback = null,
   deepNotice = null,
+  cloudFallback = null,
   onReveal,
   onReset,
 }: DonePanelProps) {
@@ -32,9 +36,12 @@ export default function DonePanel({
   // "done" and nothing else, and the one panel that carries the news about a
   // degraded result is the wrong thing to snatch away — there is nowhere else
   // the user could go to find it again.
-  // Either caveat counts: an export that used a different engine than the one
-  // selected is exactly as much a thing to read as frames that fell back.
-  const hasNotice = (!!temporalFallback && temporalFallback.degraded > 0) || !!deepNotice;
+  // Any caveat counts: an export that used a different engine than the one
+  // selected, or paid for a filler that did not run, is exactly as much a
+  // thing to read as frames that fell back.
+  const hasNotice = (!!temporalFallback && temporalFallback.degraded > 0)
+    || !!deepNotice
+    || (!!cloudFallback && cloudFallback.count > 0);
 
   useEffect(() => {
     if (hasNotice) return;
@@ -67,6 +74,7 @@ export default function DonePanel({
 
       <TemporalFallbackNote report={temporalFallback} />
       <DeepNoticeNote notice={deepNotice} />
+      <CloudFallbackNote report={cloudFallback} />
 
       <button
         data-testid="btn-reveal"

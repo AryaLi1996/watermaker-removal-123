@@ -650,8 +650,10 @@ def test_the_fallback_says_what_actually_went_wrong(clip, tmp_path, monkeypatch)
     detail = next(d for key, d in notices if key == 'cloud_fallback')
     assert '500' in detail, detail
     assert 'RuntimeError' in detail, detail
-    # And still the plain-language half, which is the part a user reads.
-    assert str(count) in detail and 'this machine' in detail
+    # The count leads, machine-readable, because the renderer owns the
+    # sentence it goes in and says it in the reader's own language. The
+    # English prose that used to be here moved there with it.
+    assert detail.split()[0] == str(count), detail
 
 
 def test_a_fallback_reason_cannot_run_away_with_the_notice(
@@ -757,3 +759,53 @@ def test_a_frame_too_large_for_the_budget_is_still_returned():
     big = np.zeros((64, 64, 3), np.uint8)
     cached = recover.caching_reader(lambda i: big, budget=16)
     assert np.array_equal(cached(0), big)
+
+
+def test_the_fallback_notice_is_a_count_the_renderer_can_use(clip, tmp_path, monkeypatch):
+    """
+    The number has to survive as a number.
+
+    This notice reached nobody for as long as it existed: `cloud_fallback` was
+    absent from `main.UI_NOTICE_KEYS`, so it went out on the debug channel
+    while the app carried a translated sentence for it that nothing ever
+    rendered. Wiring it up means the count arrives parseable and the reason
+    rides behind it, so neither has to be dug out of prose.
+    """
+    import cloud_fill
+    import processor
+
+    count = 20
+    paths = _frames_on_disk(clip, tmp_path / 'cloud', count)
+
+    def explode(url, body, token, timeout):
+        raise RuntimeError('HTTP Error 503: Service Unavailable')
+
+    monkeypatch.setattr(cloud_fill, 'post', explode)
+    notices = []
+    processor.run_batch(
+        paths,
+        _region_config(clip, {'url': 'https://fill.example.com/inpaint'}, frames=count),
+        WIDTH, HEIGHT, on_notice=lambda key, detail: notices.append((key, detail)))
+
+    detail = next(d for key, d in notices if key == 'cloud_fallback')
+    head, _, reason = detail.partition(' ')
+    assert head.isdigit() and int(head) == count, detail
+    assert '503' in reason, reason
+
+
+def test_the_fallback_notice_reaches_the_user_not_the_debug_log(capsys):
+    """
+    The notice has to go out on the channel the renderer reads.
+
+    A key outside `UI_NOTICE_KEYS` goes to DEBUG, which no user reads — which
+    is exactly how this notice came to be silent while `cloud_fill.py`
+    described the path as "a fallback to the local filler and a note saying
+    so". Asserted on the emitted line rather than on the set, because the set
+    is the mechanism and the line is the promise.
+    """
+    import main
+
+    main.report_engine_notice('cloud_fallback', '12 HTTP 503')
+    out = capsys.readouterr().out
+    assert 'STATE:cloud_fallback:12 HTTP 503' in out, out
+    assert 'DEBUG:cloud_fallback' not in out, out

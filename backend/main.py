@@ -344,9 +344,20 @@ def report_temporal_fallback(degraded: int, total: int) -> None:
 # Notice keys the renderer has a sentence for. Anything else goes to the debug
 # channel instead of the status line: a raw English fragment flashing up in
 # place of the stage label, in an app that is read in Chinese as often as not,
-# is worse than not saying it there. The recovery engine's notices are
-# diagnostics until there is a confirmation step to show them in properly.
-UI_NOTICE_KEYS = frozenset({'deep_fallback', 'deep_quality', 'detect_crowded'})
+# is worse than not saying it there.
+#
+# A key belongs here only once `electron/main.js` parses it ahead of its
+# generic `STATE:` match. Without that the line arrives as a status label,
+# which is the harm the paragraph above describes rather than a cosmetic one.
+#
+# `cloud_fallback` is here because the alternative was silence: an export that
+# paid for the service, could not reach it, and was finished by the local
+# filler used to say so only on the debug channel, which no user reads. The
+# count of frames is a seam they may want to know about, and `cloud_fill.py`
+# already promised them the note.
+UI_NOTICE_KEYS = frozenset({
+    'deep_fallback', 'deep_quality', 'detect_crowded', 'cloud_fallback',
+})
 
 
 def report_engine_notice(key: str, detail: str) -> None:

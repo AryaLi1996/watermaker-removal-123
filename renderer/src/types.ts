@@ -165,6 +165,20 @@ export interface DeepNotice {
   detail: string;
 }
 
+/**
+ * Frames the cloud filler could not fill, finished on this machine instead.
+ *
+ * `count` is how many, for the sentence the app has in both languages.
+ * `detail` is the backend's own English reason — which of a timeout, a
+ * refusal, a 413 or an unreachable host applied — and is empty when there
+ * was none to give. The export succeeded either way; this is a seam in the
+ * result, not a failure.
+ */
+export interface CloudFallback {
+  count: number;
+  detail: string;
+}
+
 export type AppState = 'empty' | 'loaded' | 'processing' | 'done' | 'error';
 
 /**
@@ -362,6 +376,8 @@ declare global {
       cloudConsume?: (units: number) => Promise<CloudQuotaReply>;
       onTemporalFallback: (cb: (report: TemporalFallback) => void) => void;
       onDeepNotice: (cb: (notice: DeepNotice) => void) => void;
+      /** Optional: an older main process does not send this. */
+      onCloudFallback?: (cb: (report: CloudFallback) => void) => void;
       onUpdateAvailable: (cb: (version: string | null) => void) => void;
       onUpdateDownloaded: (cb: (version: string | null) => void) => void;
       installUpdate: () => Promise<boolean>;
