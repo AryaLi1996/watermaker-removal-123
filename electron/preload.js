@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onTemporalFallback: (cb) => ipcRenderer.on('job:temporal-fallback', (_e, v) => cb(v)),
   // {kind, detail} — the learned engine stood aside, or ran a lower preset
   onDeepNotice: (cb) => ipcRenderer.on('job:deep-notice', (_e, v) => cb(v)),
+  // {count, detail} — frames the service could not fill, finished locally
+  onCloudFallback: (cb) => ipcRenderer.on('job:cloud-fallback', (_e, v) => cb(v)),
 
   // Auto-update
   onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (_e, v) => cb(v)),
@@ -108,7 +110,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Remove all listeners (call on component unmount)
   removeJobListeners: () => {
     ['job:progress','job:state','job:error','job:done','job:meta','job:preview-ready',
-     'job:findings','job:findings-crowded','job:temporal-fallback','job:deep-notice']
+     'job:findings','job:findings-crowded','job:temporal-fallback','job:deep-notice',
+     'job:cloud-fallback']
       .forEach((ch) => ipcRenderer.removeAllListeners(ch));
   },
 });

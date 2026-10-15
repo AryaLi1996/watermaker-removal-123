@@ -429,6 +429,17 @@ function handleBackendLine(line, ctx) {
     send('job:deep-notice', { kind: 'fallback', detail: deepFallbackMatch[1].trim() });
     return;
   }
+  // Same reason once more: the count is a number to put in a sentence the
+  // renderer owns, and the reason behind it is free text that must not land
+  // on the status line either.
+  const cloudFallbackMatch = line.match(/^STATE:cloud_fallback:(\d+)(?:\s+(.*))?$/);
+  if (cloudFallbackMatch) {
+    send('job:cloud-fallback', {
+      count: Number(cloudFallbackMatch[1]),
+      detail: (cloudFallbackMatch[2] ?? '').trim(),
+    });
+    return;
+  }
   const deepQualityMatch = line.match(/^STATE:deep_quality:(.*)$/);
   if (deepQualityMatch) {
     send('job:deep-notice', { kind: 'quality', detail: deepQualityMatch[1].trim() });
