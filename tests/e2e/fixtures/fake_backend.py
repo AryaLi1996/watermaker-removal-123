@@ -91,6 +91,16 @@ elif scenario == 'deep_notice':
     emit('STATE:deep_quality:balanced')
     emit('STATE:deep_fallback:CUDA out of memory: tried to allocate 2.00 GiB')
     emit(f"STATE:done:{payload.get('outputPath', '')}")
+elif scenario == 'cloud_fallback':
+    # A recovery export that paid for the cloud filler, could not reach it,
+    # and was finished by the local one. The count is a number for a sentence
+    # the renderer owns; the reason behind it is free text, so neither may
+    # reach the status line.
+    emit('STATE:meta:' + json.dumps({'width': 640, 'height': 480, 'fps': 30, 'duration': 3}))
+    emit('STATE:stage:recovering')
+    emit('PROGRESS:96.0')
+    emit('STATE:cloud_fallback:12 HTTP 503 from the fill service')
+    emit(f"STATE:done:{payload.get('outputPath', '')}")
 elif scenario == 'error':
     emit('ERROR:Something went wrong in the backend')
     sys.exit(1)

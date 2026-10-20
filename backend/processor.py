@@ -741,9 +741,12 @@ def _run_cloud(frame_paths: list[str], runs: list, endpoint: dict,
     if degraded:
         # The reason is the first failure's, which is the only one there was:
         # the first gives up on the service for the rest of the export.
-        notice('cloud_fallback', f'{degraded} frame(s) were filled on this '
-                                 f'machine because the service did not answer'
-                                 + (f' ({why})' if why else ''))
+        # The count first, machine-readable, then the reason as free text:
+        # the renderer has the sentence in both languages and needs the
+        # number to put in it, the way `temporal_fallback` is carried. The
+        # reason stays English and rides beneath it, which is what a bug
+        # report needs and what tells "fix it" apart from "give up".
+        notice('cloud_fallback', str(degraded) + (f' {why}' if why else ''))
     return degraded
 
 

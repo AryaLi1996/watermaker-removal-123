@@ -10,6 +10,7 @@ import ProgressPanel from './components/ProgressPanel';
 import DonePanel from './components/DonePanel';
 import TemporalFallbackNote from './components/TemporalFallbackNote';
 import DeepNoticeNote from './components/DeepNoticeNote';
+import CloudFallbackNote from './components/CloudFallbackNote';
 import PresetPicker from './components/PresetPicker';
 import TopBar from './components/TopBar';
 import Sidebar from './components/Sidebar';
@@ -17,7 +18,7 @@ import type { Screen } from './components/Sidebar';
 import SubscriptionPage from './pages/SubscriptionPage';
 import SettingsPage from './pages/SettingsPage';
 import DiagnosticPanel from './components/DiagnosticPanel';
-import type { AppState, CloudQuotaReply, DeepNotice, JobConfig, Region, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
+import type { AppState, CloudFallback, CloudQuotaReply, DeepNotice, JobConfig, Region, RemovalMethod, ROI, SystemInfo, TemporalFallback, TemporalQuality, VideoMeta } from './types';
 import { deepAvailability, deepPresetFor, previewSecondsFor, qualityForJob, temporalAvailability, usesDeepEngine, TEMPORAL_PREVIEW_MAX_SECONDS } from './capabilities';
 import type { Availability } from './capabilities';
 import { normalizeCoordinates, defaultOutputName, defaultOutputPath, formatDuration, mediaUrl, NULL_SINK } from './utils';
@@ -125,6 +126,7 @@ function App() {
   // Null for every job that had nothing to report, which is nearly all of them.
   const [temporalFallback, setTemporalFallback] = useState<TemporalFallback | null>(null);
   const [deepNotice, setDeepNotice] = useState<DeepNotice | null>(null);
+  const [cloudFallback, setCloudFallback] = useState<CloudFallback | null>(null);
   const [updateReady, setUpdateReady] = useState<string | null>(null);
   const [copiedDetail, setCopiedDetail] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>(() => loadSettings());
@@ -365,7 +367,7 @@ function App() {
     setPreviewClipUrl(null);
     setVideoMeta(null);
     // The note describes the last job's frames, not this video's.
-    setTemporalFallback(null); setDeepNotice(null);
+    setTemporalFallback(null); setDeepNotice(null); setCloudFallback(null);
     setAppState('loaded');
     loader.load(path);
   }, [loader, detection]);
@@ -409,6 +411,9 @@ function App() {
     window.electronAPI.onJobState(setStateLabel);
     window.electronAPI.onTemporalFallback(setTemporalFallback);
     window.electronAPI.onDeepNotice(setDeepNotice);
+    // Optional: an older main process does not send this channel, and a
+    // missing note is the same outcome as the export having needed none.
+    window.electronAPI.onCloudFallback?.(setCloudFallback);
     window.electronAPI.onJobDone((finalPath) => {
       // Prefer the path the backend actually wrote; fall back to the requested one.
       const written = finalPath ?? outputPath ?? '';
@@ -455,7 +460,7 @@ function App() {
     // it does once.
     const payload: JobConfig = { inputPath, outputPath: out, roi: videoROI, method, mode: 'full', regions: chosenRegions, cloudFill: cloudEndpoint, radius, kernelSize, color, dx, dy, temporalQuality, useDeepLearning: usesDeep, copyInputLocally: appSettings.copyToTempBeforeProcessing, copyInputMaxBytes: appSettings.maxTempFileSizeMB * 1024 * 1024 };
     usedCloud.current = Boolean(cloudEndpoint);
-    setProgress(0); setStateLabel(''); setSamples([]); setTemporalFallback(null); setDeepNotice(null); setAppState('processing');
+    setProgress(0); setStateLabel(''); setSamples([]); setTemporalFallback(null); setDeepNotice(null); setCloudFallback(null); setAppState('processing');
     registerJobListeners();
     const started = await window.electronAPI.startJob(payload);
     if (!started) {
@@ -474,7 +479,7 @@ function App() {
     // and at the quickest quality whatever the dial says (`qualityForJob`).
     // The export keeps both of the user's choices.
     const payload: JobConfig = { inputPath, outputPath: outputPath ?? NULL_SINK, roi: videoROI, method, mode: 'preview', regions: chosenRegions, radius, kernelSize, color, dx, dy, temporalQuality: qualityForJob(method, temporalQuality, true), useDeepLearning: usesDeep, previewSeconds: effectivePreviewSeconds };
-    setProgress(0); setStateLabel(stageState('preparingPreview')); setSamples([]); setTemporalFallback(null); setDeepNotice(null); setAppState('processing');
+    setProgress(0); setStateLabel(stageState('preparingPreview')); setSamples([]); setTemporalFallback(null); setDeepNotice(null); setCloudFallback(null); setAppState('processing');
     window.electronAPI.removeJobListeners();
     window.electronAPI.onJobProgress((value) => {
       setProgress(value);
@@ -483,6 +488,9 @@ function App() {
     window.electronAPI.onJobState(setStateLabel);
     window.electronAPI.onTemporalFallback(setTemporalFallback);
     window.electronAPI.onDeepNotice(setDeepNotice);
+    // Optional: an older main process does not send this channel, and a
+    // missing note is the same outcome as the export having needed none.
+    window.electronAPI.onCloudFallback?.(setCloudFallback);
     window.electronAPI.onPreviewReady((clipPath: string) => {
       setPreviewClipUrl(mediaUrl(clipPath));
       setAppState('loaded');
@@ -498,7 +506,7 @@ function App() {
   const handleCancel = useCallback(async () => {
     await window.electronAPI.cancelJob();
     window.electronAPI.removeJobListeners();
-    setAppState('loaded'); setProgress(0); setStateLabel(''); setTemporalFallback(null); setDeepNotice(null);
+    setAppState('loaded'); setProgress(0); setStateLabel(''); setTemporalFallback(null); setDeepNotice(null); setCloudFallback(null);
   }, []);
 
   const handleMethodChange = useCallback((updates: Partial<{ method: RemovalMethod; radius: number; kernelSize: number; color: [number,number,number]; dx: number; dy: number; temporalQuality: TemporalQuality; deepLearning: boolean }>) => {
@@ -507,7 +515,7 @@ function App() {
     // because it blames a run the user can no longer see.
     if (updates.method !== undefined || updates.temporalQuality !== undefined
         || updates.deepLearning !== undefined) {
-      setTemporalFallback(null); setDeepNotice(null);
+      setTemporalFallback(null); setDeepNotice(null); setCloudFallback(null);
     }
     if (updates.method !== undefined) setMethod(updates.method);
     if (updates.radius !== undefined) setRadius(updates.radius);
@@ -560,7 +568,7 @@ function App() {
 
   const applyPreset = useCallback((preset: Preset) => {
     // Same staleness as a manual change: a preset replaces method and quality.
-    setTemporalFallback(null); setDeepNotice(null);
+    setTemporalFallback(null); setDeepNotice(null); setCloudFallback(null);
     setMethod(preset.method);
     setRadius(preset.params.radius);
     setKernelSize(preset.params.kernelSize);
@@ -685,7 +693,7 @@ function App() {
         )}
 
         {appState === 'done' && (
-          <DonePanel outputPath={doneOutputPath} temporalFallback={temporalFallback} deepNotice={deepNotice} onReveal={() => window.electronAPI.openPath(doneOutputPath)} onReset={() => { setTemporalFallback(null); setDeepNotice(null); setAppState('loaded'); }} />
+          <DonePanel outputPath={doneOutputPath} temporalFallback={temporalFallback} deepNotice={deepNotice} cloudFallback={cloudFallback} onReveal={() => window.electronAPI.openPath(doneOutputPath)} onReset={() => { setTemporalFallback(null); setDeepNotice(null); setCloudFallback(null); setAppState('loaded'); }} />
         )}
 
         {appState === 'error' && (
@@ -850,6 +858,10 @@ function App() {
               {/* Same place, same reasoning: the engine that ran is as much a
                   caveat on the preview as the frames that fell back. */}
               <DeepNoticeNote notice={deepNotice} />
+              {/* And again: a preview whose frames the paid filler could not
+                  fill is the cheapest moment to learn that, before the
+                  export spends the allowance on the same outcome. */}
+              <CloudFallbackNote report={cloudFallback} />
               <button data-testid="btn-preview" onClick={handlePreview} disabled={!canExport} style={{ background: 'transparent', border: `1px solid ${canExport ? 'var(--border)' : 'var(--surface)'}`, borderRadius: 6, padding: '7px 0', color: canExport ? 'var(--text-secondary)' : 'var(--text-disabled)', fontSize: 12, cursor: canExport ? 'pointer' : 'not-allowed' }}>{t('actions.preview')}</button>
               <button data-testid="btn-export" onClick={() => { void handleExport(); }} disabled={!canExport} style={{ background: canExport ? 'var(--accent)' : 'var(--accent-soft)', border: 'none', borderRadius: 6, padding: '8px 0', color: canExport ? 'var(--accent-contrast)' : 'var(--accent-disabled-text)', fontSize: 13, fontWeight: 500, cursor: canExport ? 'pointer' : 'not-allowed' }}>{t('actions.export')}</button>
             </div>
